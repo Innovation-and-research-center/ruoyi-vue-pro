@@ -10,6 +10,9 @@ import javax.annotation.Resource;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.RECEIVE;
+
 @Component
 public class BpmReceivePrintHandler implements BpmProcessPrintDataHandler{
 
@@ -18,7 +21,7 @@ public class BpmReceivePrintHandler implements BpmProcessPrintDataHandler{
 
     @Override
     public String getProcessDefinitionKey() {
-        return "receice_doc_v2";
+        return RECEIVE;
     }
 
     @Resource

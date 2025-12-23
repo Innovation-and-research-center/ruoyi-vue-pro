@@ -20,16 +20,12 @@ import java.util.*;
 import cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
-import cn.iocoder.yudao.framework.common.pojo.PageParam;
 import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
-
 import cn.iocoder.yudao.module.bpm.dal.mysql.leave.LeaveMapper;
-
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
-import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList;
-import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.diffList;
 import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
+import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.*;
 
 /**
  * 假期申请审批 Service 实现类
@@ -40,7 +36,7 @@ import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
 @Validated
 public class LeaveServiceImpl implements LeaveService {
 
-    public static final String PROCESS_KEY = "oa_leave";
+    public static final String PROCESS_KEY = LEAVE;
 
     @Resource
     private LeaveMapper leaveMapper;

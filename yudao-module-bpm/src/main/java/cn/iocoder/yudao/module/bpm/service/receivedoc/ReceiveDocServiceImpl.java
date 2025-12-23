@@ -14,7 +14,7 @@ import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
 import cn.iocoder.yudao.module.bpm.dal.mysql.receivedoc.ReceiveDocMapper;
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
-
+import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.*;
 /**
  * 收文 Service 实现类
  *
@@ -24,7 +24,7 @@ import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
 @Validated
 public class ReceiveDocServiceImpl implements ReceiveDocService {
 
-    public static final String PROCESS_KEY = "receice_doc_v2";
+    public static final String PROCESS_KEY = RECEIVE;
 
     @Resource
     private ReceiveDocMapper receiveDocMapper;

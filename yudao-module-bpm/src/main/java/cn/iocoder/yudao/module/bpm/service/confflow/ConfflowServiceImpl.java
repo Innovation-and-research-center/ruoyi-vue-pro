@@ -3,7 +3,6 @@ package cn.iocoder.yudao.module.bpm.service.confflow;
 import cn.hutool.core.collection.CollUtil;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
-import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocDO;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
@@ -14,14 +13,14 @@ import java.util.*;
 import cn.iocoder.yudao.module.bpm.controller.admin.confflow.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.confflow.ConfflowDO;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
-import cn.iocoder.yudao.framework.common.pojo.PageParam;
+
 import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
 
 import cn.iocoder.yudao.module.bpm.dal.mysql.confflow.ConfflowMapper;
 
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
-import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList;
-import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.diffList;
+
+import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.CONFLOW_REPORT;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
 
 /**
@@ -33,7 +32,7 @@ import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
 @Validated
 public class ConfflowServiceImpl implements ConfflowService {
 
-    public static final String PROCESS_KEY = "conference_report";
+    public static final String PROCESS_KEY = CONFLOW_REPORT;
 
     @Resource
     private ConfflowMapper confflowMapper;
