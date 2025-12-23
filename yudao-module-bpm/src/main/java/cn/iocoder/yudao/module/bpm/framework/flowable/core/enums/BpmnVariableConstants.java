@@ -23,6 +23,16 @@ public class BpmnVariableConstants {
      * @see ProcessInstance#getProcessVariables()
      */
     public static final String PROCESS_INSTANCE_VARIABLE_REASON = "PROCESS_REASON";
+
+
+    /**
+     * 流程实例的变量 - 下一个节点
+     *
+     * 例如说：assist
+     *
+     * @see ProcessInstance#getProcessVariables()
+     */
+    public static final String PROCESS_INSTANCE_VARIABLE_NEXT_NODE= "PROCESS_NEXT_NODE";
     /**
      * 流程实例的变量 - 发起用户选择的审批人 Map
      *
@@ -37,6 +47,15 @@ public class BpmnVariableConstants {
      * @see BpmTaskCandidateStrategyEnum#APPROVE_USER_SELECT
      */
     public static final String PROCESS_INSTANCE_VARIABLE_APPROVE_USER_SELECT_ASSIGNEES = "PROCESS_APPROVE_USER_SELECT_ASSIGNEES";
+
+    /**
+     * 流程实例的变量 - 上一节点选择的审批人 Map
+     *
+     * @see ProcessInstance#getProcessVariables()
+     * @see BpmTaskCandidateStrategyEnum#MANUAL_SELECTED
+     */
+    public static final String PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES = "PROCESS_LAST_NODE_SELECT_ASSIGNEES";
+
     /**
      * 流程实例的变量 - 发起用户 ID
      *

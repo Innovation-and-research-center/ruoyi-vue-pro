@@ -151,6 +151,13 @@ public interface AdminUserService {
     List<AdminUserDO> getUserListByPostIds(Collection<Long> postIds);
 
     /**
+     * 获得指定角色的用户数组
+     *
+     * @param roleIds 岗位数组
+     * @return 用户数组
+     */
+    List<AdminUserDO> getUserListByRoleIds(Collection<Long> roleIds);
+    /**
      * 获得用户列表
      *
      * @param ids 用户编号数组

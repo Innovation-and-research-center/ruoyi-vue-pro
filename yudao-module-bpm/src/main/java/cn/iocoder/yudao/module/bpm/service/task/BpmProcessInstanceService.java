@@ -105,6 +105,10 @@ public interface BpmProcessInstanceService {
      */
     List<BpmApprovalDetailRespVO.ActivityNode> getNextApprovalNodes(Long loginUserId, @Valid BpmApprovalDetailReqVO reqVO);
 
+    List<BpmNextTaskRespVO> getNextSelectNodes(Long loginUserId, @Valid BpmApprovalDetailReqVO reqVO);
+
+    BpmNextTaskRespVO getCurrentNode(Long loginUserId, @Valid BpmApprovalDetailReqVO reqVO);
+
     /**
      * 获取流程实例的 BPMN 模型视图
      *

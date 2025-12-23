@@ -46,6 +46,7 @@ import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.bpmn.constants.BpmnXMLConstants;
 import org.flowable.bpmn.model.*;
+import org.flowable.bpmn.model.Process;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.history.HistoricActivityInstance;
@@ -67,6 +68,8 @@ import org.springframework.validation.annotation.Validated;
 import javax.annotation.Resource;
 import javax.validation.Valid;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.*;
@@ -304,6 +307,112 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         return nextActivityNodes;
     }
 
+
+    @Override
+    public List<BpmNextTaskRespVO> getNextSelectNodes(Long loginUserId, BpmApprovalDetailReqVO reqVO) {
+        // 1.1 从 reqVO 中，读取公共变量
+        Long startUserId = loginUserId; // 流程发起人
+        HistoricProcessInstance historicProcessInstance = null; // 流程实例
+//        Integer processInstanceStatus = BpmProcessInstanceStatusEnum.NOT_START.getStatus(); // 流程状态
+        Map<String, Object> processVariables = new HashMap<>(); // 流程变量
+        // 1.2 如果是流程已发起的场景，则使用流程实例的数据
+        if (reqVO.getProcessInstanceId() != null) {
+            historicProcessInstance = getHistoricProcessInstance(reqVO.getProcessInstanceId());
+            if (historicProcessInstance == null) {
+                throw exception(ErrorCodeConstants.PROCESS_INSTANCE_NOT_EXISTS);
+            }
+//            startUserId = Long.valueOf(historicProcessInstance.getStartUserId());
+//            processInstanceStatus = FlowableUtils.getProcessInstanceStatus(historicProcessInstance);
+            // 合并 DB 和前端传递的流量变量，以前端的为主
+            if (CollUtil.isNotEmpty(historicProcessInstance.getProcessVariables())) {
+                processVariables.putAll(historicProcessInstance.getProcessVariables());
+            }
+        }
+        if (CollUtil.isNotEmpty(reqVO.getProcessVariables())) {
+            processVariables.putAll(reqVO.getProcessVariables());
+        }
+        // 特殊：如果是未发起的场景，则设置发起用户，解决“发起流程”时，需要使用到该变量的问题。例如说：https://t.zsxq.com/fMw5g
+        if (historicProcessInstance == null) {
+            processVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_START_USER_ID, loginUserId);
+        }
+        ProcessDefinition processDefinition = processDefinitionService.getProcessDefinition(
+                historicProcessInstance != null ? historicProcessInstance.getProcessDefinitionId()
+                        : reqVO.getProcessDefinitionId());
+        BpmProcessDefinitionInfoDO processDefinitionInfo = processDefinitionService
+                .getProcessDefinitionInfo(processDefinition.getId());
+        BpmnModel bpmnModel = processDefinitionService.getProcessDefinitionBpmnModel(processDefinition.getId());
+        if (bpmnModel == null) {
+            throw exception(ErrorCodeConstants.MODEL_NOT_EXISTS);
+        }
+//        List<FlowElement> flowElements = BpmnModelUtils.simulateProcess(bpmnModel, processVariables);
+        FlowElement sourceElement = null;
+        if(reqVO.getTaskId() == null){
+            Process process = bpmnModel.getMainProcess();
+            sourceElement = process.getFlowElements().stream()
+                    .filter(e -> e instanceof StartEvent)
+                    .findFirst().orElse(null);
+        }
+        else{
+            // 1.1 校验任务存在，且是当前用户的
+            Task task = taskService.validateTask(loginUserId, reqVO.getTaskId());
+            // 1.2 校验流程实例存在
+            ProcessInstance instance = getProcessInstance(task.getProcessInstanceId());
+            if (instance == null) {
+                throw exception(PROCESS_INSTANCE_NOT_EXISTS);
+            }
+            sourceElement = bpmnModel.getFlowElement(task.getTaskDefinitionKey());
+
+        }
+        if (!checkManualSelectProperty(sourceElement)) {
+            return Collections.emptyList(); // 如果没开启，直接返回空
+        }
+        List<BpmNextTaskRespVO> result = new ArrayList<>();
+        if (sourceElement instanceof FlowNode) {
+            analyzeOutgoingFlows((FlowNode) sourceElement, result);
+        }
+        return result;
+    }
+
+    @Override
+    public BpmNextTaskRespVO getCurrentNode(Long loginUserId, BpmApprovalDetailReqVO reqVO) {
+
+        HistoricProcessInstance historicProcessInstance = null; // 流程实例
+        Map<String, Object> processVariables = new HashMap<>(); // 流程变量
+        // 1.2 如果是流程已发起的场景，则使用流程实例的数据
+        if (reqVO.getProcessInstanceId() != null) {
+            historicProcessInstance = getHistoricProcessInstance(reqVO.getProcessInstanceId());
+            if (historicProcessInstance == null) {
+                throw exception(ErrorCodeConstants.PROCESS_INSTANCE_NOT_EXISTS);
+            }
+            if (CollUtil.isNotEmpty(historicProcessInstance.getProcessVariables())) {
+                processVariables.putAll(historicProcessInstance.getProcessVariables());
+            }
+        }
+        if (CollUtil.isNotEmpty(reqVO.getProcessVariables())) {
+            processVariables.putAll(reqVO.getProcessVariables());
+        }
+        if (historicProcessInstance == null) {
+            processVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_START_USER_ID, loginUserId);
+        }
+        ProcessDefinition processDefinition = processDefinitionService.getProcessDefinition(
+                historicProcessInstance != null ? historicProcessInstance.getProcessDefinitionId()
+                        : reqVO.getProcessDefinitionId());
+        BpmnModel bpmnModel = processDefinitionService.getProcessDefinitionBpmnModel(processDefinition.getId());
+        if (bpmnModel == null) {
+            throw exception(ErrorCodeConstants.MODEL_NOT_EXISTS);
+        }
+
+        Task task = taskService.validateTask(loginUserId, reqVO.getTaskId());
+        // 1.2 校验流程实例存在
+        ProcessInstance instance = getProcessInstance(task.getProcessInstanceId());
+        if (instance == null) {
+            throw exception(PROCESS_INSTANCE_NOT_EXISTS);
+        }
+        FlowElement sourceElement = bpmnModel.getFlowElement(task.getTaskDefinitionKey());;
+        return buildTaskOption((UserTask) sourceElement, null);
+
+    }
+
     @Override
     @SuppressWarnings("unchecked")
     public PageResult<HistoricProcessInstance> getProcessInstancePage(Long userId,
@@ -392,6 +501,126 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         return BpmProcessInstanceConvert.INSTANCE.buildApprovalDetail(bpmnModel, processDefinition,
                 processDefinitionInfo, processInstance,
                 processInstanceStatus, approveNodes, todoTask, formFieldsPermission, userMap, deptMap);
+    }
+
+    private boolean checkManualSelectProperty(FlowElement element) {
+        if (element == null) return false;
+
+        Map<String, List<ExtensionElement>> extensions = element.getExtensionElements();
+
+        // 1. 尝试直接获取 property (标准写法)
+        if (hasTargetProperty(extensions.get("property"))) {
+            return true;
+        }
+
+        // 2. 针对你提供的 XML：获取 properties 标签 (嵌套写法)
+        // <flowable:properties> ... </flowable:properties>
+        if (extensions.containsKey("properties")) {
+            List<ExtensionElement> propertiesWrappers = extensions.get("properties");
+            for (ExtensionElement wrapper : propertiesWrappers) {
+                // 获取 wrapper 内部的子元素 <flowable:property>
+                Map<String, List<ExtensionElement>> childExtensions = wrapper.getChildElements();
+                if (hasTargetProperty(childExtensions.get("property"))) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+
+    private boolean hasTargetProperty(List<ExtensionElement> propertyList) {
+        if (propertyList == null || propertyList.isEmpty()) return false;
+
+        for (ExtensionElement prop : propertyList) {
+            String name = prop.getAttributeValue(null, "name");
+            String value = prop.getAttributeValue(null, "value");
+            if ("select_manually".equals(name) && "1".equals(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void analyzeOutgoingFlows(FlowNode source, List<BpmNextTaskRespVO> result) {
+        List<SequenceFlow> outgoingFlows = source.getOutgoingFlows();
+
+        for (SequenceFlow flow : outgoingFlows) {
+            FlowElement target = flow.getTargetFlowElement();
+
+            if (target instanceof UserTask) {
+                // 找到目标任务
+                result.add(buildTaskOption((UserTask) target, flow.getConditionExpression()));
+            } else if (target instanceof Gateway) {
+                // 遇到网关，递归穿透
+                analyzeOutgoingFlows((FlowNode) target, result);
+            }
+        }
+    }
+
+    private String extractConditionValue(String conditionExpression) {
+        if (conditionExpression == null) return "default";
+        Matcher matcher = Pattern.compile("==\\s*[\"'](.*?)[\"']").matcher(conditionExpression);
+        return matcher.find() ? matcher.group(1) : "default";
+    }
+
+
+    private BpmNextTaskRespVO buildTaskOption(UserTask userTask, String condition) {
+        BpmNextTaskRespVO vo = new BpmNextTaskRespVO();
+        vo.setTaskDefKey(userTask.getId());
+        vo.setTaskName(userTask.getName());
+        String extractedValue = extractConditionValue(condition);
+        vo.setConditionExpression(extractedValue);
+        // 解析目标节点的拓展属性
+        vo.setExtensionProperties(parseAllProperties(userTask));
+        return vo;
+    }
+
+    private Map<String, String> parseAllProperties(FlowElement element) {
+        Map<String, String> resultMap = new HashMap<>();
+        Map<String, List<ExtensionElement>> extensions = element.getExtensionElements();
+
+        // 提取器 lambda
+        java.util.function.Consumer<List<ExtensionElement>> extract = (list) -> {
+            if (list == null) return;
+            for (ExtensionElement prop : list) {
+                String name = prop.getAttributeValue(null, "name");
+                String value = prop.getAttributeValue(null, "value");
+                if (name != null) resultMap.put(name, value);
+            }
+        };
+
+        // 1. 提取直接子节点
+        extract.accept(extensions.get("property"));
+
+        // 2. 提取嵌套在 properties 中的节点
+        if (extensions.containsKey("properties")) {
+            for (ExtensionElement wrapper : extensions.get("properties")) {
+                extract.accept(wrapper.getChildElements().get("property"));
+            }
+        }
+        return resultMap;
+    }
+
+    private String getExtensionAttribute(FlowElement element, String name) {
+        Map<String, List<ExtensionElement>> extensions = element.getExtensionElements();
+        // 具体解析逻辑同上...
+        return null;
+    }
+
+    private void traverseGateway(Gateway gateway, List<BpmNextTaskRespVO> result) {
+        List<SequenceFlow> flows = gateway.getOutgoingFlows();
+        for (SequenceFlow flow : flows) {
+            FlowElement target = flow.getTargetFlowElement();
+            if (target instanceof UserTask) {
+                // 网关出来的线通常带有条件
+                result.add(buildTaskOption((UserTask) target, flow.getConditionExpression()));
+            } else if (target instanceof Gateway) {
+                // 如果是连续网关，递归找
+                traverseGateway((Gateway) target, result);
+            }
+        }
     }
 
     /**
@@ -568,9 +797,14 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         // TODO @芋艿：【可优化】在驳回场景下，未来的预测准确性不高。原因是，驳回后，HistoricActivityInstance
         // 包括了历史的操作，不是只有 startEvent 到当前节点的记录
         Set<String> runActivityIds = convertSet(activities, HistoricActivityInstance::getActivityId);
+        // 逻辑：endTime 为 null 的 activity 代表当前正在停留的节点
+        Set<String> currentActivityIds = convertSet(
+                filterList(activities, activity -> activity.getEndTime() == null),
+                HistoricActivityInstance::getActivityId
+        );
         // 情况一：BPMN 设计器
         if (Objects.equals(BpmModelTypeEnum.BPMN.getType(), processDefinitionInfo.getModelType())) {
-            List<FlowElement> flowElements = BpmnModelUtils.simulateProcess(bpmnModel, processVariables);
+            List<FlowElement> flowElements = BpmnModelUtils.simulateProcess(bpmnModel, processVariables,currentActivityIds);
             return convertList(flowElements, flowElement -> buildNotRunApproveNodeForBpmn(
                     startUserId, bpmnModel, flowElements,
                     processDefinitionInfo, processVariables, flowElement, runActivityIds, needSimulateTaskDefKeysByReturn));

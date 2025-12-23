@@ -244,4 +244,15 @@ public class BpmTaskController {
         return success(BpmTaskConvert.INSTANCE.buildTaskListByParentTaskId(taskList, userMap, deptMap));
     }
 
+//    @GetMapping("/next-node-list")
+//    @Operation(summary = "获得指定任务下，可执行的节点列表")
+//    @Parameter(name = "taskId", description = "任务编号", required = true)
+//    @PreAuthorize("@ss.hasPermission('bpm:task:query')")
+//    public CommonResult<List<BpmTaskRespVO>> getNextNodeList(@RequestParam("id") String id) {
+//        List<UserTask> userTaskList = taskService.getNextNodeList(id);
+//        return success(convertList(userTaskList, userTask -> // 只返回 id 和 name
+//                new BpmTaskRespVO().setName(userTask.
+//                        getName()).setTaskDefinitionKey(userTask.getId())));
+//    }
+
 }

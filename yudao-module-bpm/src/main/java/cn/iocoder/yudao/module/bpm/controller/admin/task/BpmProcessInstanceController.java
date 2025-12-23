@@ -6,11 +6,14 @@ import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
 import cn.iocoder.yudao.framework.common.util.number.NumberUtils;
+import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
 import cn.iocoder.yudao.module.bpm.controller.admin.base.user.UserSimpleBaseVO;
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.*;
 import cn.iocoder.yudao.module.bpm.convert.task.BpmProcessInstanceConvert;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmCategoryDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmProcessDefinitionInfoDO;
+import cn.iocoder.yudao.module.bpm.framework.print.BpmProcessPrintDataFactory;
+import cn.iocoder.yudao.module.bpm.framework.print.BpmProcessPrintDataHandler;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmCategoryService;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmProcessDefinitionService;
 import cn.iocoder.yudao.module.bpm.service.task.BpmProcessInstanceService;
@@ -47,6 +50,9 @@ import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.PROCESS_INSTA
 @RequestMapping("/bpm/process-instance")
 @Validated
 public class BpmProcessInstanceController {
+
+    @Resource
+    private BpmProcessPrintDataFactory processPrintDataFactory;
 
     @Resource
     private BpmProcessInstanceService processInstanceService;
@@ -193,6 +199,29 @@ public class BpmProcessInstanceController {
         return success(processInstanceService.getNextApprovalNodes(getLoginUserId(), reqVO));
     }
 
+
+    @GetMapping("/get-next-select-nodes")
+    @Operation(summary = "获取下一个执行流程节点的选项")
+    @PreAuthorize("@ss.hasPermission('bpm:process-instance:query')")
+    public CommonResult<List<BpmNextTaskRespVO>> getNextSelectNodes(@Valid BpmApprovalDetailReqVO reqVO) {
+        if (StrUtil.isNotEmpty(reqVO.getProcessVariablesStr())) {
+            reqVO.setProcessVariables(JsonUtils.parseObject(reqVO.getProcessVariablesStr(), Map.class));
+        }
+        return success(processInstanceService.getNextSelectNodes(getLoginUserId(), reqVO));
+    }
+
+    @GetMapping("/get-current-node")
+    @Operation(summary = "获取当前节点信息")
+    @PreAuthorize("@ss.hasPermission('bpm:process-instance:query')")
+    public CommonResult<BpmNextTaskRespVO> getCurrentNode(@Valid BpmApprovalDetailReqVO reqVO) {
+        if (StrUtil.isNotEmpty(reqVO.getProcessVariablesStr())) {
+            reqVO.setProcessVariables(JsonUtils.parseObject(reqVO.getProcessVariablesStr(), Map.class));
+        }
+        return success(processInstanceService.getCurrentNode(getLoginUserId(), reqVO));
+    }
+
+
+
     @GetMapping("/get-bpmn-model-view")
     @Operation(summary = "获取流程实例的 BPMN 模型视图", description = "在【流程详细】界面中，进行调用")
     @Parameter(name = "id", description = "流程实例的编号", required = true)
@@ -205,6 +234,7 @@ public class BpmProcessInstanceController {
     @Operation(summary = "获得流程实例的打印数据")
     @Parameter(name = "id", description = "流程实例的编号", required = true)
     @PreAuthorize("@ss.hasPermission('bpm:process-instance:query')")
+    @DataPermission(enable = false)
     public CommonResult<BpmProcessPrintDataRespVO> getProcessInstancePrintData(
             @RequestParam("processInstanceId") String processInstanceId) {
         HistoricProcessInstance historicProcessInstance = processInstanceService.getHistoricProcessInstance(processInstanceId);
@@ -216,10 +246,23 @@ public class BpmProcessInstanceController {
         List<HistoricTaskInstance> tasks = taskService.getFinishedTaskListByProcessInstanceIdWithoutCancel(processInstanceId);
         Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(
                 convertSet(tasks, item -> Long.valueOf(item.getAssignee())));
-        return success(BpmProcessInstanceConvert.INSTANCE.buildProcessInstancePrintData(historicProcessInstance,
+        BpmProcessPrintDataRespVO respVO =BpmProcessInstanceConvert.INSTANCE.buildProcessInstancePrintData(historicProcessInstance,
                 processDefinitionService.getProcessDefinitionInfo(historicProcessInstance.getProcessDefinitionId()),
                 tasks, userMap,
-                new UserSimpleBaseVO().setNickname(startUser.getNickname()).setDeptName(dept.getName())));
+                new UserSimpleBaseVO().setNickname(startUser.getNickname()).setDeptName(dept.getName()));
+        String processDefinitionKey = historicProcessInstance.getProcessDefinitionKey();
+        respVO.setProcessDefinitionKey(processDefinitionKey);
+        BpmProcessPrintDataHandler handler = processPrintDataFactory.getHandler(processDefinitionKey);
+        if (handler != null) {
+            // Flowable 历史实例中存储了 BusinessKey，这就是你业务表的主键ID
+            String businessKey = historicProcessInstance.getBusinessKey();
+            if (businessKey != null) {
+                Map<String, Object> businessData = handler.getPrintData(processInstanceId, businessKey);
+                respVO.setBusinessData(businessData);
+            }
+        }
+
+        return success(respVO);
     }
 
 }

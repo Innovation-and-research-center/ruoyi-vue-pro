@@ -41,4 +41,6 @@ public class BpmProcessInstanceCreateReqDTO {
      */
     private Map<String, List<Long>> startUserSelectAssignees;
 
+    private Map<String, List<Long>> nextNodeSelectAssignees;
+
 }

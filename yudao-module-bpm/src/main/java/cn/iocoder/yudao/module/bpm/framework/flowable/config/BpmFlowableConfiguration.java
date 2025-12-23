@@ -6,6 +6,9 @@ import cn.iocoder.yudao.module.bpm.framework.flowable.core.candidate.BpmTaskCand
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.candidate.BpmTaskCandidateStrategy;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.event.BpmProcessInstanceEventPublisher;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
+import liquibase.database.DatabaseConnection;
+import liquibase.database.core.PostgresDatabase;
+import liquibase.exception.DatabaseException;
 import org.flowable.common.engine.api.delegate.FlowableFunctionDelegate;
 import org.flowable.common.engine.api.delegate.event.FlowableEventListener;
 import org.flowable.spring.SpringProcessEngineConfiguration;
@@ -27,6 +30,25 @@ import java.util.List;
  */
 @Configuration(proxyBeanMethods = false)
 public class BpmFlowableConfiguration {
+
+//    @PostConstruct
+//    public void registerLiquibase() {
+//        try {
+//            // 注册自定义的 Kingbase 实现，让 Liquibase 遇到 KingbaseES 时也能处理
+//            DatabaseFactory.getInstance().register(new KingbaseESDatabase());
+//            System.out.println("=== Flowable Liquibase Adapter for KingbaseES Registered Successfully ===");
+//        } catch (Exception e) {
+//            e.printStackTrace();
+//        }
+//    }
+//    static {
+//        try {
+//            DatabaseFactory.getInstance().register(new KingbaseESDatabase());
+//            System.out.println("=== [Static Block] Flowable Liquibase Adapter for KingbaseES Registered ===");
+//        } catch (Exception e) {
+//            System.err.println("Failed to register KingbaseES adapter: " + e.getMessage());
+//        }
+//    }
 
     /**
      * 参考 {@link org.flowable.spring.boot.FlowableJobConfiguration} 类，创建对应的 AsyncListenableTaskExecutor Bean
@@ -60,6 +82,7 @@ public class BpmFlowableConfiguration {
             ObjectProvider<FlowableFunctionDelegate> customFlowableFunctionDelegates,
             BpmActivityBehaviorFactory bpmActivityBehaviorFactory) {
         return configuration -> {
+            configuration.setDatabaseType("postgres");
             // 注册监听器，例如说 BpmActivityEventListener
             configuration.setEventListeners(ListUtil.toList(listeners.iterator()));
             // 设置 ActivityBehaviorFactory 实现类，用于流程任务的审核人的自定义
@@ -90,6 +113,29 @@ public class BpmFlowableConfiguration {
     @Bean
     public BpmProcessInstanceEventPublisher processInstanceEventPublisher(ApplicationEventPublisher publisher) {
         return new BpmProcessInstanceEventPublisher(publisher);
+    }
+
+    public static class KingbaseESDatabase extends PostgresDatabase {
+
+        // 提高优先级，确保 Liquibase 优先使用这个类来处理 Kingbase 连接
+        @Override
+        public int getPriority() {
+            return PRIORITY_DATABASE + 5;
+        }
+
+        // 核心判断：当数据库产品名为 KingbaseES 时，返回 true
+        @Override
+        public boolean isCorrectDatabaseImplementation(DatabaseConnection conn) throws DatabaseException, DatabaseException {
+            return "KingbaseES".equalsIgnoreCase(conn.getDatabaseProductName());
+        }
+
+        @Override
+        protected String getDefaultDatabaseProductName() {
+            return "KingbaseES";
+        }
+
+        // 注意：不要覆盖 getShortName()，让它默认返回 "postgresql"
+        // 这样 Liquibase 就会去加载 flowable-db-changelog-postgresql.xml
     }
 
 }

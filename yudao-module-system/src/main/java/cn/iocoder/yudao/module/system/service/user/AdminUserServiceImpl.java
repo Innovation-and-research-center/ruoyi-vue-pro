@@ -22,8 +22,10 @@ import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserPageReqV
 import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserSaveReqVO;
 import cn.iocoder.yudao.module.system.dal.dataobject.dept.DeptDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.dept.UserPostDO;
+import cn.iocoder.yudao.module.system.dal.dataobject.permission.UserRoleDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.dal.mysql.dept.UserPostMapper;
+import cn.iocoder.yudao.module.system.dal.mysql.permission.UserRoleMapper;
 import cn.iocoder.yudao.module.system.dal.mysql.user.AdminUserMapper;
 import cn.iocoder.yudao.module.system.service.dept.DeptService;
 import cn.iocoder.yudao.module.system.service.dept.PostService;
@@ -35,6 +37,7 @@ import com.mzt.logapi.context.LogRecordContext;
 import com.mzt.logapi.service.impl.DiffParseFunction;
 import com.mzt.logapi.starter.annotation.LogRecord;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -86,6 +89,8 @@ public class AdminUserServiceImpl implements AdminUserService {
 
     @Resource
     private ConfigApi configApi;
+    @Autowired
+    private UserRoleMapper userRoleMapper;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -312,6 +317,18 @@ public class AdminUserServiceImpl implements AdminUserService {
             return Collections.emptyList();
         }
         Set<Long> userIds = convertSet(userPostMapper.selectListByPostIds(postIds), UserPostDO::getUserId);
+        if (CollUtil.isEmpty(userIds)) {
+            return Collections.emptyList();
+        }
+        return userMapper.selectByIds(userIds);
+    }
+
+    @Override
+    public List<AdminUserDO> getUserListByRoleIds(Collection<Long> roleIds) {
+        if (CollUtil.isEmpty(roleIds)) {
+            return Collections.emptyList();
+        }
+        Set<Long> userIds = convertSet(userRoleMapper.selectListByRoleIds(roleIds), UserRoleDO::getUserId);
         if (CollUtil.isEmpty(userIds)) {
             return Collections.emptyList();
         }

@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.util.List;
+import java.util.Map;
 
 @Schema(description = "管理后台 - 流程实例的打印数据 Response VO")
 @Data
@@ -20,6 +21,14 @@ public class BpmProcessPrintDataRespVO {
 
     @Schema(description = "审批任务列表")
     private List<Task> tasks;
+
+    @Schema(description = "流程 key")
+    private String processDefinitionKey;
+
+    /**
+     * 业务表单详情数据
+     */
+    private Map<String, Object> businessData;
 
     @Schema(description = "流程任务")
     @Data

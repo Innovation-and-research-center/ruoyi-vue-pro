@@ -770,13 +770,31 @@ public class BpmnModelUtils {
      * @param variables 变量
      * @return 节点元素数组
      */
-    public static List<FlowElement> simulateProcess(BpmnModel bpmnModel, Map<String, Object> variables) {
+    public static List<FlowElement> simulateProcess(BpmnModel bpmnModel, Map<String, Object> variables,Collection<String> currentActivityIds) {
         List<FlowElement> resultElements = new ArrayList<>();
         Set<FlowElement> visitElements = new HashSet<>();
 
         // 从 StartEvent 开始遍历
-        StartEvent startEvent = getStartEvent(bpmnModel);
-        simulateNextFlowElements(startEvent, variables, resultElements, visitElements);
+        if (CollUtil.isEmpty(currentActivityIds)) {
+            // 情况 A: 如果没有指定当前节点（通常是流程未启动），从 StartEvent 开始
+            StartEvent startEvent = getStartEvent(bpmnModel);
+            simulateNextFlowElements(startEvent, variables, resultElements, visitElements);
+        } else {
+            for (String activeId : currentActivityIds) {
+                // 注意：这里假设通过 ID 能在 MainProcess 中找到元素
+                FlowElement currentElement = bpmnModel.getMainProcess().getFlowElement(activeId);
+
+                // 只有 FlowNode (任务、网关等) 才有 outgoing flows
+                if (currentElement instanceof FlowNode) {
+                    FlowNode flowNode = (FlowNode) currentElement;
+                    // 遍历当前节点的“出线”，去预测它的下一个目标
+                    flowNode.getOutgoingFlows().forEach(sequenceFlow -> {
+                        FlowElement nextElement = sequenceFlow.getTargetFlowElement();
+                        simulateNextFlowElements(nextElement, variables, resultElements, visitElements);
+                    });
+                }
+            }
+        }
 
         // 将 EndEvent 放在末尾。原因是，DFS 遍历，可能 EndEvent 在 resultElements 中
         List<FlowElement> endEvents = CollUtil.removeWithAddIf(resultElements,
@@ -784,6 +802,8 @@ public class BpmnModelUtils {
         resultElements.addAll(endEvents);
         return resultElements;
     }
+
+
 
     private static void simulateNextFlowElements(FlowElement currentElement, Map<String, Object> variables,
                                                  List<FlowElement> resultElements, Set<FlowElement> visitElements) {

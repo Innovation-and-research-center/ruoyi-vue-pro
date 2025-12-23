@@ -225,6 +225,33 @@ public class FlowableUtils {
                 BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_APPROVE_USER_SELECT_ASSIGNEES);
     }
 
+
+
+    /**
+     * 获得流程实例的发起用户选择的审批人 Map
+     *
+     * @param processInstance 流程实例
+     * @return 发起用户选择的审批人 Map
+     */
+    public static Map<String, List<Long>> getLastNodeSelectAssignees(ProcessInstance processInstance) {
+        return processInstance != null ? getLastNodeSelectAssignees(processInstance.getProcessVariables()) : null;
+    }
+
+    /**
+     * 获得流程实例的发起用户选择的审批人 Map
+     *
+     * @param processVariables 流程变量
+     * @return 发起用户选择的审批人 Map
+     */
+    @SuppressWarnings("unchecked")
+    public static Map<String, List<Long>> getLastNodeSelectAssignees(Map<String, Object> processVariables) {
+        if (processVariables == null) {
+            return new HashMap<>();
+        }
+        return (Map<String, List<Long>>) processVariables.get(
+                BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+    }
+
     /**
      * 获得流程实例的摘要
      *

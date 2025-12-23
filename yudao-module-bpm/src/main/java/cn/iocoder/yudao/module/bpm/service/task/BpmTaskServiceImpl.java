@@ -603,10 +603,15 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         if (CollUtil.isNotEmpty(reqVO.getVariables())) { // 合并前端传递的流程变量，以前端为准
             processVariables.putAll(reqVO.getVariables());
         }
-
+        //更新下一节点变量
+        if (StrUtil.isNotEmpty(reqVO.getNextNode())) {
+            processVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEXT_NODE, reqVO.getNextNode());
+        }
+        Map<String, List<Long>> nextNodeAssignees = CollUtil.isNotEmpty(reqVO.getNextAssignees())?reqVO.getNextAssignees():reqVO.getNextNodeAssignees();
         // 4. 校验并处理 APPROVE_USER_SELECT 当前审批人，选择下一节点审批人的逻辑
         Map<String, Object> variables = validateAndSetNextAssignees(task.getTaskDefinitionKey(), processVariables,
-                bpmnModel, reqVO.getNextAssignees(), instance);
+                bpmnModel, nextNodeAssignees, instance);
+
         runtimeService.setVariables(task.getProcessInstanceId(), variables);
 
         // 5. 如果当前节点 Id 存在于需要预测的流程节点中，从中移除。 流程变量在回退操作中设置
@@ -616,6 +621,9 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             needSimulateTaskIdsByReturn.remove(task.getTaskDefinitionKey());
             runtimeService.setVariable(task.getProcessInstanceId(), BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEED_SIMULATE_TASK_IDS, needSimulateTaskIdsByReturn);
         }
+
+
+
 
         // 6. 调用 BPM complete 去完成任务
         taskService.complete(task.getId(), variables, true);
@@ -692,6 +700,41 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                     approveUserSelectAssignees.putAll(existingApproveUserSelectAssignees);
                 }
                 variables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_APPROVE_USER_SELECT_ASSIGNEES, approveUserSelectAssignees);
+            }
+
+
+            // 2.3 情况三：如果节点中的审批人策略为 手动，在审批时选择下一个节点的审批人，并且该节点的审批人为空
+            if (ObjUtil.equals(candidateStrategy, BpmTaskCandidateStrategyEnum.MANUAL_SELECTED.getStrategy())) {
+                // 如果节点存在，但未配置审批人
+                Map<String, List<Long>> nextSelectAssignees = FlowableUtils.getLastNodeSelectAssignees(processInstance.getProcessVariables());
+                List<Long> assignees = nextAssignees != null ? nextAssignees.get(nextFlowNode.getId()) : null;
+                if (CollUtil.isEmpty(assignees)) {
+                    throw exception(PROCESS_INSTANCE_APPROVE_USER_SELECT_ASSIGNEES_NOT_CONFIG, nextFlowNode.getName());
+                }
+                // 设置 PROCESS_INSTANCE_VARIABLE_APPROVE_USER_SELECT_ASSIGNEES
+                if (nextSelectAssignees == null) {
+                    nextSelectAssignees = new HashMap<>();
+                }
+                String nodeId = nextFlowNode.getId();
+                List<Long> currentAssignees = nextSelectAssignees.get(nodeId);
+                if (CollUtil.isNotEmpty(currentAssignees)) {
+                    // 1. 如果已存在，使用 LinkedHashSet 进行合并并去重（LinkedHashSet 保持插入顺序）
+                    Set<Long> uniqueSet = new LinkedHashSet<>(currentAssignees);
+                    uniqueSet.addAll(assignees);
+
+                    // 2. 将去重后的集合转回 List 并重新放入 Map
+                    nextSelectAssignees.put(nodeId, new ArrayList<>(uniqueSet));
+                } else {
+                    // 3. 如果不存在，直接放入新的 List
+                    nextSelectAssignees.put(nodeId, assignees);
+                }
+//                nextSelectAssignees.put(nextFlowNode.getId(), assignees);
+                Map<String, List<Long>> existingApproveUserSelectAssignees = (Map<String, List<Long>>) variables.get(
+                        BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+                if (CollUtil.isNotEmpty(existingApproveUserSelectAssignees)) {
+                    nextSelectAssignees.putAll(existingApproveUserSelectAssignees);
+                }
+                variables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, nextSelectAssignees);
             }
         }
         return variables;

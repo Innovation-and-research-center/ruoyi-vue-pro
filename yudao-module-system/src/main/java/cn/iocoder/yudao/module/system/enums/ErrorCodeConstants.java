@@ -168,4 +168,11 @@ public interface ErrorCodeConstants {
     // ========== 站内信发送 1-002-028-000 ==========
     ErrorCode NOTIFY_SEND_TEMPLATE_PARAM_MISS = new ErrorCode(1_002_028_000, "模板参数({})缺失");
 
+    // ========== 值班信息 1-002-028-000 ==========
+    ErrorCode STAFF_NOT_EXISTS = new ErrorCode(1_002_029_000, "值班信息不存在");
+    ErrorCode DUST_IMPORT_LIST_IS_EMPTY = new ErrorCode(1_002_029_004, "导入值班数据不能为空！");
+    ErrorCode LEADER_NOT_EXISTS = new ErrorCode(1_002_029_001, "值周领导不存在");
+    ErrorCode PERSON_NOT_EXISTS = new ErrorCode(1_002_029_002, "值班人员不存在");
+    ErrorCode DUTY_DATE_EXISTS = new ErrorCode(1_002_029_003, "值班日期已经存在");
+
 }
