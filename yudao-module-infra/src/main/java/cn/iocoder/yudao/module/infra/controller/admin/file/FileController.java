@@ -51,6 +51,17 @@ public class FileController {
                 uploadReqVO.getDirectory(), file.getContentType()));
     }
 
+
+    @PostMapping("/uploadReturnInfo")
+    @Operation(summary = "上传文件", description = "模式一：后端上传文件")
+    public CommonResult<FileRespVO> uploadFileReturnInfo(@Valid FileUploadReqVO uploadReqVO) throws Exception {
+        MultipartFile file = uploadReqVO.getFile();
+        byte[] content = IoUtil.readBytes(file.getInputStream());
+        FileDO fileDo = fileService.createFileReturnId(content, file.getOriginalFilename(),
+                uploadReqVO.getDirectory(), file.getContentType());
+        return success(BeanUtils.toBean(fileDo,FileRespVO.class));
+    }
+
     @GetMapping("/presigned-url")
     @Operation(summary = "获取文件预签名地址（上传）", description = "模式二：前端上传文件：用于前端直接上传七牛、阿里云 OSS 等文件存储器")
     @Parameters({

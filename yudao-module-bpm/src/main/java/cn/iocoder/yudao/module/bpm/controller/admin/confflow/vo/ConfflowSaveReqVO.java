@@ -70,4 +70,10 @@ public class ConfflowSaveReqVO {
 
     @Schema(description = "发起人自选审批人 Map", example = "{taskKey1: [1, 2]}")
     private Map<String, List<Long>> startUserSelectAssignees;
+
+    @Schema(description = "流程变量")
+    private String processVariablesStr;
+
+    @Schema(description = "流程变量")
+    private Map<String, Object> processVariables;
 }

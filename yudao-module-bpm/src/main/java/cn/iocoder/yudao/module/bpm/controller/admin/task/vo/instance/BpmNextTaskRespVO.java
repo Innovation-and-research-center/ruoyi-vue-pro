@@ -1,4 +1,5 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance;
+import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.ConditionResult;
 import lombok.Data;
 import java.util.Map;
 
@@ -11,8 +12,12 @@ public class BpmNextTaskRespVO {
     private String taskName;
 
     /** 只有满足该条件表达式时，才会走到该节点 (例如 ${auditStatus == 1}) */
-    private String conditionExpression;
+    private ConditionResult conditionExpression;
 
     /** 目标节点的拓展属性 (Map形式) */
     private Map<String, String> extensionProperties;
 }
+
+
+
+

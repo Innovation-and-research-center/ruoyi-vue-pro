@@ -72,5 +72,9 @@ public class ReceiveDocRespVO {
      */
     @Schema(description = "附件路径")
     private String attachFilePath;
+    @Schema(description = "流程示例")
+    private String processInstanceId;
+
+
 
 }

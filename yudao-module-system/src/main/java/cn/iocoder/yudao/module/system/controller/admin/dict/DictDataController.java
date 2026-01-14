@@ -83,7 +83,7 @@ public class DictDataController {
 
     @GetMapping("/page")
     @Operation(summary = "获得字典类型的分页")
-    @PreAuthorize("@ss.hasPermission('system:dict:query')")
+//    @PreAuthorize("@ss.hasPermission('system:dict:query')")
     public CommonResult<PageResult<DictDataRespVO>> getDictTypePage(@Valid DictDataPageReqVO pageReqVO) {
         PageResult<DictDataDO> pageResult = dictDataService.getDictDataPage(pageReqVO);
         return success(BeanUtils.toBean(pageResult, DictDataRespVO.class));

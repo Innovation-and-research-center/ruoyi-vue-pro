@@ -1,5 +1,9 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.receivedoc;
 
+import cn.hutool.core.util.StrUtil;
+import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocAttachDO;
+import jodd.util.StringUtil;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -43,7 +47,35 @@ public class ReceiveDocController {
     @Operation(summary = "创建收文")
     @PreAuthorize("@ss.hasPermission('bpm:receive-doc:create')")
     public CommonResult<Long> createReceiveDoc(@Valid @RequestBody ReceiveDocSaveReqVO createReqVO) {
+        if (StrUtil.isNotEmpty(createReqVO.getProcessVariablesStr())) {
+            createReqVO.setProcessVariables(JsonUtils.parseObject(createReqVO.getProcessVariablesStr(), Map.class));
+        }
         return success(receiveDocService.createReceiveDoc(getLoginUserId(),createReqVO));
+    }
+
+    @PostMapping("/save")
+    @Operation(summary = "保存收文")
+    @PreAuthorize("@ss.hasPermission('bpm:receive-doc:create')")
+    public CommonResult<Long> saveReceiveDoc(@Valid @RequestBody ReceiveDocSaveReqVO createReqVO) {
+        return success(receiveDocService.saveReceiveDoc(getLoginUserId(),createReqVO));
+    }
+
+    @PostMapping("/create-flow")
+    @Operation(summary = "创建收文流程")
+    @PreAuthorize("@ss.hasPermission('bpm:receive-doc:create')")
+    public CommonResult<Boolean> createFlowReceiveDoc(@Valid @RequestBody ReceiveDocSaveReqVO createReqVO) {
+        if (StrUtil.isNotEmpty(createReqVO.getProcessVariablesStr())) {
+            createReqVO.setProcessVariables(JsonUtils.parseObject(createReqVO.getProcessVariablesStr(), Map.class));
+        }
+        receiveDocService.createFlowReceiveDoc(getLoginUserId(),createReqVO);
+        return success(true);
+    }
+
+
+    @PostMapping("/get-number")
+    @Operation(summary = "获取收文编号")
+    public CommonResult<String> getReceiveDocNumber(@RequestBody  ReceiveDocCreateNumberVO createReqVO) {
+        return success(receiveDocService.generateDocumentSequence(createReqVO));
     }
 
     @PutMapping("/update")
@@ -100,6 +132,15 @@ public class ReceiveDocController {
         // 导出 Excel
         ExcelUtils.write(response, "收文.xls", "数据", ReceiveDocRespVO.class,
                         BeanUtils.toBean(list, ReceiveDocRespVO.class));
+    }
+
+
+    @GetMapping("/receive-doc-attach/list-by-receive-doc-id")
+    @Operation(summary = "获得收文附件列表")
+    @Parameter(name = "receiveDocId", description = "收文编号(外键T_RECEIVE_DOC.RECEIVE_DOC_ID)")
+    @PreAuthorize("@ss.hasPermission('bpm:receive-doc:query')")
+    public CommonResult<List<ReceiveFileRespVO>> getReceiveDocAttachListByReceiveDocId(@RequestParam("receiveDocId") Long receiveDocId) {
+        return success(receiveDocService.getReceiveDocAttachListByReceiveDocId(receiveDocId));
     }
 
 }

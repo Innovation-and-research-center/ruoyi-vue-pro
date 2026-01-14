@@ -15,7 +15,15 @@ public interface ErrorCodeConstants {
     ErrorCode OA_LEAVE_NOT_EXISTS = new ErrorCode(1_009_001_001, "请假申请不存在");
     ErrorCode LEAVE_NOT_EXISTS = new ErrorCode(1_009_020_001, "假期申请审批不存在");
     ErrorCode RECEIVE_DOC_NOT_EXISTS = new ErrorCode(1_009_021_001,"收文不存在");
+    ErrorCode RECEIVE_DOC_EXISTS = new ErrorCode(1_009_021_002,"收文编号重复");
+    ErrorCode RECEIVE_DOC_ERROR= new ErrorCode(1_009_021_003,"收文编号格式不正确");
     ErrorCode CONFFLOW_NOT_EXISTS = new ErrorCode(1_009_022_001, "会议报告单不存在");
+    ErrorCode TIME_EXPLAIN_NOT_EXISTS = new ErrorCode(1_009_023_001, "外出请假补假不存在");
+    ErrorCode XZFY_NOT_EXISTS = new ErrorCode(1_009_024_001, "行政复议不存在");
+    ErrorCode XZSS_NOT_EXISTS = new ErrorCode(1_009_025_001, "行政诉讼不存在");
+    ErrorCode SEND_DOC_NOT_EXISTS = new ErrorCode(1_009_026_001, "发文不存在");
+
+    ErrorCode FILE_EXCHANGE_NOT_EXISTS = new ErrorCode(1_009_027_001, "文件交换不存在");
 
     // ========== 流程模型 1-009-002-000 ==========
     ErrorCode MODEL_KEY_EXISTS = new ErrorCode(1_009_002_000, "已经存在流程标识为【{}】的流程");

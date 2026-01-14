@@ -44,5 +44,9 @@ public class LeaveRespVO {
     @Schema(description = "共计天数")
     private String filepath;
 
+    private String deptName;
+
+
+
 
 }

@@ -17,6 +17,10 @@ import cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.*;
 @Mapper
 public interface LeaveMapper extends BaseMapperX<LeaveDO> {
 
+    List<LeaveSummaryRespVO> selectLeaveSummaryList(LeaveSummaryReqVO reqVO);
+
+    List<LeaveDO> selectDetailList(LeaveSummaryReqVO reqVO);
+
     default PageResult<LeaveDO> selectPage(LeavePageReqVO reqVO) {
         return selectPage(reqVO, new LambdaQueryWrapperX<LeaveDO>()
                 .betweenIfPresent(LeaveDO::getApplyDate, reqVO.getApplyDate())

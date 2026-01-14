@@ -69,6 +69,12 @@ public class DictFrameworkUtils {
         return convertList(dictDatas, DictDataRespDTO::getLabel);
     }
 
+
+    @SneakyThrows
+    public static  List<DictDataRespDTO> getDictDataList(String dictType) {
+        return  GET_DICT_DATA_CACHE.get(dictType);
+    }
+
     @SneakyThrows
     public static String parseDictDataValue(String dictType, String label) {
         List<DictDataRespDTO> dictDatas = GET_DICT_DATA_CACHE.get(dictType);

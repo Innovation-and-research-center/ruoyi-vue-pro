@@ -38,6 +38,7 @@ import javax.validation.Valid;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.iocoder.yudao.framework.common.pojo.CommonResult.success;
@@ -180,6 +181,7 @@ public class BpmProcessInstanceController {
     @Operation(summary = "获得审批详情")
     @Parameter(name = "id", description = "流程实例的编号", required = true)
     @PreAuthorize("@ss.hasPermission('bpm:process-instance:query')")
+    @DataPermission(enable = false)
     @SuppressWarnings("unchecked")
     public CommonResult<BpmApprovalDetailRespVO> getApprovalDetail(@Valid BpmApprovalDetailReqVO reqVO) {
         if (StrUtil.isNotEmpty(reqVO.getProcessVariablesStr())) {
@@ -233,7 +235,6 @@ public class BpmProcessInstanceController {
     @GetMapping("/get-print-data")
     @Operation(summary = "获得流程实例的打印数据")
     @Parameter(name = "id", description = "流程实例的编号", required = true)
-    @PreAuthorize("@ss.hasPermission('bpm:process-instance:query')")
     @DataPermission(enable = false)
     public CommonResult<BpmProcessPrintDataRespVO> getProcessInstancePrintData(
             @RequestParam("processInstanceId") String processInstanceId) {
@@ -244,8 +245,12 @@ public class BpmProcessInstanceController {
         AdminUserRespDTO startUser = adminUserApi.getUser(Long.valueOf(historicProcessInstance.getStartUserId()));
         DeptRespDTO dept = deptApi.getDept(startUser.getDeptId());
         List<HistoricTaskInstance> tasks = taskService.getFinishedTaskListByProcessInstanceIdWithoutCancel(processInstanceId);
-        Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(
-                convertSet(tasks, item -> Long.valueOf(item.getAssignee())));
+        Set<Long> assigneeIds = tasks.stream()
+                .map(item -> item.getAssignee())              // 1. 先提取 Assignee 字符串
+                .filter(str -> str != null && !str.isEmpty()) // 2. 过滤掉 null 和空字符串 (或者用 StringUtils.isNotBlank(str))
+                .map(Long::valueOf)                           // 3. 安全地转换为 Long
+                .collect(Collectors.toSet());                 // 4. 收集结果
+        Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(assigneeIds);
         BpmProcessPrintDataRespVO respVO =BpmProcessInstanceConvert.INSTANCE.buildProcessInstancePrintData(historicProcessInstance,
                 processDefinitionService.getProcessDefinitionInfo(historicProcessInstance.getProcessDefinitionId()),
                 tasks, userMap,

@@ -1,5 +1,10 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.leave;
 
+import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
+import cn.iocoder.yudao.module.system.api.dept.DeptApi;
+import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
+import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
+import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -39,6 +44,12 @@ public class LeaveController {
     @Resource
     private LeaveService leaveService;
 
+    @Resource
+    private AdminUserApi adminUserApi;
+
+    @Resource
+    private DeptApi deptApi;
+
     @PostMapping("/create")
     @Operation(summary = "创建假期申请审批")
     @PreAuthorize("@ss.hasPermission('bpm:leave:create')")
@@ -76,9 +87,14 @@ public class LeaveController {
     @Operation(summary = "获得假期申请审批")
     @Parameter(name = "id", description = "编号", required = true, example = "1024")
     @PreAuthorize("@ss.hasPermission('bpm:leave:query')")
+    @DataPermission(enable = false)
     public CommonResult<LeaveRespVO> getLeave(@RequestParam("id") Long id) {
         LeaveDO leave = leaveService.getLeave(id);
-        return success(BeanUtils.toBean(leave, LeaveRespVO.class));
+        AdminUserRespDTO startUser = adminUserApi.getUser(Long.valueOf(leave.getCreator()));
+        DeptRespDTO dept = deptApi.getDept(startUser.getDeptId());
+        LeaveRespVO result = BeanUtils.toBean(leave, LeaveRespVO.class);
+        result.setDeptName(dept.getName());
+        return success(result);
     }
 
     @GetMapping("/page")
@@ -101,5 +117,23 @@ public class LeaveController {
         ExcelUtils.write(response, "假期申请审批.xls", "数据", LeaveRespVO.class,
                         BeanUtils.toBean(list, LeaveRespVO.class));
     }
+
+    @GetMapping("/summary")
+    @DataPermission(enable = false)
+    @PreAuthorize("@ss.hasPermission('bpm:leave:summary')")
+    @Operation(summary = "获得请假统计列表", description = "根据年份、月份、部门、人员统计请假数据")
+    public CommonResult<List<LeaveSummaryRespVO>> getLeaveSummary(@Valid LeaveSummaryReqVO reqVO) {
+        return success(leaveService.getLeaveSummary(reqVO));
+    }
+
+
+    @GetMapping("/detail-list")
+    @Operation(summary = "获得请假详细记录", description = "用于点击统计数字后查看详情")
+    @PreAuthorize("@ss.hasPermission('bpm:leave:summary')")
+    public CommonResult<List<LeaveDO>> getLeaveDetailList(@Valid LeaveSummaryReqVO reqVO) {
+        return success(leaveService.getLeaveDetailList(reqVO));
+    }
+
+
 
 }

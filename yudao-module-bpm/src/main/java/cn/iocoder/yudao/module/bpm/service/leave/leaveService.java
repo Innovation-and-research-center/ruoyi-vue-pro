@@ -62,4 +62,7 @@ public interface LeaveService {
 
     void updateLeaveStatus(Long id, Integer status);
 
+    List<LeaveSummaryRespVO> getLeaveSummary(LeaveSummaryReqVO reqVO);
+
+    List<LeaveDO> getLeaveDetailList(LeaveSummaryReqVO reqVO);
 }

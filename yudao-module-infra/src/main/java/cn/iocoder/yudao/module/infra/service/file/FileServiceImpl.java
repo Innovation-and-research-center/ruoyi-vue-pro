@@ -92,6 +92,40 @@ public class FileServiceImpl implements FileService {
         return url;
     }
 
+    @Override
+    @SneakyThrows
+    public FileDO createFileReturnId(byte[] content, String name, String directory, String type) {
+        // 1.1 处理 type 为空的情况
+        if (StrUtil.isEmpty(type)) {
+            type = FileTypeUtils.getMineType(content, name);
+        }
+        // 1.2 处理 name 为空的情况
+        if (StrUtil.isEmpty(name)) {
+            name = DigestUtil.sha256Hex(content);
+        }
+        if (StrUtil.isEmpty(FileUtil.extName(name))) {
+            // 如果 name 没有后缀 type，则补充后缀
+            String extension = FileTypeUtils.getExtension(type);
+            if (StrUtil.isNotEmpty(extension)) {
+                name = name + extension;
+            }
+        }
+
+        // 2.1 生成上传的 path，需要保证唯一
+        String path = generateUploadPath(name, directory);
+        // 2.2 上传到文件存储器
+        FileClient client = fileConfigService.getMasterFileClient();
+        Assert.notNull(client, "客户端(master) 不能为空");
+        String url = client.upload(content, path, type);
+
+        FileDO fileDO = new FileDO().setConfigId(client.getId())
+                .setName(name).setPath(path).setUrl(url)
+                .setType(type).setSize(content.length);
+        // 3. 保存到数据库
+        fileMapper.insert(fileDO);
+        return fileDO;
+    }
+
     @VisibleForTesting
     String generateUploadPath(String name, String directory) {
         // 1. 生成前缀、后缀

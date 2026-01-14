@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo;
 
+import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocAttachDO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.*;
 import java.util.*;
@@ -24,6 +25,7 @@ public class ReceiveDocSaveReqVO {
     private String sendDocNumber;
 
     @Schema(description = "收文编号")
+    @NotBlank(message = "收文编号不能为空")
     private String receiveDocNumber;
 
     @Schema(description = "收文日期")
@@ -58,6 +60,32 @@ public class ReceiveDocSaveReqVO {
 
     @Schema(description = "下一节点审批人", example = "assist")
     private Map<String, List<Long>> nextNodeAssignees;
+
+    @Schema(description = "流程变量")
+    private String processVariablesStr;
+
+    @Schema(description = "流程变量")
+    private Map<String, Object> processVariables;
+
+    @Schema(description = "公文范围")
+    private String docRange;
+
+    @Schema(description = "附件列表")
+    private List<ReceiveDocAttachDO> fileList;
+
+    @Schema(description = "年份")
+    private String year;
+
+    /**
+     * 发文日期
+     */
+    @Schema(description = "发文日期")
+    private LocalDateTime sendTime;
+
+
+    @Schema(description = "件号")
+    private Long docSequence;
+
 
 
 }

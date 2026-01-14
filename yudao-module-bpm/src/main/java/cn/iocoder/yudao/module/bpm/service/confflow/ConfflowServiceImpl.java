@@ -47,7 +47,10 @@ public class ConfflowServiceImpl implements ConfflowService {
         confflowMapper.insert(confflow);
 
         Map<String, Object> processInstanceVariables = new HashMap<>();
-        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEXT_NODE, createReqVO.getSelectNode());
+        if (CollUtil.isNotEmpty(createReqVO.getProcessVariables())) {
+            processInstanceVariables.putAll(createReqVO.getProcessVariables());
+        }
+//        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEXT_NODE, createReqVO.getSelectNode());
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)

@@ -1,5 +1,7 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.confflow;
 
+import cn.hutool.core.util.StrUtil;
+import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -43,6 +45,9 @@ public class ConfflowController {
     @Operation(summary = "创建会议报告单")
     @PreAuthorize("@ss.hasPermission('bpm:confflow:create')")
     public CommonResult<Long> createConfflow(@Valid @RequestBody ConfflowSaveReqVO createReqVO) {
+        if (StrUtil.isNotEmpty(createReqVO.getProcessVariablesStr())) {
+            createReqVO.setProcessVariables(JsonUtils.parseObject(createReqVO.getProcessVariablesStr(), Map.class));
+        }
         return success(confflowService.createConfflow(getLoginUserId(),createReqVO));
     }
 

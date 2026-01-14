@@ -9,4 +9,70 @@
         文档可见：https://www.iocoder.cn/MyBatis/x-plugins/
      -->
 
+    <resultMap id="LeaveSummaryResult" type="cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.LeaveSummaryRespVO">
+        <result property="userId" column="userid"/>
+        <result property="nickname" column="nickname"/>
+        <result property="deptName" column="dept_name"/>
+        <result property="qxjType" column="qxj_type"/>
+        <result property="totalDays" column="total_days"/>
+        <result property="count" column="count"/>
+    </resultMap>
+
+    <select id="selectLeaveSummaryList" resultMap="LeaveSummaryResult">
+        SELECT
+        t.userid,
+        u.nickname,
+        d.name AS dept_name,
+        t.qxj_type,
+        SUM(t.total_ts) AS total_days,
+        COUNT(t.id) AS count
+        FROM bpm_leave t
+        LEFT JOIN system_users u ON t.userid = u.id
+        LEFT JOIN system_dept d ON u.dept_id = d.id
+        <where>
+            t.deleted = 0
+            <if test="userId != null">
+                AND t.userid = #{userId}
+            </if>
+            <if test="deptId != null">
+                AND u.dept_id = #{deptId}
+            </if>
+            <if test="qxjType != null">
+                AND t.qxj_type = #{qxjType}
+            </if>
+            <if test="beginTime != null">
+                AND t.qxj_start_date &gt;= #{beginTime}
+            </if>
+            <if test="endTime != null">
+                AND t.qxj_start_date &lt;= #{endTime}
+            </if>
+            <if test="qxjType != null">
+                AND t.qxj_type = #{qxjType}
+            </if>
+        </where>
+        GROUP BY t.userid, t.qxj_type, u.nickname, d.name
+
+        HAVING SUM(t.total_ts) > 0
+        ORDER BY t.userid, t.qxj_type
+    </select>
+
+    <select id="selectDetailList" resultType="cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO">
+        SELECT * FROM bpm_leave t
+        <where>
+            t.deleted = 0
+            <if test="userId != null">
+                AND t.userid = #{userId}
+            </if>
+            <if test="qxjType != null">
+                AND t.qxj_type = #{qxjType}
+            </if>
+            <if test="beginTime != null">
+                AND t.qxj_start_date &gt;= #{beginTime}
+            </if>
+            <if test="endTime != null">
+                AND t.qxj_start_date &lt;= #{endTime}
+            </if>
+        </where>
+        ORDER BY t.qxj_start_date DESC
+    </select>
 </mapper>

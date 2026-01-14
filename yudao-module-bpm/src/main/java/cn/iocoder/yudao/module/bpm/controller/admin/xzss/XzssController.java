@@ -1,0 +1,116 @@
+package cn.iocoder.yudao.module.bpm.controller.admin.xzss;
+
+import org.springframework.web.bind.annotation.*;
+import javax.annotation.Resource;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.security.access.prepost.PreAuthorize;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.Operation;
+
+import javax.validation.constraints.*;
+import javax.validation.*;
+import javax.servlet.http.*;
+import java.util.*;
+import java.io.IOException;
+
+import cn.iocoder.yudao.framework.common.pojo.PageParam;
+import cn.iocoder.yudao.framework.common.pojo.PageResult;
+import cn.iocoder.yudao.framework.common.pojo.CommonResult;
+import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
+import static cn.iocoder.yudao.framework.common.pojo.CommonResult.success;
+
+import cn.iocoder.yudao.framework.excel.core.util.ExcelUtils;
+
+import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
+import static cn.iocoder.yudao.framework.apilog.core.enums.OperateTypeEnum.*;
+import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
+
+import cn.iocoder.yudao.module.bpm.controller.admin.xzss.vo.*;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssKzDO;
+import cn.iocoder.yudao.module.bpm.service.xzss.XzssService;
+
+@Tag(name = "管理后台 - 行政诉讼")
+@RestController
+@RequestMapping("/bpm/xzss")
+@Validated
+public class XzssController {
+
+    @Resource
+    private XzssService xzssService;
+
+    @PostMapping("/create")
+    @Operation(summary = "创建行政诉讼")
+    @PreAuthorize("@ss.hasPermission('bpm:xzss:create')")
+    public CommonResult<Long> createXzss(@Valid @RequestBody XzssSaveReqVO createReqVO) {
+        return success(xzssService.createXzss(getLoginUserId(),createReqVO));
+    }
+
+    @PutMapping("/update")
+    @Operation(summary = "更新行政诉讼")
+    @PreAuthorize("@ss.hasPermission('bpm:xzss:update')")
+    public CommonResult<Boolean> updateXzss(@Valid @RequestBody XzssSaveReqVO updateReqVO) {
+        xzssService.updateXzss(updateReqVO);
+        return success(true);
+    }
+
+    @DeleteMapping("/delete")
+    @Operation(summary = "删除行政诉讼")
+    @Parameter(name = "id", description = "编号", required = true)
+    @PreAuthorize("@ss.hasPermission('bpm:xzss:delete')")
+    public CommonResult<Boolean> deleteXzss(@RequestParam("id") Long id) {
+        xzssService.deleteXzss(id);
+        return success(true);
+    }
+
+    @DeleteMapping("/delete-list")
+    @Parameter(name = "ids", description = "编号", required = true)
+    @Operation(summary = "批量删除行政诉讼")
+                @PreAuthorize("@ss.hasPermission('bpm:xzss:delete')")
+    public CommonResult<Boolean> deleteXzssList(@RequestParam("ids") List<Long> ids) {
+        xzssService.deleteXzssListByIds(ids);
+        return success(true);
+    }
+
+    @GetMapping("/get")
+    @Operation(summary = "获得行政诉讼")
+    @Parameter(name = "id", description = "编号", required = true, example = "1024")
+    @PreAuthorize("@ss.hasPermission('bpm:xzss:query')")
+    public CommonResult<XzssRespVO> getXzss(@RequestParam("id") Long id) {
+        XzssDO xzss = xzssService.getXzss(id);
+        return success(BeanUtils.toBean(xzss, XzssRespVO.class));
+    }
+
+    @GetMapping("/page")
+    @Operation(summary = "获得行政诉讼分页")
+    @PreAuthorize("@ss.hasPermission('bpm:xzss:query')")
+    public CommonResult<PageResult<XzssRespVO>> getXzssPage(@Valid XzssPageReqVO pageReqVO) {
+        PageResult<XzssDO> pageResult = xzssService.getXzssPage(pageReqVO);
+        return success(BeanUtils.toBean(pageResult, XzssRespVO.class));
+    }
+
+    @GetMapping("/export-excel")
+    @Operation(summary = "导出行政诉讼 Excel")
+    @PreAuthorize("@ss.hasPermission('bpm:xzss:export')")
+    @ApiAccessLog(operateType = EXPORT)
+    public void exportXzssExcel(@Valid XzssPageReqVO pageReqVO,
+              HttpServletResponse response) throws IOException {
+        pageReqVO.setPageSize(PageParam.PAGE_SIZE_NONE);
+        List<XzssDO> list = xzssService.getXzssPage(pageReqVO).getList();
+        // 导出 Excel
+        ExcelUtils.write(response, "行政诉讼.xls", "数据", XzssRespVO.class,
+                        BeanUtils.toBean(list, XzssRespVO.class));
+    }
+
+    // ==================== 子表（行政诉讼拓展） ====================
+
+    @GetMapping("/xzss-kz/get-by-xm-guid")
+    @Operation(summary = "获得行政诉讼拓展")
+    @Parameter(name = "xmGuid", description = "备用主键")
+    @PreAuthorize("@ss.hasPermission('bpm:xzss:query')")
+    public CommonResult<XzssKzDO> getXzssKzByXmGuid(@RequestParam("xmGuid") String xmGuid) {
+        return success(xzssService.getXzssKzByXmGuid(xmGuid));
+    }
+
+}

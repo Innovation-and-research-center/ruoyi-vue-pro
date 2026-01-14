@@ -3,6 +3,7 @@ package cn.iocoder.yudao.module.bpm.service.receivedoc;
 import java.util.*;
 import javax.validation.*;
 import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.*;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocAttachDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocDO;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.pojo.PageParam;
@@ -21,6 +22,14 @@ public interface ReceiveDocService {
      * @return 编号
      */
     Long createReceiveDoc(Long userId,@Valid ReceiveDocSaveReqVO createReqVO);
+
+    Long saveReceiveDoc(Long userId,@Valid ReceiveDocSaveReqVO createReqVO);
+
+    String generateDocumentSequence(ReceiveDocCreateNumberVO createReqVO);
+
+    Long generateDocumentSequence(String docClass);
+
+    void createFlowReceiveDoc(Long userId,@Valid ReceiveDocSaveReqVO createReqVO);
 
     /**
      * 更新收文
@@ -58,5 +67,7 @@ public interface ReceiveDocService {
      * @return 收文分页
      */
     PageResult<ReceiveDocDO> getReceiveDocPage(ReceiveDocPageReqVO pageReqVO);
+
+    List<ReceiveFileRespVO> getReceiveDocAttachListByReceiveDocId(Long receiveDocId);
 
 }

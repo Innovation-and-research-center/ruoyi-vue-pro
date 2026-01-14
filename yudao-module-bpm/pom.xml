@@ -78,5 +78,12 @@
             <groupId>org.liquibase</groupId>
             <artifactId>liquibase-core</artifactId>
         </dependency>
+
+        <dependency>
+            <groupId>com.aspose</groupId>
+            <artifactId>aspose-words</artifactId>
+            <version>22.12</version>
+            <classifier>jdk17</classifier>
+        </dependency>
     </dependencies>
 </project>

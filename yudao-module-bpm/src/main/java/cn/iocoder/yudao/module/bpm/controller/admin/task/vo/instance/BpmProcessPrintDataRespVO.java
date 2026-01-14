@@ -46,6 +46,14 @@ public class BpmProcessPrintDataRespVO {
         @Schema(description = "任务描述", requiredMode = Schema.RequiredMode.REQUIRED)
         private String description; // 该字段由后端拼接
 
+        @Schema(description = "审批人员", example = "芋道")
+        private String approveName;
+
+        @Schema(description = "审批时间", example = "芋道")
+        private String approveDate;
+
+        @Schema(description = "意见", example = "芋道")
+        private String  content;
     }
 
 }

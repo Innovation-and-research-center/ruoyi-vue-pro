@@ -16,6 +16,7 @@ import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.controller.admin.definition.vo.model.BpmModelMetaInfoVO;
 import cn.iocoder.yudao.module.bpm.controller.admin.definition.vo.model.simple.BpmSimpleModelNodeVO;
+import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.ConditionResult;
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.*;
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmApprovalDetailRespVO.ActivityNodeTask;
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskRespVO;
@@ -43,6 +44,7 @@ import cn.iocoder.yudao.module.system.api.dept.DeptApi;
 import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
+import jodd.util.StringUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.bpmn.constants.BpmnXMLConstants;
 import org.flowable.bpmn.model.*;
@@ -321,8 +323,6 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             if (historicProcessInstance == null) {
                 throw exception(ErrorCodeConstants.PROCESS_INSTANCE_NOT_EXISTS);
             }
-//            startUserId = Long.valueOf(historicProcessInstance.getStartUserId());
-//            processInstanceStatus = FlowableUtils.getProcessInstanceStatus(historicProcessInstance);
             // 合并 DB 和前端传递的流量变量，以前端的为主
             if (CollUtil.isNotEmpty(historicProcessInstance.getProcessVariables())) {
                 processVariables.putAll(historicProcessInstance.getProcessVariables());
@@ -344,7 +344,6 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         if (bpmnModel == null) {
             throw exception(ErrorCodeConstants.MODEL_NOT_EXISTS);
         }
-//        List<FlowElement> flowElements = BpmnModelUtils.simulateProcess(bpmnModel, processVariables);
         FlowElement sourceElement = null;
         if(reqVO.getTaskId() == null){
             Process process = bpmnModel.getMainProcess();
@@ -555,14 +554,78 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             } else if (target instanceof Gateway) {
                 // 遇到网关，递归穿透
                 analyzeOutgoingFlows((FlowNode) target, result);
+            }else if (target instanceof SubProcess) {
+                // ================== 新增逻辑开始 ==================
+                // 3. 遇到子流程 (嵌入式子流程)
+                SubProcess subProcess = (SubProcess) target;
+
+                String parentConditionStr = flow.getConditionExpression();
+
+                int beforeSize = result.size();
+                // 获取子流程内部的所有元素
+                Collection<FlowElement> subElements = subProcess.getFlowElements();
+
+                // 遍历找到子流程内部的“开始事件”
+                for (FlowElement subElement : subElements) {
+                    if (subElement instanceof StartEvent) {
+                        // 找到 StartEvent 后，将其视为普通的 FlowNode，递归调用本方法
+                        // 这样就能顺着 StartEvent -> 线 -> 内部的 UserTask 找到了
+                        analyzeOutgoingFlows((FlowNode) subElement, result);
+                    }
+                }
+
+                if (StringUtil.isNotEmpty(parentConditionStr)) {
+                    // 解析父条件
+                    ConditionResult parentCondition = extractConditionValue(parentConditionStr);
+
+                    // 遍历本次递归新增的任务 (从 beforeSize 开始到当前 size)
+                    for (int i = beforeSize; i < result.size(); i++) {
+                        BpmNextTaskRespVO childTaskVO = result.get(i);
+
+                        // 【关键点】这里有两种处理策略，根据你的业务复杂度选择：
+
+                        // 策略 A：直接覆盖（适用于内部 Start -> Task 之间通常没有连线条件的场景）
+                        if (childTaskVO.getConditionExpression() == null) {
+                            childTaskVO.setConditionExpression(parentCondition);
+                        }
+                        // 策略 B：合并条件（如果内部也有条件，则是 "外部条件 && 内部条件"）
+                        else {
+                            // 这里需要你实现一个合并逻辑，比如将两个条件对象合并
+                            // mergeConditions(childTaskVO.getConditionExpression(), parentCondition);
+                            // 简单示例：如果只是字符串，可以做拼接，如果是对象，需自行扩展
+                        }
+                    }
+                }
+            }else if (target instanceof EndEvent) {
+                // 3. 找到结束事件：处理流程终点
+                // 这里可以根据业务需求决定是否加入 result，或者打上一个“流程结束”的标记
+                String targetName = StringUtil.isNotEmpty(target.getName()) ? target.getName() : "结束";
+                result.add(new BpmNextTaskRespVO().setTaskName(targetName).setTaskDefKey("end"));
             }
+
         }
     }
 
-    private String extractConditionValue(String conditionExpression) {
-        if (conditionExpression == null) return "default";
-        Matcher matcher = Pattern.compile("==\\s*[\"'](.*?)[\"']").matcher(conditionExpression);
-        return matcher.find() ? matcher.group(1) : "default";
+    private ConditionResult extractConditionValue(String conditionExpression) {
+//        if (conditionExpression == null) return "default";
+//        Matcher matcher = Pattern.compile("==\\s*[\"'](.*?)[\"']").matcher(conditionExpression);
+//        return matcher.find() ? matcher.group(1) : "default";
+        if (conditionExpression == null) {
+            return null; // 或者返回一个默认对象
+        }
+        // 正则表达式解释：
+        // variables:get\((.*?)\)  -> 捕获组1：匹配 get(...) 括号里面的内容 (即 Key)
+        // \s*==\s* -> 匹配等号，允许周围有空格
+        // ["'](.*?)["']          -> 捕获组2：匹配单引号或双引号里面的内容 (即 Value)
+        String regex = "variables:get\\((.*?)\\)\\s*==\\s*[\"'](.*?)[\"']";
+        Matcher matcher = Pattern.compile(regex).matcher(conditionExpression);
+        if (matcher.find()) {
+            String key = matcher.group(1).trim(); // 获取第一个括号捕获的内容
+            String value = matcher.group(2).trim(); // 获取第二个括号捕获的内容
+            return new ConditionResult(key, value);
+        }
+        return null; // 如果没匹配到，返回 null 或默认值
+
     }
 
 
@@ -570,7 +633,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         BpmNextTaskRespVO vo = new BpmNextTaskRespVO();
         vo.setTaskDefKey(userTask.getId());
         vo.setTaskName(userTask.getName());
-        String extractedValue = extractConditionValue(condition);
+        ConditionResult extractedValue = extractConditionValue(condition);
         vo.setConditionExpression(extractedValue);
         // 解析目标节点的拓展属性
         vo.setExtensionProperties(parseAllProperties(userTask));
@@ -1295,5 +1358,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
         });
     }
+
+
 
 }

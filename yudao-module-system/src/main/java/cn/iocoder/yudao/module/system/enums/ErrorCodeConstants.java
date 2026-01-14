@@ -175,4 +175,8 @@ public interface ErrorCodeConstants {
     ErrorCode PERSON_NOT_EXISTS = new ErrorCode(1_002_029_002, "值班人员不存在");
     ErrorCode DUTY_DATE_EXISTS = new ErrorCode(1_002_029_003, "值班日期已经存在");
 
+
+
+    ErrorCode HOLIDAY_NOT_EXISTS = new ErrorCode(1_002_030_000, "节假日不存在");
+    ErrorCode HOLIDAY_IMPORT_LIST_IS_EMPTY = new ErrorCode(1_002_030_004, "导入节假日数据不能为空！");
 }

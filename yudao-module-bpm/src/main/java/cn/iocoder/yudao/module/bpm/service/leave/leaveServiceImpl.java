@@ -16,6 +16,10 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.temporal.TemporalAdjusters;
 import java.util.*;
 import cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
@@ -177,6 +181,70 @@ public class LeaveServiceImpl implements LeaveService {
     public void updateLeaveStatus(Long id, Integer status) {
         validateLeaveExists(id);
         leaveMapper.updateById(new LeaveDO().setId(id).setSpzt(status.shortValue()));
+    }
+
+    @Override
+    public List<LeaveSummaryRespVO> getLeaveSummary(LeaveSummaryReqVO reqVO) {
+        // 如果没有传年份，默认不进行时间过滤，或者你可以设置为当前年份
+        if (reqVO.getYear() != null) {
+            int year = reqVO.getYear();
+            LocalDateTime beginTime;
+            LocalDateTime endTime;
+
+            if (reqVO.getMonth() != null) {
+                // 统计指定月：例如 2024-02-01 00:00:00 到 2024-02-29 23:59:59
+                LocalDate firstDay = LocalDate.of(year, reqVO.getMonth(), 1);
+                LocalDate lastDay = firstDay.with(TemporalAdjusters.lastDayOfMonth());
+
+                beginTime = LocalDateTime.of(firstDay, LocalTime.MIN);
+                endTime = LocalDateTime.of(lastDay, LocalTime.MAX);
+            } else {
+                // 统计整年：2024-01-01 到 2024-12-31
+                LocalDate firstDay = LocalDate.of(year, 1, 1);
+                LocalDate lastDay = LocalDate.of(year, 12, 31);
+
+                beginTime = LocalDateTime.of(firstDay, LocalTime.MIN);
+                endTime = LocalDateTime.of(lastDay, LocalTime.MAX);
+            }
+
+            // 将计算好的时间填入 VO，传给 Mapper
+            reqVO.setBeginTime(beginTime);
+            reqVO.setEndTime(endTime);
+        }
+
+        // 执行查询
+        return leaveMapper.selectLeaveSummaryList(reqVO);
+    }
+
+
+    @Override
+    public List<LeaveDO> getLeaveDetailList(LeaveSummaryReqVO reqVO) {
+        // 复用之前的年月转时间范围逻辑
+        if (reqVO.getYear() != null) {
+            int year = reqVO.getYear();
+            LocalDateTime beginTime;
+            LocalDateTime endTime;
+
+            if (reqVO.getMonth() != null) {
+                // 统计指定月：例如 2024-02-01 00:00:00 到 2024-02-29 23:59:59
+                LocalDate firstDay = LocalDate.of(year, reqVO.getMonth(), 1);
+                LocalDate lastDay = firstDay.with(TemporalAdjusters.lastDayOfMonth());
+
+                beginTime = LocalDateTime.of(firstDay, LocalTime.MIN);
+                endTime = LocalDateTime.of(lastDay, LocalTime.MAX);
+            } else {
+                // 统计整年：2024-01-01 到 2024-12-31
+                LocalDate firstDay = LocalDate.of(year, 1, 1);
+                LocalDate lastDay = LocalDate.of(year, 12, 31);
+
+                beginTime = LocalDateTime.of(firstDay, LocalTime.MIN);
+                endTime = LocalDateTime.of(lastDay, LocalTime.MAX);
+            }
+
+            reqVO.setBeginTime(beginTime);
+            reqVO.setEndTime(endTime);
+        }
+        return leaveMapper.selectDetailList(reqVO);
     }
 
 }

@@ -12,19 +12,12 @@
 -- ----------------------------
 -- Table structure for dual
 -- ----------------------------
-DROP TABLE IF EXISTS dual;
-CREATE TABLE dual
-(
-    id int2
-);
 
-COMMENT ON TABLE dual IS '数据库连接的表';
 
 -- ----------------------------
 -- Records of dual
 -- ----------------------------
 -- @formatter:off
-INSERT INTO dual VALUES (1);
 -- @formatter:on
 
 -- ----------------------------

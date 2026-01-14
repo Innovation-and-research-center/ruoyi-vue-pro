@@ -20,6 +20,7 @@ import javax.validation.ConstraintViolationException;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
@@ -129,7 +130,16 @@ public class DutyStaffServiceImpl implements DutyStaffService {
             List<DutyStaffDO> duty = staffMapper.selectByDate(importDuty.getDutyDate());
             AdminUserDO leader = userMapper.selectByUsername(importDuty.getLeader());
             AdminUserDO staff = userMapper.selectByUsername(importDuty.getStaff());
-            LocalDate dutyDate = LocalDate.parse(importDuty.getDutyDate());
+            String dateString = importDuty.getDutyDate();
+            LocalDate dutyDate;
+            if (dateString.contains("/")) {
+                // 处理 2022/2/15 格式
+                DateTimeFormatter slashFormatter = DateTimeFormatter.ofPattern("yyyy/M/d");
+                dutyDate = LocalDate.parse(dateString, slashFormatter);
+            } else {
+                // 默认处理 2022-02-15 格式
+                dutyDate = LocalDate.parse(dateString);
+            }
             DutyStaffDO leaderDuty = DutyStaffDO.builder()
                     .dutyDate(dutyDate.atStartOfDay())
                     .staffName(leader.getUsername())
@@ -144,7 +154,7 @@ public class DutyStaffServiceImpl implements DutyStaffService {
                     .userId(staff.getId())
                     .smsCount(0L)
                     .build();
-            if (duty == null) {
+            if (duty.isEmpty()) {
                 staffMapper.insert(leaderDuty);
                 staffMapper.insert(staffDuty);
                 respVO.getCreateDutyNames().add(importDuty.getDutyDate());

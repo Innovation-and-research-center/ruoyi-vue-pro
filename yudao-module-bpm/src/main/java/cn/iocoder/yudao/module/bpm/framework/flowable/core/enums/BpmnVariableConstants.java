@@ -56,6 +56,8 @@ public class BpmnVariableConstants {
      */
     public static final String PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES = "PROCESS_LAST_NODE_SELECT_ASSIGNEES";
 
+    public static final String PROCESS_INSTANCE_VARIABLE_LAST_UPDATE_TIME = "PROCESS_LAST_UPDATE_TIME";
+
     /**
      * 流程实例的变量 - 发起用户 ID
      *
