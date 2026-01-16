@@ -38,6 +38,9 @@ import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.diffList;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.*;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_CUSTOM_NAME;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_URGENCY_DEGREE;
+
 /**
  * 收文 Service 实现类
  *
@@ -85,14 +88,22 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         receiveDocMapper.insert(receiveDoc);
         createReceiveDocAttachList(receiveDoc.getId(), createReqVO.getFileList());
         Map<String, Object> processInstanceVariables = new HashMap<>();
+
         if (CollUtil.isNotEmpty(createReqVO.getProcessVariables())) {
             processInstanceVariables.putAll(createReqVO.getProcessVariables());
         }
         String realKey=PROCESS_KEY;
+        String processName = "收文";
         if (!StringUtil.isEmpty(createReqVO.getDocRange())){
             realKey=PROCESS_KEY_CHANGE;
+            processName="电子公告";
         }
+
 //        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEXT_NODE, createReqVO.getSelectNode());
+        //自定义标题
+        String customName =StringUtil.isEmpty(receiveDoc.getSubject()) ? processName:receiveDoc.getSubject();
+        processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
+        processInstanceVariables.put(PROCESS_URGENCY_DEGREE, receiveDoc.getUrgencyDegree());
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(realKey)
@@ -248,6 +259,9 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
             realKey=PROCESS_KEY_CHANGE;
         }
 //        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEXT_NODE, createReqVO.getSelectNode());
+        String customName =StringUtil.isEmpty(updateReqVO.getSubject()) ? "收文":updateReqVO.getSubject();
+        processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
+        processInstanceVariables.put(PROCESS_URGENCY_DEGREE, updateReqVO.getUrgencyDegree());
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, updateReqVO.getNextNodeAssignees());
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(realKey)

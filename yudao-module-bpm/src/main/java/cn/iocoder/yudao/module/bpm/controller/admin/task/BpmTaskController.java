@@ -60,6 +60,7 @@ public class BpmTaskController {
     @Resource
     private DeptApi deptApi;
 
+
     @GetMapping("todo-page")
     @Operation(summary = "获取 Todo 待办任务分页")
     @PreAuthorize("@ss.hasPermission('bpm:task:query')")
@@ -68,7 +69,6 @@ public class BpmTaskController {
         if (CollUtil.isEmpty(pageResult.getList())) {
             return success(PageResult.empty());
         }
-
         // 拼接数据
         Map<String, ProcessInstance> processInstanceMap = processInstanceService.getProcessInstanceMap(
                 convertSet(pageResult.getList(), Task::getProcessInstanceId));

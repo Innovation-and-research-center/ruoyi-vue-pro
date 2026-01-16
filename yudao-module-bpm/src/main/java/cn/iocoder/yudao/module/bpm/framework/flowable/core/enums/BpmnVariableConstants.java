@@ -107,6 +107,10 @@ public class BpmnVariableConstants {
      */
     public static final String PROCESS_DEFINITION_NAME = "PROCESS_DEFINITION_NAME";
 
+    public static final String PROCESS_CUSTOM_NAME = "PROCESS_CUSTOM_NAME";
+
+    public static final String PROCESS_URGENCY_DEGREE = "PROCESS_URGENCY_DEGREE";
+
     /**
      * 任务的变量 - 状态
      *

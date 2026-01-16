@@ -5,6 +5,7 @@ import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
+import jodd.util.StringUtil;
 import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -28,6 +29,7 @@ import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.diffList;
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.XZSS;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_CUSTOM_NAME;
 
 /**
  * 行政诉讼 Service 实现类
@@ -61,6 +63,8 @@ public class XzssServiceImpl implements XzssService {
         // 插入子表
         createXzssKz(xzss.getXmGuid(), createReqVO.getXzssKz());
         Map<String, Object> processInstanceVariables = new HashMap<>();
+        String customName = StringUtil.isEmpty(createReqVO.getSqr()) ? "行政诉讼":createReqVO.getSqr();
+        processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)

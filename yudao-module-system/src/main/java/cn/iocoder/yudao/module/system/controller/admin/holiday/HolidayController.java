@@ -132,4 +132,11 @@ public class HolidayController {
         return success(holidayService.importHolidayList(list, updateSupport));
     }
 
+
+    @GetMapping("/get-all-summary")
+    @Operation(summary = "获得所有年份的节假日汇总")
+    public CommonResult<List<Map<String, String>>> getAllHolidaySummary() {
+        return success(holidayService.getAllHolidaySummary());
+    }
+
 }

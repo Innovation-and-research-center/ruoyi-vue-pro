@@ -65,4 +65,6 @@ public interface HolidayService {
 
     HolidayImportRespVO importHolidayList(List<HolidayImportExcelVO> importHolidays, boolean isUpdateSupport);
 
+    List<Map<String, String>> getAllHolidaySummary();
+
 }

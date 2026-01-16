@@ -7,6 +7,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
@@ -17,8 +18,11 @@ public class BpmTaskRespVO {
     @Schema(description = "任务编号", requiredMode = Schema.RequiredMode.REQUIRED, example = "1024")
     private String id;
 
-    @Schema(description = "任务名字", requiredMode = Schema.RequiredMode.REQUIRED, example = "芋道")
+    @Schema(description = "流程名称", requiredMode = Schema.RequiredMode.REQUIRED, example = "芋道")
     private String name;
+
+    @Schema(description = "任务名字", requiredMode = Schema.RequiredMode.REQUIRED, example = "芋道")
+    private String taskName;
 
     @Schema(description = "创建时间", requiredMode = Schema.RequiredMode.REQUIRED)
     private LocalDateTime createTime;
@@ -28,6 +32,12 @@ public class BpmTaskRespVO {
 
     @Schema(description = "持续时间", example = "1000")
     private Long durationInMillis;
+
+    @Schema(description = "截止时间")
+    private LocalDateTime dueDate;;
+
+    @Schema(description = "紧急程度")
+    private String urgencyDegree;
 
     @Schema(description = "任务状态", requiredMode = Schema.RequiredMode.REQUIRED, example = "2")
     private Integer status; // 参见 BpmTaskStatusEnum 枚举
@@ -106,6 +116,10 @@ public class BpmTaskRespVO {
 
         @Schema(description = "流程摘要", example = "[]")
         private List<KeyValue<String, String>> summary; // 只有流程表单，才有摘要！
+
+
+        @Schema(description = "流程定义的key", example = "2048")
+        private String processDefinitionKey;
 
         /**
          * 发起人的用户信息

@@ -31,6 +31,7 @@ import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.
 import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.OUT;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_CUSTOM_NAME;
 
 /**
  * 外出请假补假 Service 实现类
@@ -105,8 +106,10 @@ public class TimeExplainServiceImpl implements TimeExplainService {
                 }
             }
         }
+        String customName = user.getNickname() + "的因公外出申请";
         Map<String, Object> processInstanceVariables = new HashMap<>();
         processInstanceVariables.put("role_condition", roleCondition);
+        processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
                         .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(out.getId()))

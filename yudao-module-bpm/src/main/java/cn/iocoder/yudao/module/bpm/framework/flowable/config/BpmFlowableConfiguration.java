@@ -2,6 +2,7 @@ package cn.iocoder.yudao.module.bpm.framework.flowable.config;
 
 import cn.hutool.core.collection.ListUtil;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.behavior.BpmActivityBehaviorFactory;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.behavior.TimeoutBpmnParseHandler;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.candidate.BpmTaskCandidateInvoker;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.candidate.BpmTaskCandidateStrategy;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.event.BpmProcessInstanceEventPublisher;
@@ -80,7 +81,8 @@ public class BpmFlowableConfiguration {
     public EngineConfigurationConfigurer<SpringProcessEngineConfiguration> bpmProcessEngineConfigurationConfigurer(
             ObjectProvider<FlowableEventListener> listeners,
             ObjectProvider<FlowableFunctionDelegate> customFlowableFunctionDelegates,
-            BpmActivityBehaviorFactory bpmActivityBehaviorFactory) {
+            BpmActivityBehaviorFactory bpmActivityBehaviorFactory,
+            TimeoutBpmnParseHandler timeoutBpmnParseHandler) {
         return configuration -> {
             configuration.setDatabaseType("postgres");
             // 注册监听器，例如说 BpmActivityEventListener
@@ -89,6 +91,7 @@ public class BpmFlowableConfiguration {
             configuration.setActivityBehaviorFactory(bpmActivityBehaviorFactory);
             // 设置自定义的函数
             configuration.setCustomFlowableFunctionDelegates(ListUtil.toList(customFlowableFunctionDelegates.stream().iterator()));
+            configuration.setPostBpmnParseHandlers(ListUtil.toList(timeoutBpmnParseHandler));
         };
     }
 

@@ -6,6 +6,7 @@ import cn.iocoder.yudao.framework.common.util.validation.ValidationUtils;
 import cn.iocoder.yudao.framework.datapermission.core.util.DataPermissionUtils;
 import cn.iocoder.yudao.module.system.dal.dataobject.dutystaff.DutyStaffDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
 import javax.validation.ConstraintViolationException;
@@ -16,6 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
+
 import cn.iocoder.yudao.module.system.controller.admin.holiday.vo.*;
 import cn.iocoder.yudao.module.system.dal.dataobject.holiday.HolidayDO;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
@@ -142,6 +145,55 @@ public class HolidayServiceImpl implements HolidayService {
 
         });
         return importRespVO;
+    }
+
+    @Override
+    public List<Map<String, String>> getAllHolidaySummary() {
+        // 1. 查询所有节假日数据（按时间排序，方便后续处理）
+        List<HolidayDO> allList = holidayMapper.selectList(
+                new LambdaQueryWrapper<HolidayDO>().orderByAsc(HolidayDO::getSettingDate)
+        );
+
+        if (allList.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 2. 按年份分组 Map<Integer, List<HolidayDO>>
+        // 假设 getSettingDate() 返回的是 LocalDateTime。如果是 Date 类型，请看代码下方的注释修改。
+        Map<Integer, List<HolidayDO>> groupedByYear = allList.stream()
+                .collect(Collectors.groupingBy(item -> item.getSettingDate().getYear()));
+
+        // 3. 构建结果列表
+        List<Map<String, String>> resultList = new ArrayList<>();
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+        // 4. 遍历每个年份的数据
+        groupedByYear.forEach((year, list) -> {
+            // 提取工作日 (isworkday = 1)
+            String workDayStr = list.stream()
+                    .filter(item -> item.getIsworkday() != null && item.getIsworkday() == 1)
+                    .map(item -> item.getSettingDate().format(formatter))
+                    .collect(Collectors.joining(","));
+
+            // 提取休息日 (isworkday = 0) -> 对应 key "restFat"
+            String restFatStr = list.stream()
+                    .filter(item -> item.getIsworkday() != null && item.getIsworkday() == 0)
+                    .map(item -> item.getSettingDate().format(formatter))
+                    .collect(Collectors.joining(","));
+
+            // 组装单个年份的 Map
+            Map<String, String> map = new HashMap<>();
+            map.put("year", String.valueOf(year));
+            map.put("workDay", workDayStr);
+            map.put("restDay", restFatStr);
+
+            resultList.add(map);
+        });
+
+        // 5. 按年份排序返回 (比如 2025, 2026...)
+        resultList.sort(Comparator.comparing(m -> m.get("year")));
+
+        return resultList;
     }
 
 

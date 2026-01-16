@@ -30,6 +30,7 @@ import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionU
 import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.*;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_CUSTOM_NAME;
 
 /**
  * 假期申请审批 Service 实现类
@@ -121,11 +122,16 @@ public class LeaveServiceImpl implements LeaveService {
             days_condition3 = "3_5";
         }
 
+        //自定义标题
+        String customName = user.getNickname() + "的请假申请";
+
         // 发起 BPM 流程
         Map<String, Object> processInstanceVariables = new HashMap<>();
         processInstanceVariables.put("role_condition", roleCondition);
         processInstanceVariables.put("days_condition3", days_condition3);
         processInstanceVariables.put("days_condition4", days_condition4);
+        processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
+
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
                         .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(leave.getId()))

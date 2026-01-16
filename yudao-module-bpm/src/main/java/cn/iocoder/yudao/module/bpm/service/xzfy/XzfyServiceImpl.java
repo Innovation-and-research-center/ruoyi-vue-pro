@@ -4,6 +4,7 @@ import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
+import jodd.util.StringUtil;
 import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -26,6 +27,7 @@ import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.LEAVE;
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.XZFY;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.XZFY_NOT_EXISTS;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_CUSTOM_NAME;
 
 /**
  * 行政复议 Service 实现类
@@ -62,6 +64,8 @@ public class XzfyServiceImpl implements XzfyService {
         createXzfyKz(guidString, createReqVO.getXzfyKz());
 
         Map<String, Object> processInstanceVariables = new HashMap<>();
+        String customName = StringUtil.isEmpty(createReqVO.getSqr()) ? "行政复议":createReqVO.getSqr();
+        processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)

@@ -1,6 +1,7 @@
 package cn.iocoder.yudao.module.bpm.convert.task;
 
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.convert.Convert;
 import cn.hutool.core.map.MapUtil;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.util.collection.CollectionUtils;
@@ -30,6 +31,7 @@ import java.util.Map;
 
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList;
 import static cn.iocoder.yudao.framework.common.util.collection.MapUtils.findAndThen;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_URGENCY_DEGREE;
 
 /**
  * Bpm 任务 Convert
@@ -46,14 +48,19 @@ public interface BpmTaskConvert {
                                                         Map<Long, AdminUserRespDTO> userMap,
                                                         Map<String, BpmProcessDefinitionInfoDO> processDefinitionInfoMap) {
         return BeanUtils.toBean(pageResult, BpmTaskRespVO.class, taskVO -> {
+
             ProcessInstance processInstance = processInstanceMap.get(taskVO.getProcessInstanceId());
             if (processInstance == null) {
                 return;
             }
+            taskVO.setTaskName(processInstance.getProcessDefinitionName());
+            taskVO.setUrgencyDegree(cn.hutool.core.map.MapUtil.getStr(processInstance.getProcessVariables(), PROCESS_URGENCY_DEGREE));
             taskVO.setProcessInstance(BeanUtils.toBean(processInstance, BpmTaskRespVO.ProcessInstance.class));
             AdminUserRespDTO startUser = userMap.get(NumberUtils.parseLong(processInstance.getStartUserId()));
             taskVO.getProcessInstance().setStartUser(BeanUtils.toBean(startUser, UserSimpleBaseVO.class));
             taskVO.getProcessInstance().setCreateTime(DateUtils.of(processInstance.getStartTime()));
+            taskVO.getProcessInstance().setProcessDefinitionKey(processInstance.getProcessDefinitionKey());
+
             // 摘要
             taskVO.getProcessInstance().setSummary(FlowableUtils.getSummary(processDefinitionInfoMap.get(processInstance.getProcessDefinitionId()),
                     processInstance.getProcessVariables()));
