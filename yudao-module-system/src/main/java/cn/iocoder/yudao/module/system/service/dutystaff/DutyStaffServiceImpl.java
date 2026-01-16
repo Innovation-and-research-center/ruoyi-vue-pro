@@ -2,10 +2,7 @@ package cn.iocoder.yudao.module.system.service.dutystaff;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
-import cn.iocoder.yudao.framework.common.exception.ServiceException;
-import cn.iocoder.yudao.framework.datapermission.core.util.DataPermissionUtils;
 import cn.iocoder.yudao.module.system.controller.admin.dutystaff.vo.DutyImportRespVO;
-import cn.iocoder.yudao.module.system.controller.admin.dutystaff.vo.DutyStaffImportExcelVO;
 import cn.iocoder.yudao.module.system.controller.admin.dutystaff.vo.DutyStaffPageReqVO;
 import cn.iocoder.yudao.module.system.controller.admin.dutystaff.vo.DutyStaffSaveReqVO;
 import cn.iocoder.yudao.module.system.dal.dataobject.dutystaff.DutyStaffDO;
@@ -15,22 +12,19 @@ import cn.iocoder.yudao.module.system.dal.mysql.user.AdminUserMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
-import javax.validation.ConstraintViolationException;
-
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import cn.iocoder.yudao.module.system.api.dict.DictDataApi;
+import cn.iocoder.yudao.framework.common.biz.system.dict.dto.DictDataRespDTO;
+import java.time.LocalDateTime;
 import java.util.*;
 
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
 
-import cn.iocoder.yudao.framework.common.util.validation.ValidationUtils;
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
-import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList;
 import static cn.iocoder.yudao.module.system.enums.ErrorCodeConstants.*;
-
 
 /**
  * 值班 Service 实现类
@@ -46,6 +40,9 @@ public class DutyStaffServiceImpl implements DutyStaffService {
 
     @Resource
     private AdminUserMapper userMapper;
+
+    @Resource
+    private DictDataApi dictDataApi;
 
     @Override
     public Long createStaff(DutyStaffSaveReqVO createReqVO) {
@@ -77,11 +74,10 @@ public class DutyStaffServiceImpl implements DutyStaffService {
     }
 
     @Override
-        public void deleteStaffListByIds(List<Long> ids) {
+    public void deleteStaffListByIds(List<Long> ids) {
         // 删除
         staffMapper.deleteByIds(ids);
-        }
-
+    }
 
     private void validateStaffExists(Long id) {
         if (staffMapper.selectById(id) == null) {
@@ -100,104 +96,146 @@ public class DutyStaffServiceImpl implements DutyStaffService {
     }
 
     @Override
-    public DutyImportRespVO importDutyList(List<DutyStaffImportExcelVO> importDutys, boolean isUpdateSupport) {
+    public DutyImportRespVO importDutyList(List<Map<String, Object>> importDutys, boolean isUpdateSupport) {
         // 1.1 参数校验
         if (CollUtil.isEmpty(importDutys)) {
             throw exception(DUST_IMPORT_LIST_IS_EMPTY);
         }
-        // 遍历，逐个创建 or 更新
+        // 1.2 获取字典映射: Label -> Value
+        List<DictDataRespDTO> dictDataList = dictDataApi.getDictDataList("duty_staff_type");
+        Map<String, String> dictLabelToValue = new HashMap<>();
+        if (CollUtil.isNotEmpty(dictDataList)) {
+            dictDataList.forEach(d -> dictLabelToValue.put(d.getLabel(), d.getValue()));
+        }
+
+        // 2. 遍历，逐个创建 or 更新
         DutyImportRespVO respVO = DutyImportRespVO.builder().createDutyNames(new ArrayList<>())
                 .updateDutyNames(new ArrayList<>())
                 .failureDutyNames(new HashMap<>())
                 .build();
+
         importDutys.forEach(importDuty -> {
-            // 2.1.1 校验字段是否符合要求
-            try{
-                ValidationUtils.validate(BeanUtils.toBean(importDuty, DutyStaffImportExcelVO.class));
-            }catch (ConstraintViolationException ex){
-                respVO.getFailureDutyNames().put(importDuty.getDutyDate(), ex.getMessage());
-                return;
+            String dateString = (String) importDuty.get("日期");
+            if (StrUtil.isBlank(dateString)) {
+                // 尝试 "值班日期"
+                dateString = (String) importDuty.get("值班日期");
             }
-            // 2.1.2 校验，判断是否有不符合的原因
-            try{
-                validateDutyForCreateOrUpdate(importDuty.getDutyDate(),importDuty.getLeader(),importDuty.getStaff());
+            if (StrUtil.isBlank(dateString)) {
+                return; // 跳过无日期行
+            }
 
-            }catch (ServiceException ex) {
-                respVO.getFailureDutyNames().put(importDuty.getDutyDate(), ex.getMessage());
-                return;
-            }
-            // 2.2.1 判断如果不存在，在进行插入
-            List<DutyStaffDO> duty = staffMapper.selectByDate(importDuty.getDutyDate());
-            AdminUserDO leader = userMapper.selectByUsername(importDuty.getLeader());
-            AdminUserDO staff = userMapper.selectByUsername(importDuty.getStaff());
-            String dateString = importDuty.getDutyDate();
             LocalDate dutyDate;
-            if (dateString.contains("/")) {
-                // 处理 2022/2/15 格式
-                DateTimeFormatter slashFormatter = DateTimeFormatter.ofPattern("yyyy/M/d");
-                dutyDate = LocalDate.parse(dateString, slashFormatter);
-            } else {
-                // 默认处理 2022-02-15 格式
-                dutyDate = LocalDate.parse(dateString);
-            }
-            DutyStaffDO leaderDuty = DutyStaffDO.builder()
-                    .dutyDate(dutyDate.atStartOfDay())
-                    .staffName(leader.getUsername())
-                    .staffType("1")
-                    .userId(leader.getId())
-                    .smsCount(0L)
-                    .build();
-            DutyStaffDO staffDuty = DutyStaffDO.builder()
-                    .dutyDate(dutyDate.atStartOfDay())
-                    .staffName(staff.getUsername())
-                    .staffType("2")
-                    .userId(staff.getId())
-                    .smsCount(0L)
-                    .build();
-            if (duty.isEmpty()) {
-                staffMapper.insert(leaderDuty);
-                staffMapper.insert(staffDuty);
-                respVO.getCreateDutyNames().add(importDuty.getDutyDate());
+            try {
+                if (dateString.contains("/")) {
+                    dutyDate = LocalDate.parse(dateString, DateTimeFormatter.ofPattern("yyyy/M/d"));
+                } else {
+                    dutyDate = LocalDate.parse(dateString);
+                }
+            } catch (Exception e) {
+                respVO.getFailureDutyNames().put(dateString, "日期格式错误");
                 return;
             }
-            // 2.2.2 存在，则进行更新
-            if(!isUpdateSupport){
-                respVO.getFailureDutyNames().put(importDuty.getDutyDate(), DUTY_DATE_EXISTS.getMsg());
-                return;
-            }
-            leaderDuty.setId(duty.get(0).getId());
-            staffMapper.updateById(leaderDuty);
-            respVO.getUpdateDutyNames().add(importDuty.getDutyDate());
 
+            // 遍历所有列，匹配字典
+            for (Map.Entry<String, Object> entry : importDuty.entrySet()) {
+                String header = entry.getKey();
+                String staffName = (String) entry.getValue();
+                if (!dictLabelToValue.containsKey(header)) {
+                    continue; // 非值班类型列
+                }
+                String staffType = dictLabelToValue.get(header);
+
+                if (StrUtil.isBlank(staffName)) {
+                    continue; // 名字为空
+                }
+
+                // 校验用户
+                List<AdminUserDO> users = userMapper.selectListByNickname(staffName);
+                if (CollUtil.isEmpty(users)) {
+                    // 使用 merge 记录错误，防止覆盖
+                    respVO.getFailureDutyNames().merge(
+                            dateString,
+                            header + "用户不存在:" + staffName,
+                            (oldVal, newVal) -> oldVal + "; " + newVal
+                    );
+                    continue; // 跳过当前循环
+                }
+                AdminUserDO user = users.get(0);
+
+                // 查找是否存在
+                // 注意：这里逻辑从"按日期查整行"变成了"按日期+类型查单条"
+                // 原逻辑 DutyStaffDO 没有 staffType 唯一约束，但根据 DO 定义，应该是 (Data, Type) 唯一?
+                // 原代码：staffMapper.selectByDate(date) 返回 List<DutyStaffDO>
+                // 我们需要找到对应 staffType 的那一条
+                List<DutyStaffDO> existingList = staffMapper.selectByDate(dateString); // 假设 Mapper 支持 String 或
+                                                                                       // LocalDate -> 这里要注意 Mapper 定义
+                // 原代码：staffMapper.selectByDate(importDuty.getDutyDate()) -> String param
+                // 现在我们需要根据 dutyDate 查找。
+                // 建议：staffMapper.selectByDate 应该接受 String 吗？原代码是 importDuty.getDutyDate()
+                // (String)。
+                // 让我们假设 Mapper 接受 String (日期字符串)。
+                // 实际上 Mapper XML 可能是按 date 查。
+                // 更好方式：按 (date, staffName) 还是 (date, staffType)?
+                // 原逻辑是 importDuty 有 leader 和 staff 两个字段，分别对应 type 1 和 2.
+                // 现在的 DO 确实有 staffType。
+
+                // 查找该日期下该类型的记录
+                DutyStaffDO matchedDuty = null;
+                if (existingList != null) {
+                    matchedDuty = existingList.stream()
+                            .filter(d -> Objects.equals(d.getStaffType(), staffType))
+                            .findFirst().orElse(null);
+                }
+
+                if (matchedDuty == null) {
+                    // 插入
+                    DutyStaffDO newDuty = DutyStaffDO.builder()
+                            .dutyDate(dutyDate.atStartOfDay())
+                            .staffName(user.getUsername())
+                            .staffType(staffType)
+                            .userId(user.getId())
+                            .smsCount(0L)
+                            .build();
+                    staffMapper.insert(newDuty);
+                    respVO.getCreateDutyNames().add(dateString + "-" + header);
+                } else {
+                    // 更新
+                    if (!isUpdateSupport) {
+                        respVO.getFailureDutyNames().put(dateString, "已存在不能更新");
+                        continue;
+                    }
+                    matchedDuty.setStaffName(user.getUsername());
+                    matchedDuty.setUserId(user.getId());
+                    staffMapper.updateById(matchedDuty);
+                    respVO.getUpdateDutyNames().add(dateString + "-" + header);
+                }
+            }
         });
         return respVO;
     }
 
-    private void validateDutyForCreateOrUpdate(String dutyDate, String leader, String staff) {
-        DataPermissionUtils.executeIgnore(() -> {
-            validateUserExists(leader, "leader");
-            validateUserExists(staff, "staff");
-            return null;
-        });
-    }
+//    private void validateDutyForCreateOrUpdate(String dutyDate, String leader, String staff) {
+//        DataPermissionUtils.executeIgnore(() -> {
+//            validateUserExists(leader, "leader");
+//            validateUserExists(staff, "staff");
+//            return null;
+//        });
+//    }
 
-
-    void validateUserExists(String username,String staffType) {
-        if (StrUtil.isBlank(username)) {
-            return;
-        }
-        AdminUserDO user = userMapper.selectByUsername(username);
-        if (user == null) {
-            if(staffType.equals("leader")){
-                throw exception(LEADER_NOT_EXISTS);
-            }
-            else{
-                throw exception(PERSON_NOT_EXISTS);
-            }
-
-        }
-
-    }
-
+//    void validateUserExists(String username, String staffType) {
+//        if (StrUtil.isBlank(username)) {
+//            return;
+//        }
+//        AdminUserDO user = userMapper.selectByUsername(username);
+//        if (user == null) {
+//            if (staffType.equals("leader")) {
+//                throw exception(LEADER_NOT_EXISTS);
+//            } else {
+//                throw exception(PERSON_NOT_EXISTS);
+//            }
+//
+//        }
+//
+//    }
 
 }

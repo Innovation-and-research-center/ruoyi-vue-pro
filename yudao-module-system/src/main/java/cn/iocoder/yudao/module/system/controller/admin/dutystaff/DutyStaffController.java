@@ -1,18 +1,19 @@
 package cn.iocoder.yudao.module.system.controller.admin.dutystaff;
 
-import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
 import cn.iocoder.yudao.framework.common.util.collection.CollectionUtils;
 import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
 import cn.iocoder.yudao.module.system.controller.admin.dutystaff.vo.*;
-import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserImportExcelVO;
-import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserImportRespVO;
+import cn.iocoder.yudao.module.system.api.dict.DictDataApi;
+import cn.iocoder.yudao.framework.common.biz.system.dict.dto.DictDataRespDTO;
+import cn.idev.excel.FastExcelFactory;
+import cn.hutool.core.collection.CollUtil;
+import java.net.URLEncoder;
 import cn.iocoder.yudao.module.system.dal.dataobject.dept.DeptDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.dutystaff.DutyStaffDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
-import cn.iocoder.yudao.module.system.enums.common.SexEnum;
 import cn.iocoder.yudao.module.system.service.dept.DeptService;
 import cn.iocoder.yudao.module.system.service.dutystaff.DutyStaffService;
 import io.swagger.v3.oas.annotations.Parameters;
@@ -23,8 +24,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.Operation;
-
-import javax.validation.constraints.*;
 import javax.validation.*;
 import javax.servlet.http.*;
 import java.util.*;
@@ -44,7 +43,6 @@ import org.springframework.web.multipart.MultipartFile;
 import static cn.iocoder.yudao.framework.apilog.core.enums.OperateTypeEnum.*;
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList;
 
-
 @Tag(name = "管理后台 - 值班")
 @RestController
 @RequestMapping("/system/duty/staff")
@@ -59,6 +57,9 @@ public class DutyStaffController {
 
     @Resource
     private AdminUserApi adminUserApi;
+
+    @Resource
+    private DictDataApi dictDataApi;
 
     @PostMapping("/create")
     @Operation(summary = "创建值班")
@@ -87,7 +88,7 @@ public class DutyStaffController {
     @DeleteMapping("/delete-list")
     @Parameter(name = "ids", description = "编号", required = true)
     @Operation(summary = "批量删除值班")
-                @PreAuthorize("@ss.hasPermission('duty:staff:delete')")
+    @PreAuthorize("@ss.hasPermission('duty:staff:delete')")
     public CommonResult<Boolean> deleteStaffList(@RequestParam("ids") List<Long> ids) {
         staffService.deleteStaffListByIds(ids);
         return success(true);
@@ -131,25 +132,44 @@ public class DutyStaffController {
     @PreAuthorize("@ss.hasPermission('duty:staff:export')")
     @ApiAccessLog(operateType = EXPORT)
     public void exportStaffExcel(@Valid DutyStaffPageReqVO pageReqVO,
-              HttpServletResponse response) throws IOException {
+            HttpServletResponse response) throws IOException {
         pageReqVO.setPageSize(PageParam.PAGE_SIZE_NONE);
         List<DutyStaffDO> list = staffService.getStaffPage(pageReqVO).getList();
         // 导出 Excel
         ExcelUtils.write(response, "值班.xls", "数据", DutyStaffRespVO.class,
-                        BeanUtils.toBean(list, DutyStaffRespVO.class));
+                BeanUtils.toBean(list, DutyStaffRespVO.class));
     }
-
 
     @GetMapping("/get-import-template")
     @Operation(summary = "获得导入值班模板")
     public void importTemplate(HttpServletResponse response) throws IOException {
-        // 手动创建导出 demo
-        List<DutyStaffImportExcelVO> list = Arrays.asList(
-                DutyStaffImportExcelVO.builder().dutyDate("2022-02-02").leader("张三").staff("李四").build(),
-                DutyStaffImportExcelVO.builder().dutyDate("2022-02-03").leader("张三").staff("王五").build()
-        );
-        // 输出
-        ExcelUtils.write(response, "值班导入模板.xls", "值班列表", DutyStaffImportExcelVO.class, list);
+        // 1. 获取字典数据
+        List<DictDataRespDTO> dictDataList = dictDataApi.getDictDataList("duty_staff_type");
+        if (CollUtil.isEmpty(dictDataList)) {
+            // 如果字典为空，至少保留基础列
+            ExcelUtils.write(response, "值班导入模板.xls", "值班列表", DutyStaffImportExcelVO.class, Collections.emptyList());
+            return;
+        }
+
+        // 2. 构建动态表头：日期 + 字典标签
+        List<List<String>> head = new ArrayList<>();
+        head.add(Collections.singletonList("日期"));
+        dictDataList.forEach(dict -> head.add(Collections.singletonList(dict.getLabel())));
+
+        // 3. 构建示例数据（可选，这里给一行空数据即可，或者具体示例）
+        List<List<Object>> data = new ArrayList<>();
+        List<Object> row = new ArrayList<>();
+        row.add("2023-01-01"); // 日期示例
+        dictDataList.forEach(dict -> row.add("张三")); // 默认示例填充
+        data.add(row);
+
+        // 4. 手动使用 FastExcel 导出
+        response.setContentType("application/vnd.ms-excel;charset=UTF-8");
+        response.setHeader("Content-Disposition", "attachment;filename=" + URLEncoder.encode("值班导入模板.xls", "UTF-8"));
+        FastExcelFactory.write(response.getOutputStream())
+                .head(head)
+                .sheet("值班列表")
+                .doWrite(data);
     }
 
     @PostMapping("/import")
@@ -160,9 +180,39 @@ public class DutyStaffController {
     })
     @PreAuthorize("@ss.hasPermission('duty:staff:import')")
     public CommonResult<DutyImportRespVO> importExcel(@RequestParam("file") MultipartFile file,
-                                                      @RequestParam(value = "updateSupport", required = false, defaultValue = "false") Boolean updateSupport) throws Exception {
-        List<DutyStaffImportExcelVO> list = ExcelUtils.read(file, DutyStaffImportExcelVO.class);
-        return success(staffService.importDutyList(list, updateSupport));
+            @RequestParam(value = "updateSupport", required = false, defaultValue = "false") Boolean updateSupport)
+            throws Exception {
+        // 读取所有行，包括表头（headRowNumber(0)）
+        List<Map<Integer, String>> list = FastExcelFactory.read(file.getInputStream()).sheet().headRowNumber(0)
+                .doReadSync();
+        if (CollUtil.isEmpty(list)) {
+            return success(DutyImportRespVO.builder().failureDutyNames(Collections.emptyMap()).build());
+        }
+
+        // 第一行为表头
+        Map<Integer, String> headerMap = list.get(0);
+        List<Map<String, Object>> dataList = new ArrayList<>();
+
+        // 从第二行开始遍历数据
+        for (int i = 1; i < list.size(); i++) {
+            Map<Integer, String> data = list.get(i);
+            Map<String, Object> rowMap = new HashMap<>();
+
+            // 遍历每一列数据，根据 headerMap 转换 key
+            for (Map.Entry<Integer, String> entry : data.entrySet()) {
+                Integer colIndex = entry.getKey();
+                String val = entry.getValue();
+                String headerName = headerMap.get(colIndex);
+                if (headerName != null) {
+                    rowMap.put(headerName, val);
+                }
+            }
+            if (!rowMap.isEmpty()) {
+                dataList.add(rowMap);
+            }
+        }
+
+        return success(staffService.importDutyList(dataList, updateSupport));
     }
 
 }

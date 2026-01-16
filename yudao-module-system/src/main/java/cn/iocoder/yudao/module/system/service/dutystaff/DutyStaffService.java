@@ -41,10 +41,10 @@ public interface DutyStaffService {
     void deleteStaff(Long id);
 
     /**
-    * 批量删除值班
-    *
-    * @param ids 编号
-    */
+     * 批量删除值班
+     *
+     * @param ids 编号
+     */
     void deleteStaffListByIds(List<Long> ids);
 
     /**
@@ -63,7 +63,6 @@ public interface DutyStaffService {
      */
     PageResult<DutyStaffDO> getStaffPage(DutyStaffPageReqVO pageReqVO);
 
-
-    DutyImportRespVO importDutyList(List<DutyStaffImportExcelVO> importUsers, boolean isUpdateSupport);
+    DutyImportRespVO importDutyList(List<Map<String, Object>> importDutys, boolean isUpdateSupport);
 
 }
