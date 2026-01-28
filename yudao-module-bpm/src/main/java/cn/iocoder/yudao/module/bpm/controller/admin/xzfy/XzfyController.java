@@ -1,5 +1,8 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.xzfy;
 
+import cn.iocoder.yudao.module.bpm.controller.admin.xzss.vo.XzssRespVO;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
+import cn.iocoder.yudao.module.bpm.service.xzss.XzssService;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -40,6 +43,9 @@ public class XzfyController {
     @Resource
     private XzfyService xzfyService;
 
+    @Resource
+    private XzssService xzssService;
+
     @PostMapping("/create")
     @Operation(summary = "创建行政复议")
     @PreAuthorize("@ss.hasPermission('bpm:xzfy:create')")
@@ -79,7 +85,24 @@ public class XzfyController {
     @PreAuthorize("@ss.hasPermission('bpm:xzfy:query')")
     public CommonResult<XzfyRespVO> getXzfy(@RequestParam("id") Long id) {
         XzfyDO xzfy = xzfyService.getXzfy(id);
-        return success(BeanUtils.toBean(xzfy, XzfyRespVO.class));
+        if (xzfy == null) {
+            return success(null);
+        }
+        // 2. 转换为 RespVO
+        XzfyRespVO respVO = BeanUtils.toBean(xzfy, XzfyRespVO.class);
+
+        // 3. 获取关联的行政诉讼列表
+        // 逻辑：通过行政复议的 xmGuid 匹配行政诉讼的 fyGuid
+        if (xzfy.getXmGuid() != null && !xzfy.getXmGuid().isEmpty()) {
+            // 假设 xzssService 中有名为 getXzssListByFyGuid 的方法
+            List<XzssDO> xzssList = xzssService.getXzssListByFyGuid(xzfy.getXmGuid());
+
+            // 将 DO 列表转换为 VO 列表并设置到返回对象中
+            respVO.setXzssList(BeanUtils.toBean(xzssList, XzssRespVO.class));
+        }
+
+        return success(respVO);
+//        return success(BeanUtils.toBean(xzfy, XzfyRespVO.class));
     }
 
     @GetMapping("/page")
@@ -112,5 +135,16 @@ public class XzfyController {
     public CommonResult<XzfyKzDO> getXzfyKzByXmGuid(@RequestParam("xmGuid") String xmGuid) {
         return success(xzfyService.getXzfyKzByXmGuid(xmGuid));
     }
+
+    @GetMapping("/page-unlinked")
+    @Operation(summary = "获得未关联行政诉讼的行政复议分页")
+    @PreAuthorize("@ss.hasPermission('bpm:xzfy:query')")
+    public CommonResult<PageResult<XzfyRespVO>> getUnlinkedXzfyPage(@Valid XzfyPageReqVO pageReqVO) {
+        // 调用 Service 的分页方法
+        PageResult<XzfyDO> pageResult = xzfyService.getUnlinkedXzfyPage(pageReqVO);
+        return success(BeanUtils.toBean(pageResult, XzfyRespVO.class));
+    }
+
+
 
 }

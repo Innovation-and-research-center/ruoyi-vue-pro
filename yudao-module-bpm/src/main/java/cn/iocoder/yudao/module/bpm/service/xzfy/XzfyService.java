@@ -70,4 +70,10 @@ public interface XzfyService {
      */
     XzfyKzDO getXzfyKzByXmGuid(String xmGuid);
 
+    List<XzfyDO> getXzfyListByXmGuid(String xmGuid);
+
+    PageResult<XzfyDO> getUnlinkedXzfyPage(XzfyPageReqVO pageReqVO);
+
+
+
 }

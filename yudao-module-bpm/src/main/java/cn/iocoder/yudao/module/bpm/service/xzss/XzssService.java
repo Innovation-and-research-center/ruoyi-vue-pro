@@ -70,4 +70,8 @@ public interface XzssService {
      */
     XzssKzDO getXzssKzByXmGuid(String xmGuid);
 
+    List<XzssDO> getXzssListByFyGuid(String fyGuid);
+
+    List<XzssDO> getXzssListBySsGuid(String ssGuid);
+
 }

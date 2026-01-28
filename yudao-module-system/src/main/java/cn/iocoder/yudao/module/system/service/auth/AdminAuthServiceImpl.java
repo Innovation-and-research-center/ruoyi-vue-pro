@@ -1,8 +1,10 @@
 package cn.iocoder.yudao.module.system.service.auth;
 
 import cn.hutool.core.util.ObjectUtil;
+import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
 import cn.iocoder.yudao.framework.common.enums.UserTypeEnum;
+import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.util.monitor.TracerUtils;
 import cn.iocoder.yudao.framework.common.util.servlet.ServletUtils;
 import cn.iocoder.yudao.framework.common.util.validation.ValidationUtils;
@@ -32,6 +34,7 @@ import com.google.common.annotations.VisibleForTesting;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -68,6 +71,11 @@ public class AdminAuthServiceImpl implements AdminAuthService {
     private CaptchaService captchaService;
     @Resource
     private SmsCodeApi smsCodeApi;
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    private static final String TICKET_REDIS_KEY_PREFIX = "sso:ticket:";
+
 
     /**
      * 验证码的开关，默认为 true
@@ -301,5 +309,22 @@ public class AdminAuthServiceImpl implements AdminAuthService {
         );
 
         userService.updateUserPassword(userByMobile.getId(), reqVO.getPassword());
+    }
+
+    @Override
+    public AuthLoginRespVO loginByTicket(String ticket) {
+        String redisKey = TICKET_REDIS_KEY_PREFIX + ticket;
+        String userIdStr = stringRedisTemplate.opsForValue().get(redisKey);
+        if (StrUtil.isBlank(userIdStr)) {
+            throw exception(TICKET_TIME_OUT);
+        }
+        stringRedisTemplate.delete(redisKey);
+
+        AdminUserDO user = userService.getUser(Long.valueOf(userIdStr));
+        if (user == null) {
+            throw exception(USER_NOT_EXISTS);
+        }
+        // 创建 Token 令牌，记录登录日志
+        return createTokenAfterLoginSuccess(user.getId(), user.getUsername(), LoginLogTypeEnum.LOGIN_SSO);
     }
 }

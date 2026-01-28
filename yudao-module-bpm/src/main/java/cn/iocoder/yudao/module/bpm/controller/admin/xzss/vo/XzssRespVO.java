@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.xzss.vo;
 
+import cn.iocoder.yudao.module.bpm.controller.admin.xzfy.vo.XzfyRespVO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.*;
 import java.util.*;
@@ -123,5 +124,17 @@ public class XzssRespVO {
     @Schema(description = "创建时间")
     @ExcelProperty("创建时间")
     private LocalDateTime createTime;
+
+    @Schema(description = "备用主键")
+    @ExcelProperty("备用主键")
+    private String xmGuid;
+
+
+    // === 新增部分开始 ===
+    @Schema(description = "关联的行政复议列表")
+    private List<XzfyRespVO> xzfyList;
+
+    @Schema(description = "历史诉讼列表")
+    private List<XzssRespVO> historyXzssList;
 
 }

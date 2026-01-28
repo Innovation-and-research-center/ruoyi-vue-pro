@@ -18,34 +18,43 @@ public class XzfySaveReqVO {
     @Schema(description = "备用主键", example = "20927")
     private String xmGuid;
 
-    @Schema(description = "来文号")
+    @Schema(description = "来文号", requiredMode = Schema.RequiredMode.REQUIRED)
+    @NotEmpty(message = "来文号不能为空")
     private String swWh;
 
-    @Schema(description = "来文机关")
+    @Schema(description = "来文机关", requiredMode = Schema.RequiredMode.REQUIRED)
+    @NotEmpty(message = "来文机关不能为空")
     private String swJg;
 
-    @Schema(description = "来文日期")
+    @Schema(description = "来文日期", requiredMode = Schema.RequiredMode.REQUIRED)
+    @NotNull(message = "来文日期不能为空")
     private LocalDateTime swRq;
 
-    @Schema(description = "申请人")
+    @Schema(description = "申请人", requiredMode = Schema.RequiredMode.REQUIRED)
+    @NotEmpty(message = "申请人不能为空")
     private String sqr;
 
-    @Schema(description = "被申请人")
+    @Schema(description = "被申请人", requiredMode = Schema.RequiredMode.REQUIRED)
+    @NotEmpty(message = "被申请人不能为空")
     private String bsqr;
 
     @Schema(description = "第三人")
     private String dsr;
 
-    @Schema(description = "土地坐落")
+    @Schema(description = "土地坐落", requiredMode = Schema.RequiredMode.REQUIRED)
+    @NotEmpty(message = "土地坐落不能为空")
     private String tdZl;
 
-    @Schema(description = "类别一")
+    @Schema(description = "案件分类", requiredMode = Schema.RequiredMode.REQUIRED)
+    @NotEmpty(message = "案件分类不能为空")
     private String lb1;
 
-    @Schema(description = "类别二")
+    @Schema(description = "涉及事项", requiredMode = Schema.RequiredMode.REQUIRED)
+    @NotEmpty(message = "涉及事项不能为空")
     private String lb2;
 
-    @Schema(description = "类别三")
+    @Schema(description = "案件类型", requiredMode = Schema.RequiredMode.REQUIRED)
+    @NotEmpty(message = "案件类型不能为空")
     private String lb3;
 
     @Schema(description = "复议请求")

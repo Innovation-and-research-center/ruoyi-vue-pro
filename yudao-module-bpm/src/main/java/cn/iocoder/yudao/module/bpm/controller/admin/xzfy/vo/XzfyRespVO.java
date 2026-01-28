@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.xzfy.vo;
 
+import cn.iocoder.yudao.module.bpm.controller.admin.xzss.vo.XzssRespVO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.*;
 import java.util.*;
@@ -87,5 +88,13 @@ public class XzfyRespVO {
     @Schema(description = "流程实例的编号", example = "14032")
     @ExcelProperty("流程实例的编号")
     private String processInstanceId;
+
+    @Schema(description = "备用主键")
+    @ExcelProperty("备用主键")
+    private String xmGuid;
+
+    @Schema(description = "关联的行政诉讼列表")
+    private List<XzssRespVO> xzssList;
+
 
 }

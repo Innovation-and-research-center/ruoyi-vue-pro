@@ -4,6 +4,7 @@ import cn.hutool.core.collection.CollUtil;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
 import jodd.util.StringUtil;
 import org.springframework.stereotype.Service;
@@ -63,7 +64,7 @@ public class XzssServiceImpl implements XzssService {
         // 插入子表
         createXzssKz(xzss.getXmGuid(), createReqVO.getXzssKz());
         Map<String, Object> processInstanceVariables = new HashMap<>();
-        String customName = StringUtil.isEmpty(createReqVO.getSqr()) ? "行政诉讼":createReqVO.getSqr();
+        String customName = StringUtil.isEmpty(createReqVO.getSqr()) ? "行政诉讼":createReqVO.getSqr()+"的行政诉讼";
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
@@ -168,5 +169,17 @@ public class XzssServiceImpl implements XzssService {
 	private void deleteXzssKzByXmGuids(List<String> xmGuids) {
         xzssKzMapper.deleteByXmGuids(xmGuids);
 	}
+
+    @Override
+    public List<XzssDO> getXzssListByFyGuid(String fyGuid) {
+        return xzssMapper.selectList(new LambdaQueryWrapper<XzssDO>()
+                .eq(XzssDO::getFyGuid, fyGuid)); // 假设 XzssDO 中对应的字段是 fyGuid
+    }
+
+    @Override
+    public List<XzssDO> getXzssListBySsGuid(String ssGuid) {
+        return xzssMapper.selectList(new LambdaQueryWrapper<XzssDO>()
+                .eq(XzssDO::getSsGuid, ssGuid));
+    }
 
 }

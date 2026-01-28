@@ -58,9 +58,9 @@ spring:
           #          url: jdbc:oracle:thin:@127.0.0.1:1521:xe # Oracle 连接的示例
           #          url: jdbc:sqlserver://127.0.0.1:1433;DatabaseName=ruoyi-vue-pro;SelectMethod=cursor;encrypt=false;rewriteBatchedStatements=true;useUnicode=true;characterEncoding=utf-8 # SQLServer 连接的示例
           #          url: jdbc:dm://127.0.0.1:5236?schema=RUOYI_VUE_PRO # DM 连接的示例
-          url: jdbc:kingbase8://192.168.10.29:54321/test?tcpKeepAlive=true&socketTimeout=0&connectTimeout=10 # 人大金仓 KingbaseES 连接的示例
+          url: jdbc:kingbase8://192.168.10.29:54322/test?tcpKeepAlive=true&socketTimeout=0&connectTimeout=10 # 人大金仓 KingbaseES 连接的示例
           #          url: jdbc:postgresql://127.0.0.1:5432/postgres # OpenGauss 连接的示例
-          username: system
+          username: kingbase
           password: yiwu_oa
 #          driver-class-name: org.postgresql.Driver
 #          username: root
@@ -222,7 +222,9 @@ wx:
       http-client-type: HttpClient # 采用 HttpClient 请求微信公众号平台
 
 --- #################### 芋道相关配置 ####################
-
+oa:
+  sso:
+    frontend-url: http://localhost:80 # 前端地址
 # 芋道配置项，设置当前项目所有自定义的配置
 yudao:
   captcha:
@@ -234,7 +236,7 @@ yudao:
     refund-notify-url: https://yutou.mynatapp.cc/admin-api/pay/notify/refund # 支付渠道的【退款】回调地址
     transfer-notify-url: https://yutou.mynatapp.cc/admin-api/pay/notify/transfer # 支付渠道的【转账】回调地址
   access-log: # 访问日志的配置项
-    enable: false
+    enable: true
   demo: false # 关闭演示模式
   wxa-code:
     env-version: develop # 小程序版本: 正式版为 "release"；体验版为 "trial"；开发版为 "develop"

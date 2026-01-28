@@ -1,5 +1,8 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.xzss;
 
+import cn.iocoder.yudao.module.bpm.controller.admin.xzfy.vo.XzfyRespVO;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.xzfy.XzfyDO;
+import cn.iocoder.yudao.module.bpm.service.xzfy.XzfyService;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -40,6 +43,9 @@ public class XzssController {
     @Resource
     private XzssService xzssService;
 
+    @Resource
+    private XzfyService xzfyService;
+
     @PostMapping("/create")
     @Operation(summary = "创建行政诉讼")
     @PreAuthorize("@ss.hasPermission('bpm:xzss:create')")
@@ -79,7 +85,27 @@ public class XzssController {
     @PreAuthorize("@ss.hasPermission('bpm:xzss:query')")
     public CommonResult<XzssRespVO> getXzss(@RequestParam("id") Long id) {
         XzssDO xzss = xzssService.getXzss(id);
-        return success(BeanUtils.toBean(xzss, XzssRespVO.class));
+        if (xzss == null) {
+            return success(null);
+        }
+        XzssRespVO respVO = BeanUtils.toBean(xzss, XzssRespVO.class);
+        if (xzss.getFyGuid() != null && !xzss.getFyGuid().isEmpty()) {
+            // 需要在 XzfyService 中实现 getXzfyListByXmGuid 方法
+            List<XzfyDO> xzfyList = xzfyService.getXzfyListByXmGuid(xzss.getFyGuid());
+            respVO.setXzfyList(BeanUtils.toBean(xzfyList, XzfyRespVO.class));
+        }
+
+        // 4. 获取历史诉讼列表
+        // 逻辑：历史诉讼则是 ss_guid 和 xmid 匹配
+        // 理解为：查找其他诉讼记录，其 ssGuid 等于当前的 xmGuid (即查找关联到本案的记录)
+        if (xzss.getXmGuid() != null && !xzss.getXmGuid().isEmpty()) {
+            // 需要在 XzssService 中实现 getXzssListBySsGuid 方法
+            // 这里假设数据库中字段为 ss_guid，对应实体字段为 ssGuid
+            List<XzssDO> historyList = xzssService.getXzssListBySsGuid(xzss.getXmGuid());
+            respVO.setHistoryXzssList(BeanUtils.toBean(historyList, XzssRespVO.class));
+        }
+
+        return success(respVO);
     }
 
     @GetMapping("/page")

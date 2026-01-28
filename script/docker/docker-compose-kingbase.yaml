@@ -1,0 +1,55 @@
+version: "3.4"
+
+name: yudao-server-kingbase
+
+services:
+  redis:
+    container_name: yiwuoa-redis
+    image: redis:8
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "6379:6379"
+    environment:
+      - TZ=Asia/Shanghai  # [新增] 设置时区环境变量
+    volumes:
+      # 读取 .env 中的 REDIS_DATA_PATH
+      - ${REDIS_DATA_PATH}:/data
+      - /etc/localtime:/etc/localtime:ro
+
+  server:
+    container_name: yiwu-oa-server
+    build:
+      context: ../../yudao-server
+    image: yiwu-oa-server
+    restart: unless-stopped
+    ports:
+      - "48080:48080"
+    env_file:
+      - docker.env
+    environment:
+      TZ: Asia/Shanghai
+      SPRING_PROFILES_ACTIVE: local
+      # 确保这里直接引用变量，不要有多余换行
+      JAVA_OPTS: ${JAVA_OPTS}
+      KINGBASE_HOST: ${KINGBASE_HOST}
+      KINGBASE_PORT: ${KINGBASE_PORT}
+      KINGBASE_DB: ${KINGBASE_DB}
+      # [关键修复] 添加了 '>' 符号，将多行参数合并为一行空格分隔的字符串
+      ARGS: >
+        --spring.datasource.dynamic.datasource.master.url=jdbc:kingbase8://${KINGBASE_HOST}:${KINGBASE_PORT}/${KINGBASE_DB}?tcpKeepAlive=true&socketTimeout=0&connectTimeout=10
+        --spring.datasource.dynamic.datasource.master.username=system
+        --spring.datasource.dynamic.datasource.master.password=yiwu_oa
+        --spring.datasource.dynamic.datasource.master.driver-class-name=com.kingbase8.Driver
+        --spring.datasource.dynamic.datasource.slave.url=jdbc:kingbase8://${KINGBASE_HOST}:${KINGBASE_PORT}/${KINGBASE_DB}?tcpKeepAlive=true&socketTimeout=0&connectTimeout=10
+        --spring.datasource.dynamic.datasource.slave.username=system
+        --spring.datasource.dynamic.datasource.slave.password=yiwu_oa
+        --spring.datasource.dynamic.datasource.slave.driver-class-name=com.kingbase8.Driver
+        --spring.redis.host=${REDIS_HOST}
+        --spring.redis.password=${REDIS_PASSWORD}
+    depends_on:
+      - redis
+    volumes:
+      # 读取 .env 中的 FILE_PATH
+      - ${FILE_PATH}:/yiwu-oa-server/file_storage
+      - /etc/localtime:/etc/localtime:ro

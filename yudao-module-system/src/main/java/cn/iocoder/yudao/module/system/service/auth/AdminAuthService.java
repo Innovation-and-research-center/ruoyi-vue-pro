@@ -85,4 +85,6 @@ public interface AdminAuthService {
      */
     void resetPassword(AuthResetPasswordReqVO reqVO);
 
+    AuthLoginRespVO loginByTicket(String ticket);
+
 }

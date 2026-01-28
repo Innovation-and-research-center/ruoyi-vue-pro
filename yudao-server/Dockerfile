@@ -3,8 +3,8 @@
 FROM eclipse-temurin:8-jre
 
 ## 创建目录，并使用它作为工作目录
-RUN mkdir -p /yudao-server
-WORKDIR /yudao-server
+RUN mkdir -p /yiwu-oa-server
+WORKDIR /yiwu-oa-server
 ## 将后端项目的 Jar 文件，复制到镜像中
 COPY ./target/yudao-server.jar app.jar
 

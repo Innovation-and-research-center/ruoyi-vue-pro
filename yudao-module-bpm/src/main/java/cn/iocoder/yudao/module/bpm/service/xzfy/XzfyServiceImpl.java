@@ -2,7 +2,10 @@ package cn.iocoder.yudao.module.bpm.service.xzfy;
 
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
+import cn.iocoder.yudao.module.bpm.dal.mysql.xzss.XzssMapper;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
 import jodd.util.StringUtil;
 import org.springframework.stereotype.Service;
@@ -46,6 +49,9 @@ public class XzfyServiceImpl implements XzfyService {
     private XzfyKzMapper xzfyKzMapper;
 
     @Resource
+    private XzssMapper xzssMapper;
+
+    @Resource
     private BpmProcessInstanceApi processInstanceApi;
 
     @Override
@@ -64,7 +70,7 @@ public class XzfyServiceImpl implements XzfyService {
         createXzfyKz(guidString, createReqVO.getXzfyKz());
 
         Map<String, Object> processInstanceVariables = new HashMap<>();
-        String customName = StringUtil.isEmpty(createReqVO.getSqr()) ? "行政复议":createReqVO.getSqr();
+        String customName = StringUtil.isEmpty(createReqVO.getSqr()) ? "行政复议":createReqVO.getSqr()+"的行政复议";
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
@@ -148,6 +154,47 @@ public class XzfyServiceImpl implements XzfyService {
     @Override
     public XzfyKzDO getXzfyKzByXmGuid(String xmGuid) {
         return xzfyKzMapper.selectByXmGuid(xmGuid);
+    }
+
+    @Override
+    public List<XzfyDO> getXzfyListByXmGuid(String xmGuid) {
+        return xzfyMapper.selectList(new LambdaQueryWrapper<XzfyDO>()
+                .eq(XzfyDO::getXmGuid, xmGuid));
+    }
+
+    @Override
+    public PageResult<XzfyDO> getUnlinkedXzfyPage(XzfyPageReqVO reqVO) {
+        // 1. 查询所有已被行政诉讼关联的 fyGuid
+        List<XzssDO> xzssList = xzssMapper.selectList(new LambdaQueryWrapper<XzssDO>()
+                .select(XzssDO::getFyGuid)
+                .isNotNull(XzssDO::getFyGuid)
+                .ne(XzssDO::getFyGuid, ""));
+
+        // 2. 提取 Guid 列表并去重
+        Set<String> usedGuids = xzssList.stream()
+                .map(XzssDO::getFyGuid)
+                .collect(Collectors.toSet());
+
+        // 3. 构建查询条件
+        LambdaQueryWrapper<XzfyDO> queryWrapper = new LambdaQueryWrapper<>();
+
+        // --- 核心过滤：排除已关联的数据 ---
+        if (!usedGuids.isEmpty()) {
+            queryWrapper.notIn(XzfyDO::getXmGuid, usedGuids);
+        }
+
+        // --- 常规查询条件 (仿照您原有的 getXzfyPage 逻辑) ---
+        // 建议直接调用您现有的构建查询条件的方法，或者手动添加 ReqVO 中的字段
+        // 例如：
+        // queryWrapper.likeIfPresent(XzfyDO::getSwWh, reqVO.getSwWh())
+        //             .likeIfPresent(XzfyDO::getSqr, reqVO.getSqr())
+        //             .eqIfPresent(XzfyDO::getLb1, reqVO.getLb1());
+
+        // 排序
+        queryWrapper.orderByDesc(XzfyDO::getId);
+
+        // 4. 执行分页查询
+        return xzfyMapper.selectPage(reqVO, queryWrapper);
     }
 
     private void createXzfyKz(String xmGuid, XzfyKzDO xzfyKz) {

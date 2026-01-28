@@ -171,4 +171,15 @@ public class AuthController {
         return success(authService.socialLogin(reqVO));
     }
 
+
+    @PostMapping("/sso-exchange")
+    @PermitAll
+    @Operation(summary = "sso登录使用ticket", description = "")
+    public CommonResult<AuthLoginRespVO> loginByTicket(@RequestParam("ticket") String ticket) {
+        return success(authService.loginByTicket(ticket));
+    }
+
+
+
+
 }
