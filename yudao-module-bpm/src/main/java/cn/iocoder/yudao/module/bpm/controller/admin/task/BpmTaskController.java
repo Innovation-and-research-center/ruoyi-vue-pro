@@ -153,6 +153,14 @@ public class BpmTaskController {
         return success(true);
     }
 
+    @PutMapping("/add-comment")
+    @Operation(summary = "通过任务")
+    @PreAuthorize("@ss.hasPermission('bpm:task:update')")
+    public CommonResult<Boolean> addComment(@Valid @RequestBody BpmTaskApproveReqVO reqVO) {
+        taskService.addComment(getLoginUserId(), reqVO);
+        return success(true);
+    }
+
     @PutMapping("/reject")
     @Operation(summary = "不通过任务")
     @PreAuthorize("@ss.hasPermission('bpm:task:update')")

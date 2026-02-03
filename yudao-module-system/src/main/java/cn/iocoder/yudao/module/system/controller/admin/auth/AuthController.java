@@ -9,11 +9,13 @@ import cn.iocoder.yudao.framework.security.config.SecurityProperties;
 import cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils;
 import cn.iocoder.yudao.module.system.controller.admin.auth.vo.*;
 import cn.iocoder.yudao.module.system.convert.auth.AuthConvert;
+import cn.iocoder.yudao.module.system.dal.dataobject.dept.DeptDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.permission.MenuDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.permission.RoleDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.enums.logger.LoginLogTypeEnum;
 import cn.iocoder.yudao.module.system.service.auth.AdminAuthService;
+import cn.iocoder.yudao.module.system.service.dept.DeptService;
 import cn.iocoder.yudao.module.system.service.permission.MenuService;
 import cn.iocoder.yudao.module.system.service.permission.PermissionService;
 import cn.iocoder.yudao.module.system.service.permission.RoleService;
@@ -24,6 +26,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.Parameters;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -61,6 +64,8 @@ public class AuthController {
 
     @Resource
     private SecurityProperties securityProperties;
+    @Autowired
+    private DeptService deptService;
 
     @PostMapping("/login")
     @PermitAll
@@ -110,6 +115,10 @@ public class AuthController {
         Set<Long> menuIds = permissionService.getRoleMenuListByRoleId(convertSet(roles, RoleDO::getId));
         List<MenuDO> menuList = menuService.getMenuList(menuIds);
         menuList = menuService.filterDisableMenus(menuList);
+
+        DeptDO dept = deptService.getDept(user.getDeptId());
+        user.setDeptName(dept == null ? "" : dept.getName());
+
 
         // 2. 拼接结果返回
         return success(AuthConvert.INSTANCE.convert(user, roles, menuList));

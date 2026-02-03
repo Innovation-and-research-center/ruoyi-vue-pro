@@ -46,6 +46,14 @@ public class LeaveRespVO {
 
     private String deptName;
 
+    private Short spzt;
+
+    private Long creator;
+
+    private String nickName;
+
+    private String processInstanceId;
+
 
 
 

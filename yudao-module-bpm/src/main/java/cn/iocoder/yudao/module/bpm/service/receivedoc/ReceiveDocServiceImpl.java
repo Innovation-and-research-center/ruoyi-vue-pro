@@ -84,7 +84,6 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
             throw exception(RECEIVE_DOC_ERROR);
         }
         // 插入
-
         receiveDocMapper.insert(receiveDoc);
         createReceiveDocAttachList(receiveDoc.getId(), createReqVO.getFileList());
         Map<String, Object> processInstanceVariables = new HashMap<>();
@@ -124,6 +123,7 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
             throw exception(RECEIVE_DOC_EXISTS);
         }
         ReceiveDocDO receiveDoc = BeanUtils.toBean(createReqVO, ReceiveDocDO.class);
+        receiveDoc.setCreator(String.valueOf(userId));
         Long sequence = extractSequenceFromNumber(receiveDoc.getReceiveDocNumber());
         if (sequence != null) {
             receiveDoc.setDocSequence(sequence);
@@ -185,6 +185,12 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         return getNextDocSequenceForJob(docClass, String.valueOf(LocalDate.now().getYear()));
     }
 
+    @Override
+    public Long generateDocumentSequence(String docClass, String year) {
+        return getNextDocSequenceForJob(docClass, year);
+    }
+
+
     private String getNextDocSequence(String docClass, String year) {
         int yearInt = Integer.parseInt(year);
         LocalDateTime startOfYear = LocalDateTime.of(yearInt, 1, 1, 0, 0, 0);
@@ -192,8 +198,16 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         QueryWrapper<ReceiveDocDO> query = Wrappers.query();
         query.select("MAX(DOC_SEQUENCE)")
                 .eq("DOC_CLASS", docClass)
-                .ge("RECEIVE_TIME", startOfYear)
-                .le("RECEIVE_TIME", endOfYear);// 动态拼接年份查询
+                .and(wrapper -> wrapper
+                        // 情况1：YEAR 字段明确等于传入的年份
+                        .eq("YEAR", year)
+                        // 情况2：或者 (YEAR 为空 且 RECEIVE_TIME 在该年份范围内)
+                        .or(orWrapper -> orWrapper
+                                .isNull("YEAR") // 或者使用 .eq("YEAR", "") 取决于你数据库存的是 NULL 还是空字符串
+                                .ge("RECEIVE_TIME", startOfYear)
+                                .le("RECEIVE_TIME", endOfYear)
+                        )
+                );
 
         long nextVal = executeMaxQuery(query);
         return String.format("%d-%s-%04d", yearInt, docClass, nextVal);
@@ -206,8 +220,16 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         QueryWrapper<ReceiveDocDO> query = Wrappers.query();
         query.select("MAX(DOC_SEQUENCE)")
                 .eq("DOC_CLASS", docClass)
-                .ge("RECEIVE_TIME", startOfYear)
-                .le("RECEIVE_TIME", endOfYear);// 动态拼接年份查询
+                .and(wrapper -> wrapper
+                        // 情况1：YEAR 字段明确等于传入的年份
+                        .eq("YEAR", year)
+                        // 情况2：或者 (YEAR 为空 且 RECEIVE_TIME 在该年份范围内)
+                        .or(orWrapper -> orWrapper
+                                .isNull("YEAR") // 或者使用 .eq("YEAR", "") 取决于你数据库存的是 NULL 还是空字符串
+                                .ge("RECEIVE_TIME", startOfYear)
+                                .le("RECEIVE_TIME", endOfYear)
+                        )
+                );
 
         return  executeMaxQuery(query);
     }

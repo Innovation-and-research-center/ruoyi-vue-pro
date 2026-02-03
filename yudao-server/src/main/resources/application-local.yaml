@@ -106,6 +106,7 @@ spring:
           jobStore:
             # JobStore 实现类。可见博客：https://blog.csdn.net/weixin_42458219/article/details/122247162
             class: org.springframework.scheduling.quartz.LocalDataSourceJobStore
+            driverDelegateClass: org.quartz.impl.jdbcjobstore.PostgreSQLDelegate
             isClustered: true # 是集群模式
             clusterCheckinInterval: 15000 # 集群检查频率，单位：毫秒。默认为 15000，即 15 秒
             misfireThreshold: 60000 # misfire 阀值，单位：毫秒。

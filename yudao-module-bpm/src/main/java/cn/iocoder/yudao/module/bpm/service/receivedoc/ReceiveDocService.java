@@ -29,6 +29,8 @@ public interface ReceiveDocService {
 
     Long generateDocumentSequence(String docClass);
 
+    Long generateDocumentSequence(String docClass, String year);
+
     void createFlowReceiveDoc(Long userId,@Valid ReceiveDocSaveReqVO createReqVO);
 
     /**

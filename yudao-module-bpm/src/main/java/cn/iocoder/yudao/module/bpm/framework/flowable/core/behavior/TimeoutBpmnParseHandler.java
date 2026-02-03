@@ -25,7 +25,7 @@ public class TimeoutBpmnParseHandler extends AbstractBpmnParseHandler<UserTask> 
 
     @Override
     protected void executeParse(BpmnParse bpmnParse, UserTask userTask) {
-        if (userTask.getBoundaryEvents() != null && !userTask.getBoundaryEvents().isEmpty()) {
+//        if (userTask.getBoundaryEvents() != null && !userTask.getBoundaryEvents().isEmpty()) {
 
             // 创建 FlowableListener 对象 (原 ActivitiListener)
             FlowableListener listener = new FlowableListener();
@@ -41,7 +41,7 @@ public class TimeoutBpmnParseHandler extends AbstractBpmnParseHandler<UserTask> 
 
             // 添加到 UserTask 的监听器列表中
             userTask.getTaskListeners().add(listener);
-        }
+//        }
 
     }
 }

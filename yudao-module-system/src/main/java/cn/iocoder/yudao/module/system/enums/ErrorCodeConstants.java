@@ -180,4 +180,14 @@ public interface ErrorCodeConstants {
 
     ErrorCode HOLIDAY_NOT_EXISTS = new ErrorCode(1_002_030_000, "节假日不存在");
     ErrorCode HOLIDAY_IMPORT_LIST_IS_EMPTY = new ErrorCode(1_002_030_004, "导入节假日数据不能为空！");
+
+
+    ErrorCode MEETING_ROOM_NOT_EXISTS = new ErrorCode(1_002_031_000, "会议室不存在");
+
+    ErrorCode MEETING_NOT_EXISTS = new ErrorCode(1_002_032_000, "会议记录不存在");
+    ErrorCode MEETING_TIME_ERROR = new ErrorCode(1_002_032_001, "结束时间不能早于开始时间");
+    ErrorCode MEETING_TIME_BOOKED = new ErrorCode(1_002_032_002, "该时段已被预约，请重新选择");
+
+
+
 }

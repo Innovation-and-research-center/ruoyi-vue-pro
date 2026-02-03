@@ -136,9 +136,10 @@ public class CityDocJob implements JobHandler {
         // 3. 准备收文参数 (receiveDocDO)
         ReceiveDocSaveReqVO receiveDocDO  =  new ReceiveDocSaveReqVO();
         receiveDocDO.setDocClass("7");
-        Long numberReceiveNumber = receiveDocService.generateDocumentSequence("7");
-        receiveDocDO.setDocSequence(numberReceiveNumber);
         receiveDocDO.setYear(detail.getSourceData().getOafdFileyear());
+        Long numberReceiveNumber = receiveDocService.generateDocumentSequence("7",receiveDocDO.getYear());
+        receiveDocDO.setDocSequence(numberReceiveNumber);
+
         receiveDocDO.setReceiveDocNumber(DateTime.now().year() + "-" +receiveDocDO.getDocClass()+ "-" + numberReceiveNumber);
         String urgency = "0";
         String remoteUrgency = sourceData.getOafdFileremergency();
@@ -292,7 +293,7 @@ public class CityDocJob implements JobHandler {
         if (title.length() > 4) {
             // 3. 获取字典数据列表
             // 注意：请将 "doc_second_class" 替换为你实际在 RuoYi 字典管理中配置的 字典类型
-            List<DictDataRespDTO> dictList = DictFrameworkUtils.getDictDataList("doc_second_class");
+            List<DictDataRespDTO> dictList = DictFrameworkUtils.getDictDataList("doc_class");
 
             if (dictList == null || dictList.isEmpty()) {
                 return 0;

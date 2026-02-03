@@ -56,4 +56,6 @@ public class TimeExplainRespVO {
 
     private String reason;
 
+    private String processInstanceId;
+
 }

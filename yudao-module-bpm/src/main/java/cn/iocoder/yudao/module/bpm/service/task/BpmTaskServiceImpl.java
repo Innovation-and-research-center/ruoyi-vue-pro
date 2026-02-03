@@ -546,6 +546,25 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 && BpmTaskSignTypeEnum.of(task.getScopeType()) != null;
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    @DataPermission(enable = false)
+    public void  addComment(Long userId, @Valid BpmTaskApproveReqVO reqVO){
+        // 1.1 校验任务存在
+        Task task = validateTask(userId, reqVO.getId());
+        // 1.2 校验流程实例存在
+        ProcessInstance instance = processInstanceService.getProcessInstance(task.getProcessInstanceId());
+        if (instance == null) {
+            throw exception(PROCESS_INSTANCE_NOT_EXISTS);
+        }
+        BpmnModel bpmnModel = modelService.getBpmnModelByDefinitionId(task.getProcessDefinitionId());
+        Boolean reasonRequire = parseReasonRequire(bpmnModel, task.getTaskDefinitionKey());
+        if (reasonRequire && StrUtil.isEmpty(reqVO.getReason())) {
+            throw exception(TASK_REASON_REQUIRE);
+        }
+        taskService.addComment(task.getId(), task.getProcessInstanceId(), BpmCommentTypeEnum.COMMENT.getType(),
+                BpmCommentTypeEnum.COMMENT.formatComment(reqVO.getReason()));
+    }
     // ========== Update 写入相关方法 ==========
 
     @Override

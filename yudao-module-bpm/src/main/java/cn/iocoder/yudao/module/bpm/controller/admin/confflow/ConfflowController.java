@@ -2,6 +2,11 @@ package cn.iocoder.yudao.module.bpm.controller.admin.confflow;
 
 import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
+import cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.LeaveRespVO;
+import cn.iocoder.yudao.module.system.api.dept.DeptApi;
+import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
+import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
+import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -26,6 +31,7 @@ import cn.iocoder.yudao.framework.excel.core.util.ExcelUtils;
 
 import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import static cn.iocoder.yudao.framework.apilog.core.enums.OperateTypeEnum.*;
+import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertSet;
 import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 
 import cn.iocoder.yudao.module.bpm.controller.admin.confflow.vo.*;
@@ -40,6 +46,12 @@ public class ConfflowController {
 
     @Resource
     private ConfflowService confflowService;
+
+    @Resource
+    private AdminUserApi adminUserApi;
+
+    @Resource
+    private DeptApi deptApi;
 
     @PostMapping("/create")
     @Operation(summary = "创建会议报告单")
@@ -91,7 +103,20 @@ public class ConfflowController {
     @PreAuthorize("@ss.hasPermission('bpm:confflow:query')")
     public CommonResult<PageResult<ConfflowRespVO>> getConfflowPage(@Valid ConfflowPageReqVO pageReqVO) {
         PageResult<ConfflowDO> pageResult = confflowService.getConfflowPage(pageReqVO);
-        return success(BeanUtils.toBean(pageResult, ConfflowRespVO.class));
+        PageResult<ConfflowRespVO> result = BeanUtils.toBean(pageResult, ConfflowRespVO.class);
+        Set<Long> userIds = convertSet(result.getList(), ConfflowRespVO::getCreator);
+        Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(userIds);
+        result.getList().forEach(vo ->{
+            AdminUserRespDTO user = userMap.get(vo.getCreator());
+
+            if (user != null) {
+                vo.setUserName(user.getNickname());
+                DeptRespDTO deptInfo = deptApi.getDept(user.getDeptId());
+                vo.setDeptName(deptInfo.getName());
+                // 如果需要部门或其他信息，也可以在这里设置
+            }
+        });
+        return success(result);
     }
 
     @GetMapping("/export-excel")

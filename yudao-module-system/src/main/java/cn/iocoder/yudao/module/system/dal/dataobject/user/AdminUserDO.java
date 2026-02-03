@@ -93,4 +93,7 @@ public class AdminUserDO extends TenantBaseDO {
      */
     private LocalDateTime loginDate;
 
+    @TableField(exist = false)
+    private String deptName;
+
 }

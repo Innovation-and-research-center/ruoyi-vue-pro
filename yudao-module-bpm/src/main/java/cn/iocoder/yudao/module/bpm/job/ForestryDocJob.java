@@ -326,7 +326,7 @@ public class ForestryDocJob implements JobHandler {
     private Short getDocClass(String title) {
         if (StrUtil.isEmpty(title)) return 0;
         if (title.length() > 4) {
-            List<DictDataRespDTO> dictList = DictFrameworkUtils.getDictDataList("doc_second_class");
+            List<DictDataRespDTO> dictList = DictFrameworkUtils.getDictDataList("doc_class");
             if (dictList == null || dictList.isEmpty()) return 0;
             String suffix = title.substring(title.length() - 4);
             for (DictDataRespDTO dict : dictList) {

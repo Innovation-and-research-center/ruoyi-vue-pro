@@ -5,6 +5,7 @@ import cn.iocoder.yudao.module.system.api.dept.DeptApi;
 import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -24,6 +25,7 @@ import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
 import static cn.iocoder.yudao.framework.common.pojo.CommonResult.success;
+import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertSet;
 import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 
 import cn.iocoder.yudao.framework.excel.core.util.ExcelUtils;
@@ -35,6 +37,7 @@ import cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
 import cn.iocoder.yudao.module.bpm.service.leave.LeaveService;
 
+@Slf4j
 @Tag(name = "管理后台 - 假期申请审批")
 @RestController
 @RequestMapping("/bpm/leave")
@@ -102,7 +105,17 @@ public class LeaveController {
     @PreAuthorize("@ss.hasPermission('bpm:leave:query')")
     public CommonResult<PageResult<LeaveRespVO>> getLeavePage(@Valid LeavePageReqVO pageReqVO) {
         PageResult<LeaveDO> pageResult = leaveService.getLeavePage(pageReqVO);
-        return success(BeanUtils.toBean(pageResult, LeaveRespVO.class));
+        PageResult<LeaveRespVO> result = BeanUtils.toBean(pageResult, LeaveRespVO.class);
+        Set<Long> userIds = convertSet(result.getList(), LeaveRespVO::getCreator);
+        Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(userIds);
+        result.getList().forEach(vo ->{
+            AdminUserRespDTO user = userMap.get(vo.getCreator());
+            if (user != null) {
+                vo.setNickName(user.getNickname());
+                // 如果需要部门或其他信息，也可以在这里设置
+            }
+        });
+        return success(result);
     }
 
     @GetMapping("/export-excel")

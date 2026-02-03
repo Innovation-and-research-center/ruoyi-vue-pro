@@ -194,6 +194,8 @@ public interface BpmTaskService {
      */
     void approveTask(Long userId, @Valid BpmTaskApproveReqVO reqVO);
 
+    void addComment(Long userId, @Valid BpmTaskApproveReqVO reqVO);
+
     /**
      * 不通过任务
      *

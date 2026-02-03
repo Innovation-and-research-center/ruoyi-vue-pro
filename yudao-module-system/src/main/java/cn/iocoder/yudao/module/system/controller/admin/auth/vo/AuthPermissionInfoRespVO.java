@@ -53,6 +53,14 @@ public class AuthPermissionInfoRespVO {
         @Schema(description = "用户邮箱", example = "yudao@iocoder.cn")
         private String email;
 
+        @Schema(description = "用户手机号", example = "158xxxx8823")
+        private String mobile;
+
+        @Schema(description = "部门名称", example = "科技信息部")
+        private String deptName;
+
+
+
     }
 
     @Schema(description = "管理后台 - 登录用户的菜单信息 Response VO")

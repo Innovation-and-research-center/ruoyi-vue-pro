@@ -4,6 +4,7 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.date.DateTime;
 import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.io.resource.ResourceUtil;
 import cn.hutool.core.lang.TypeReference;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.http.HttpUtil;
@@ -11,6 +12,8 @@ import cn.hutool.json.JSONUtil;
 import cn.iocoder.yudao.framework.common.biz.system.dict.dto.DictDataRespDTO;
 import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.framework.quartz.core.handler.JobHandler;
+import cn.iocoder.yudao.framework.tenant.core.context.TenantContextHolder;
+import cn.iocoder.yudao.framework.tenant.core.job.TenantJob;
 import cn.iocoder.yudao.module.bpm.controller.admin.fileexchange.vo.FileExchangeSaveReqVO;
 import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.ReceiveDocSaveReqVO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.fileexchange.FileExchangeDO;
@@ -63,13 +66,22 @@ public class CityNoticeJob implements JobHandler {
     @Resource
     private FileService fileService;
     @Override
+    @TenantJob
     public String execute(String param) throws Exception {
+        Long currentTenantId = TenantContextHolder.getTenantId();
+        if (currentTenantId == null || !currentTenantId.equals(1L)) {
+            log.info("当前租户[{}]非目标租户，跳过市局公告同步", currentTenantId);
+            return "跳过非目标租户";
+        }
         try{
-            String listUrl = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/getPendingList.do"
+            String listUrl = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/getHistoryList.do"
                     + "?strMap.userUuid=" + configApi.getConfigValueByKey(NOTICE_USER_UUID)
-                    + "&page=1&limit=10000&start=0";
+                    + "&page=1&limit=10&start=0";
 
             String result = HttpUtil.get(listUrl);
+
+            log.info("请求的字符串："+result);
+//            String result = ResourceUtil.readUtf8Str("mock/notice_list.json");;
             if (StrUtil.isEmpty(result)) {
                 log.warn("【市局公告】接口返回结果为空");
                 return "接口返回为空";
@@ -114,6 +126,15 @@ public class CityNoticeJob implements JobHandler {
         // 2. 获取详情 (C# /public/oaNotice/showOaNoticeDetail.do)
         String url = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/showOaNoticeDetail.do?oanoUuid=" + noticeUuid;
         String result = HttpUtil.get(url);
+//        String mockFileName = "mock/detail/" + noticeUuid + ".json";
+//        String result;
+//        try {
+//            result = ResourceUtil.readUtf8Str(mockFileName);
+//            log.info("【测试模式】读取本地详情文件: {}", mockFileName);
+//        } catch (Exception e) {
+//            log.error("找不到模拟文件: {}", mockFileName);
+//            return false;
+//        }
 
         // 注意：C# 返回的是 ResultData<NoticeDetail>
         NoticeResult<NoticeDetailDTO> resDetail = JSONUtil.toBean(result, new TypeReference<NoticeResult<NoticeDetailDTO>>() {}, false);
@@ -134,7 +155,7 @@ public class CityNoticeJob implements JobHandler {
         receiveDocDO.setDocSequence(numberReceiveNumber);
 
         // 处理发文时间
-        LocalDateTime sendDate = LocalDateTime.now();
+        LocalDateTime sendDate = LocalDateTime.now().withNano(0);
         if (StrUtil.isNotEmpty(notice.getOanoSendDate())) {
             try {
                 sendDate = DateUtil.parse(notice.getOanoSendDate()).toLocalDateTime();
@@ -143,9 +164,13 @@ public class CityNoticeJob implements JobHandler {
             }
         }
         receiveDocDO.setYear(String.valueOf(sendDate.getYear()));
-        // 生成收文编号： 年份-7-流水号
-        //  流水号要变成 4 位的 这里要改一下
-        receiveDocDO.setReceiveDocNumber(DateTime.now().year() + "-" + receiveDocDO.getDocClass() + "-" + numberReceiveNumber);
+
+        String sequenceStr = String.format("%04d", Integer.parseInt(String.valueOf(numberReceiveNumber)));
+
+        // 拼接最终编号：2023-7-0001
+        receiveDocDO.setReceiveDocNumber(
+                sendDate.getYear()+ "-" + receiveDocDO.getDocClass() + "-" + sequenceStr
+        );
 
         receiveDocDO.setUrgencyDegree("1"); // C# 代码中先设0又设1，最终是1(平件)
         receiveDocDO.setDocRange("PT");     // C# 逻辑：普通收文
@@ -163,7 +188,7 @@ public class CityNoticeJob implements JobHandler {
         receiveDocDO.setDocSecondClass(getDocClass(receiveDocDO.getSubject())); // 根据标题解析二级分类
 
         receiveDocDO.setSendTime(sendDate);
-        receiveDocDO.setReceiveTime(LocalDateTime.now());
+        receiveDocDO.setReceiveTime(LocalDateTime.now().withNano(0));
 
         // 备注处理 (C# 中有去问号逻辑，这里简化处理)
         // receiveDocDO.setRemark(...);
@@ -229,8 +254,9 @@ public class CityNoticeJob implements JobHandler {
 
         // 6. 记录 FileExchange (映射关系)
         FileExchangeSaveReqVO exchangeVO = new FileExchangeSaveReqVO();
-        exchangeVO.setOperationDate(LocalDateTime.now());
+        exchangeVO.setOperationDate(LocalDateTime.now().withNano(0));
         exchangeVO.setOperationPerson("系统自动");
+        exchangeVO.setOperationInformation("通知公告");
         exchangeVO.setOperationType((short) 2);
         exchangeVO.setDocId(receiveDocId);
         exchangeVO.setSendDocNumber(receiveDocDO.getSendDocNumber());
@@ -251,6 +277,7 @@ public class CityNoticeJob implements JobHandler {
             String downloadUrl = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/loadFile.do?CMD=DF&uuid=" + fileUuid;
 
             byte[] fileBytes = HttpUtil.downloadBytes(downloadUrl);
+//            byte[] fileBytes = ResourceUtil.readBytes("mock/test.pdf");
             if (fileBytes == null || fileBytes.length == 0) return null;
 
             // 上传到 FileService
@@ -327,7 +354,7 @@ public class CityNoticeJob implements JobHandler {
     private Short getDocClass(String title) {
         if (StrUtil.isEmpty(title)) return 0;
         if (title.length() > 4) {
-            List<DictDataRespDTO> dictList = DictFrameworkUtils.getDictDataList("doc_second_class");
+            List<DictDataRespDTO> dictList = DictFrameworkUtils.getDictDataList("doc_class");
             if (dictList == null || dictList.isEmpty()) return 0;
             String suffix = title.substring(title.length() - 4);
             for (DictDataRespDTO dict : dictList) {
