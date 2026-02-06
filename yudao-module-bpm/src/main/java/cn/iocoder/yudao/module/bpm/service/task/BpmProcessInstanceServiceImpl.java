@@ -25,6 +25,7 @@ import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.CandidateRule;
 import cn.iocoder.yudao.module.bpm.convert.task.BpmProcessInstanceConvert;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmProcessDefinitionInfoDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmUserGroupDO;
+import cn.iocoder.yudao.module.bpm.dal.mysql.processInstance.BpmProcessInstanceUnifiedMapper;
 import cn.iocoder.yudao.module.bpm.dal.redis.BpmProcessIdRedisDAO;
 import cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants;
 import cn.iocoder.yudao.module.bpm.enums.definition.BpmModelTypeEnum;
@@ -55,6 +56,8 @@ import cn.iocoder.yudao.module.system.dal.dataobject.dept.DeptDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.service.dept.DeptService;
 import cn.iocoder.yudao.module.system.service.user.AdminUserService;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import jodd.util.StringUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.bpmn.constants.BpmnXMLConstants;
@@ -148,6 +151,9 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
     @Resource
     private DeptService deptService;
+
+    @Resource
+    private BpmProcessInstanceUnifiedMapper unifiedMapper;
 
     // ========== Query 查询相关方法 ==========
 
@@ -1524,6 +1530,20 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         // 如果你的系统是基于 RuoYi-Vue-Pro 或类似框架，规则通常需要在 BpmTaskCandidateRule 表中查询
         // 或者是直接解析 userTask.getCandidateGroups() 如果里面存的是 JSON 配置
 //        return null;
+    }
+
+    @Override
+    @DataPermission(enable = false)
+    public PageResult<BpmProcessInstanceUnifiedRespVO> getUnifiedProcessInstancePage(Long userId, BpmProcessInstanceUnifiedReqVO reqVO) {
+
+        Long count = unifiedMapper.selectUnifiedCount(userId, reqVO);
+        if (count == 0) {
+            return PageResult.empty();
+        }
+
+        List<BpmProcessInstanceUnifiedRespVO> list = unifiedMapper.selectUnifiedList(userId, reqVO);
+
+        return new PageResult<>(list, count);
     }
 
 

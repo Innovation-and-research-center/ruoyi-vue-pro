@@ -192,4 +192,6 @@ public interface BpmProcessInstanceService {
      * @param instance 流程任务
      */
     void processProcessInstanceCreated(ProcessInstance instance);
+
+    PageResult<BpmProcessInstanceUnifiedRespVO> getUnifiedProcessInstancePage(Long userId, BpmProcessInstanceUnifiedReqVO reqVO);
 }

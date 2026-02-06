@@ -39,6 +39,9 @@ public class BpmTaskRespVO {
     @Schema(description = "紧急程度")
     private String urgencyDegree;
 
+    @Schema(description = "办结时限")
+    private String completionTime;
+
     @Schema(description = "任务状态", requiredMode = Schema.RequiredMode.REQUIRED, example = "2")
     private Integer status; // 参见 BpmTaskStatusEnum 枚举
 

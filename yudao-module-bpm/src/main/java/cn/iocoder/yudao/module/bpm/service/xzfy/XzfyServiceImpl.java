@@ -1,5 +1,9 @@
 package cn.iocoder.yudao.module.bpm.service.xzfy;
 
+import cn.hutool.core.util.NumberUtil;
+import cn.hutool.core.util.StrUtil;
+import cn.iocoder.yudao.framework.common.util.date.DateUtils;
+import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
@@ -13,6 +17,7 @@ import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -30,7 +35,7 @@ import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.LEAVE;
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.XZFY;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.XZFY_NOT_EXISTS;
-import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_CUSTOM_NAME;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.*;
 
 /**
  * 行政复议 Service 实现类
@@ -73,6 +78,15 @@ public class XzfyServiceImpl implements XzfyService {
         String customName = StringUtil.isEmpty(createReqVO.getSqr()) ? "行政复议":createReqVO.getSqr()+"的行政复议";
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
+        String timeKey = "common";
+        String timeoutLabel = DictFrameworkUtils.parseDictDataLabel("bpm_process_timeout_config", timeKey);
+        if (StrUtil.isNotBlank(timeoutLabel) && NumberUtil.isNumber(timeoutLabel)) {
+            int hours = Integer.parseInt(timeoutLabel);
+            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime deadline = now.plusHours(hours);
+            processInstanceVariables.put(PROCESS_FINISH_TIME, timeoutLabel);
+            processInstanceVariables.put(PROCESS_DEADLINE_DATE, DateUtils.of(deadline));
+        }
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
                         .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(xzfy.getId()))

@@ -31,4 +31,24 @@ public class BpmTaskPageReqVO extends PageParam {
     @DateTimeFormat(pattern = DateUtils.FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)
     private LocalDateTime[] createTime;
 
+    @Schema(description = "流程实例名称(办件名称)", example = "请假申请-张三")
+    private String processInstanceName; // 对应前端 queryParams.processInstanceName
+
+    @Schema(description = "流程实例编号(办件编号)", example = "782301")
+    private String processInstanceId; // 对应前端 queryParams.processInstanceId
+
+    @Schema(description = "紧急程度", example = "1")
+    private Integer urgencyDegree; // 对应前端 queryParams.urgencyDegree (注意类型匹配)
+
+    @Schema(description = "来文单位", example = "研发部")
+    private String sendingUnit; // 对应前端 queryParams.sendingUnit (需后端自行实现关联查询)
+
+    @Schema(description = "任务截止时间(环节时限)")
+    @DateTimeFormat(pattern = DateUtils.FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)
+    private LocalDateTime[] dueDate; // 对应前端 queryParams.dueDate
+
+    @Schema(description = "流程办结时限")
+    @DateTimeFormat(pattern = DateUtils.FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)
+    private LocalDateTime[] processDeadline; // 对应前端 queryParams.processDeadline (需后端自行实现比对)
+
 }

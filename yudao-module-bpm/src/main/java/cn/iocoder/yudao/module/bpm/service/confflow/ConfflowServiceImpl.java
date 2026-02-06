@@ -1,6 +1,10 @@
 package cn.iocoder.yudao.module.bpm.service.confflow;
 
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.NumberUtil;
+import cn.hutool.core.util.StrUtil;
+import cn.iocoder.yudao.framework.common.util.date.DateUtils;
+import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
@@ -10,6 +14,7 @@ import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import cn.iocoder.yudao.module.bpm.controller.admin.confflow.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.confflow.ConfflowDO;
@@ -23,7 +28,7 @@ import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionU
 
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.CONFLOW_REPORT;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
-import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_CUSTOM_NAME;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.*;
 
 /**
  * 会议报告单 Service 实现类
@@ -56,6 +61,15 @@ public class ConfflowServiceImpl implements ConfflowService {
         String customName = StringUtil.isEmpty(createReqVO.getTitle()) ? "会议报告单":createReqVO.getTitle();
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
+        String timeKey = "common";
+        String timeoutLabel = DictFrameworkUtils.parseDictDataLabel("bpm_process_timeout_config", timeKey);
+        if (StrUtil.isNotBlank(timeoutLabel) && NumberUtil.isNumber(timeoutLabel)) {
+            int hours = Integer.parseInt(timeoutLabel);
+            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime deadline = now.plusHours(hours);
+            processInstanceVariables.put(PROCESS_FINISH_TIME, timeoutLabel);
+            processInstanceVariables.put(PROCESS_DEADLINE_DATE, DateUtils.of(deadline));
+        }
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
                         .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(confflow.getId()))

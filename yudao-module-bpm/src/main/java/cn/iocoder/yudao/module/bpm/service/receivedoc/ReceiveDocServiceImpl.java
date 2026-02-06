@@ -1,10 +1,13 @@
 package cn.iocoder.yudao.module.bpm.service.receivedoc;
 
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.NumberUtil;
 import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.util.collection.CollectionUtils;
+import cn.iocoder.yudao.framework.common.util.date.DateUtils;
+import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocAttachDO;
@@ -38,8 +41,7 @@ import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.diffList;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.*;
-import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_CUSTOM_NAME;
-import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_URGENCY_DEGREE;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.*;
 
 /**
  * 收文 Service 实现类
@@ -103,6 +105,17 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         String customName =StringUtil.isEmpty(receiveDoc.getSubject()) ? processName:receiveDoc.getSubject();
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
         processInstanceVariables.put(PROCESS_URGENCY_DEGREE, receiveDoc.getUrgencyDegree());
+        String timeKey = "receive";
+        String timeoutLabel = DictFrameworkUtils.parseDictDataLabel("bpm_process_timeout_config", timeKey);
+        if (StrUtil.isNotBlank(timeoutLabel) && NumberUtil.isNumber(timeoutLabel)) {
+            int hours = Integer.parseInt(timeoutLabel);
+            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime deadline = now.plusHours(hours);
+            processInstanceVariables.put(PROCESS_FINISH_TIME, timeoutLabel);
+            processInstanceVariables.put(PROCESS_DEADLINE_DATE, DateUtils.of(deadline));
+        }
+        processInstanceVariables.put(PROCESS_SOURCE_UNIT,createReqVO.getSendDept());
+
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(realKey)
@@ -284,6 +297,26 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         String customName =StringUtil.isEmpty(updateReqVO.getSubject()) ? "收文":updateReqVO.getSubject();
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
         processInstanceVariables.put(PROCESS_URGENCY_DEGREE, updateReqVO.getUrgencyDegree());
+        String timeKey = "receive";
+        String timeoutLabel = DictFrameworkUtils.parseDictDataLabel("bpm_process_timeout_config", timeKey);
+        if (StrUtil.isNotBlank(timeoutLabel) && NumberUtil.isNumber(timeoutLabel)) {
+            // 2. 将字符串转换为整数小时
+            int hours = Integer.parseInt(timeoutLabel);
+
+            // 3. 计算截止时间：当前时间 + 小时数
+            // 使用 LocalDateTime 计算
+            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime deadline = now.plusHours(hours);
+
+            // 4. 存入流程变量
+            // 方式 B：双变量策略（强烈推荐 ★★★）
+            // 变量1：存字符串 "24"，用于前端展示 "限时：24小时"
+            processInstanceVariables.put(PROCESS_FINISH_TIME, timeoutLabel);
+
+            // 变量2：存具体时间对象 (Date类型)，用于 Flowable 原生查询和后端比对
+            // 注意：Flowable 对 java.util.Date 的查询支持最好，建议转为 Date
+            processInstanceVariables.put(PROCESS_DEADLINE_DATE, DateUtils.of(deadline));
+        }
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, updateReqVO.getNextNodeAssignees());
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(realKey)

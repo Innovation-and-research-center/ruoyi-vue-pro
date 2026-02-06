@@ -74,6 +74,7 @@ import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionU
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.*;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
 import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnModelConstants.START_USER_NODE_ID;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.*;
 import static cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils.*;
 
 /**
@@ -138,6 +139,65 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             taskQuery.taskCreatedAfter(DateUtils.of(pageVO.getCreateTime()[0]));
             taskQuery.taskCreatedBefore(DateUtils.of(pageVO.getCreateTime()[1]));
         }
+        Set<String> candidateProcessInstanceIds = null;
+        if (StrUtil.isNotBlank(pageVO.getProcessInstanceName())) {
+            // 5.1 先去流程实例表查匹配名称的 ID
+            List<ProcessInstance> processInstances = runtimeService.createProcessInstanceQuery()
+                    .processInstanceNameLike("%" + pageVO.getProcessInstanceName() + "%")
+                    .list();
+
+            if (CollUtil.isEmpty(processInstances)) {
+                // 如果连流程实例都搜不到，那肯定没有对应的任务，直接返回空
+                return PageResult.empty();
+            }
+            candidateProcessInstanceIds = convertSet(processInstances, ProcessInstance::getId);
+        }
+        if (ArrayUtil.isNotEmpty(pageVO.getProcessDeadline())) {
+            Date startTime = DateUtils.of(pageVO.getProcessDeadline()[0]);
+            Date endTime = DateUtils.of(pageVO.getProcessDeadline()[1]);
+
+            // 1. 使用 RuntimeService 的查询器，它支持变量范围查询
+            // 注意：这里的方法名通常是 variableValueGreaterThanOrEqual (没有 process 前缀)
+            List<ProcessInstance> instances = runtimeService.createProcessInstanceQuery()
+                    .variableValueGreaterThanOrEqual(PROCESS_DEADLINE_DATE, startTime)
+                    .variableValueLessThanOrEqual(PROCESS_DEADLINE_DATE, endTime)
+                    .list();
+
+            if (CollUtil.isEmpty(instances)) {
+                return PageResult.empty(); // 没查到符合时间的流程，直接返回空
+            }
+            Set<String> deadlineIds = convertSet(instances, ProcessInstance::getId);
+            if (candidateProcessInstanceIds == null) {
+                // 如果之前没查过（即没有办件名称限制），直接使用时间查出的 ID
+                candidateProcessInstanceIds = deadlineIds;
+            } else {
+                // 如果之前查过（即有办件名称限制），取交集
+                candidateProcessInstanceIds.retainAll(deadlineIds);
+                // 如果交集为空，说明没有同时满足两个条件的任务
+                if (CollUtil.isEmpty(candidateProcessInstanceIds)) {
+                    return PageResult.empty();
+                }
+            }
+
+        }
+        if (candidateProcessInstanceIds != null) {
+            taskQuery.processInstanceIdIn(candidateProcessInstanceIds);
+        }
+        if (StrUtil.isNotBlank(pageVO.getProcessInstanceId())) {
+            taskQuery.processInstanceId(pageVO.getProcessInstanceId());
+        }
+        if (ArrayUtil.isNotEmpty(pageVO.getDueDate())) {
+            taskQuery.taskDueAfter(DateUtils.of(pageVO.getDueDate()[0]));
+            taskQuery.taskDueBefore(DateUtils.of(pageVO.getDueDate()[1]));
+        }
+        if (pageVO.getUrgencyDegree() != null) {
+            taskQuery.processVariableValueEquals(PROCESS_URGENCY_DEGREE, String.valueOf(pageVO.getUrgencyDegree()));
+        }
+        if (StrUtil.isNotBlank(pageVO.getSendingUnit())) {
+            taskQuery.processVariableValueLikeIgnoreCase(PROCESS_SOURCE_UNIT, "%" + pageVO.getSendingUnit() + "%");
+        }
+
+
         long count = taskQuery.count();
         if (count == 0) {
             return PageResult.empty();

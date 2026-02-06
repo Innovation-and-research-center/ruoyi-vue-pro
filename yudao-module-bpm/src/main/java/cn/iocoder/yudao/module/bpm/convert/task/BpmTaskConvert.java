@@ -31,6 +31,7 @@ import java.util.Map;
 
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList;
 import static cn.iocoder.yudao.framework.common.util.collection.MapUtils.findAndThen;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_FINISH_TIME;
 import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_URGENCY_DEGREE;
 
 /**
@@ -55,6 +56,8 @@ public interface BpmTaskConvert {
             }
             taskVO.setTaskName(processInstance.getProcessDefinitionName());
             taskVO.setUrgencyDegree(cn.hutool.core.map.MapUtil.getStr(processInstance.getProcessVariables(), PROCESS_URGENCY_DEGREE));
+            //这里获得的是小时数   前端还需要转换下
+            taskVO.setCompletionTime(cn.hutool.core.map.MapUtil.getStr(processInstance.getProcessVariables(), PROCESS_FINISH_TIME));
             taskVO.setProcessInstance(BeanUtils.toBean(processInstance, BpmTaskRespVO.ProcessInstance.class));
             AdminUserRespDTO startUser = userMap.get(NumberUtils.parseLong(processInstance.getStartUserId()));
             taskVO.getProcessInstance().setStartUser(BeanUtils.toBean(startUser, UserSimpleBaseVO.class));

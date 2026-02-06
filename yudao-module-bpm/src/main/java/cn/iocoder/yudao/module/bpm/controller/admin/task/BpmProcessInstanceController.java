@@ -270,4 +270,14 @@ public class BpmProcessInstanceController {
         return success(respVO);
     }
 
+
+    // 在 Controller 中添加接口
+    @GetMapping("/unified-page")
+    @Operation(summary = "获得统一办件查询分页 (OA办件)")
+    @PreAuthorize("@ss.hasPermission('bpm:process-instance:query')")
+    public CommonResult<PageResult<BpmProcessInstanceUnifiedRespVO>> getUnifiedProcessInstancePage(
+            @Valid BpmProcessInstanceUnifiedReqVO reqVO) {
+        return success(processInstanceService.getUnifiedProcessInstancePage(getLoginUserId(), reqVO));
+    }
+
 }

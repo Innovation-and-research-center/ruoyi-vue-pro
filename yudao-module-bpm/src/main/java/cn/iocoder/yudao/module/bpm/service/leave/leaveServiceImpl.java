@@ -2,6 +2,7 @@ package cn.iocoder.yudao.module.bpm.service.leave;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
+import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
@@ -31,6 +32,7 @@ import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUti
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.*;
 import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_CUSTOM_NAME;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_FINISH_TIME;
 
 /**
  * 假期申请审批 Service 实现类
@@ -130,6 +132,9 @@ public class LeaveServiceImpl implements LeaveService {
         processInstanceVariables.put("role_condition", roleCondition);
         processInstanceVariables.put("days_condition3", days_condition3);
         processInstanceVariables.put("days_condition4", days_condition4);
+        String timeKey = "common";
+        String timeoutLabel = DictFrameworkUtils.parseDictDataLabel("bpm_process_timeout_config", timeKey);
+        processInstanceVariables.put(PROCESS_FINISH_TIME, timeoutLabel);
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
 
         String processInstanceId = processInstanceApi.createProcessInstance(userId,

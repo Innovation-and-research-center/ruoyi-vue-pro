@@ -111,6 +111,12 @@ public class BpmnVariableConstants {
 
     public static final String PROCESS_URGENCY_DEGREE = "PROCESS_URGENCY_DEGREE";
 
+    public static final String PROCESS_FINISH_TIME = "PROCESS_FINISH_TIME";
+
+    public static final String PROCESS_DEADLINE_DATE = "PROCESS_DEADLINE_DATE";
+
+    public static final String PROCESS_SOURCE_UNIT = "PROCESS_SOURCE_UNIT";
+
     /**
      * 任务的变量 - 状态
      *
