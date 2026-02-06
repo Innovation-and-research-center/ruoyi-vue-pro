@@ -12,6 +12,7 @@ import cn.iocoder.yudao.framework.common.util.date.DateUtils;
 import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
 import cn.iocoder.yudao.framework.common.util.object.ObjectUtils;
 import cn.iocoder.yudao.framework.common.util.object.PageUtils;
+import cn.iocoder.yudao.framework.common.util.string.StrUtils;
 import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.controller.admin.definition.vo.model.BpmModelMetaInfoVO;
@@ -20,8 +21,10 @@ import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.ConditionResul
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.*;
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmApprovalDetailRespVO.ActivityNodeTask;
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskRespVO;
+import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.CandidateRule;
 import cn.iocoder.yudao.module.bpm.convert.task.BpmProcessInstanceConvert;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmProcessDefinitionInfoDO;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmUserGroupDO;
 import cn.iocoder.yudao.module.bpm.dal.redis.BpmProcessIdRedisDAO;
 import cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants;
 import cn.iocoder.yudao.module.bpm.enums.definition.BpmModelTypeEnum;
@@ -39,11 +42,19 @@ import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.SimpleModelUtils;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmProcessDefinitionService;
+import cn.iocoder.yudao.module.bpm.service.definition.BpmUserGroupService;
 import cn.iocoder.yudao.module.bpm.service.message.BpmMessageService;
 import cn.iocoder.yudao.module.system.api.dept.DeptApi;
 import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
+import cn.iocoder.yudao.module.system.controller.admin.dept.vo.dept.DeptListReqVO;
+import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserSimpleRespVO;
+import cn.iocoder.yudao.module.system.convert.user.UserConvert;
+import cn.iocoder.yudao.module.system.dal.dataobject.dept.DeptDO;
+import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
+import cn.iocoder.yudao.module.system.service.dept.DeptService;
+import cn.iocoder.yudao.module.system.service.user.AdminUserService;
 import jodd.util.StringUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.bpmn.constants.BpmnXMLConstants;
@@ -72,6 +83,7 @@ import javax.validation.Valid;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.*;
@@ -127,6 +139,15 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
     @Resource
     private BpmProcessIdRedisDAO processIdRedisDAO;
+
+    @Resource
+    private BpmUserGroupService userGroupService;
+
+    @Resource
+    private AdminUserService userService;
+
+    @Resource
+    private DeptService deptService;
 
     // ========== Query 查询相关方法 ==========
 
@@ -369,6 +390,118 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         if (sourceElement instanceof FlowNode) {
             analyzeOutgoingFlows((FlowNode) sourceElement, result);
         }
+        AdminUserDO loginUser = userService.getUser(loginUserId);
+        Long currentDeptId = (loginUser != null) ? loginUser.getDeptId() : null;
+        Map<String, List<AdminUserDO>> nodeCandidateMap = new HashMap<>();
+        Set<Long> deptIdsToQuery = new HashSet<>();
+        for (BpmNextTaskRespVO node : result) {
+
+            // 只有 UserTask (用户任务) 才需要选人
+            if (!node.getTaskDefKey().equals("end")) {
+                CandidateRule rule = parseCandidateRule(node.getExtensionProperties());
+
+                if (rule != null) {
+
+                    List<AdminUserDO> users = getCandidateUsers(rule.getType(), rule.getValue());
+                    if (CollUtil.isNotEmpty(users)) {
+                        // A. 存入临时 Map
+                        nodeCandidateMap.put(node.getTaskDefKey(), users);
+                        // B. 收集部门 ID (过滤掉 null)
+                        users.forEach(u -> {
+                            if (u.getDeptId() != null) deptIdsToQuery.add(u.getDeptId());
+                        });
+                    }
+                }
+            }
+        }
+
+        Map<Long, DeptDO> deptMap = new HashMap<>();
+        if (CollUtil.isNotEmpty(deptIdsToQuery)) {
+            // 假设你的 deptService 有 getDeptList(Collection<Long> ids) 或者 getDeptMap(ids)
+            List<DeptDO> deptList = deptService.getDeptList(deptIdsToQuery);
+            // 将 List 转为 Map
+            deptMap = CollectionUtils.convertMap(deptList, DeptDO::getId);
+        }
+
+        for (BpmNextTaskRespVO node : result) {
+            List<AdminUserDO> rawUsers = nodeCandidateMap.get(node.getTaskDefKey());
+
+            if (CollUtil.isNotEmpty(rawUsers)) {
+                // 5.1 【分组】按部门 ID 分组 (Key: DeptId, Value: Users)
+                // 使用 Optional 处理用户没有部门的情况 (归为 -1L)
+                Map<Long, List<AdminUserDO>> usersByDept = rawUsers.stream()
+                        .collect(Collectors.groupingBy(
+                                u -> u.getDeptId() != null ? u.getDeptId() : -1L
+                        ));
+
+                List<BpmUserGroupRespVO> treeList = new ArrayList<>();
+
+                // 5.2 【构建树】将 Map 转为 List<BpmUserGroupRespVO>
+                for (Map.Entry<Long, List<AdminUserDO>> entry : usersByDept.entrySet()) {
+                    Long deptId = entry.getKey();
+                    List<AdminUserDO> deptUsers = entry.getValue();
+
+                    BpmUserGroupRespVO group = new BpmUserGroupRespVO();
+
+                    // 处理部门名称
+                    if (deptId == -1L) {
+                        group.setId(-1L);
+                        group.setName("未分配部门"); // 或者是 "其他"
+                    } else {
+                        DeptDO dept = deptMap.get(deptId);
+                        group.setId(deptId);
+                        group.setName(dept != null ? dept.getName() : "未知部门");
+                    }
+
+                    // 转换用户列表 (这里不再需要 setUserDeptName，因为父级已经是部门了)
+                    // 假设 UserConvert.INSTANCE.convertSimpleList(List<AdminUserDO>) 存在，只转基本信息
+                    // 如果没有不带 deptMap 的 convertSimpleList，可以用带 null 的：
+                    group.setChildren(UserConvert.INSTANCE.convertSimpleList(deptUsers, null));
+
+                    treeList.add(group);
+                }
+
+                // 5.3 【排序】将“当前用户所在的部门”排在最前面
+                if (currentDeptId != null) {
+                    treeList.sort((d1, d2) -> {
+                        // 当前部门排最前 (-1)
+                        boolean d1IsCurrent = Objects.equals(d1.getId(), currentDeptId);
+                        boolean d2IsCurrent = Objects.equals(d2.getId(), currentDeptId);
+
+                        if (d1IsCurrent && !d2IsCurrent) return -1;
+                        if (!d1IsCurrent && d2IsCurrent) return 1;
+
+                        // 其他部门按 ID 或 名称 排序 (可选)
+                        return Long.compare(d1.getId(), d2.getId());
+                    });
+                }
+
+                // 5.4 赋值
+                node.setCandidateUsers(treeList);
+            }
+        }
+
+//        for (BpmNextTaskRespVO node : result) {
+//            List<AdminUserDO> candidateUsers = nodeCandidateMap.get(node.getTaskDefKey());
+//
+//            if (CollUtil.isNotEmpty(candidateUsers)) {
+//                // 5.1 【排序】同部门优先
+//                if (currentDeptId != null) {
+//                    candidateUsers.sort((u1, u2) -> {
+//                        boolean u1In = Objects.equals(u1.getDeptId(), currentDeptId);
+//                        boolean u2In = Objects.equals(u2.getDeptId(), currentDeptId);
+//                        if (u1In && !u2In) return -1;
+//                        if (!u1In && u2In) return 1;
+//                        return 0;
+//                    });
+//                }
+//
+//                // 5.2 【转换】使用正确的 deptMap 进行转换
+//                node.setCandidateUsers(UserConvert.INSTANCE.convertSimpleList(candidateUsers, deptMap));
+//            }
+//        }
+//
+
         return result;
     }
 
@@ -1359,6 +1492,39 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         });
     }
 
+
+    private List<AdminUserDO> getCandidateUsers(String chooseRule, String ruleValue) {
+        if (StrUtil.isEmpty(chooseRule) || StrUtil.isEmpty(ruleValue)) {
+            return Collections.emptyList();
+        }
+
+        if ("role".equals(chooseRule)) {
+            Set<Long> roleIds = StrUtils.splitToLongSet(ruleValue);
+            return userService.getUserListByRoleIds(roleIds);
+        } else if ("group".equals(chooseRule)) {
+            Set<Long> groupIds = StrUtils.splitToLongSet(ruleValue);
+            List<BpmUserGroupDO> groupList = userGroupService.getUserGroupList(groupIds);
+            Set<Long> allUserIds = groupList.stream()
+                    .map(BpmUserGroupDO::getUserIds)
+                    .filter(Objects::nonNull)
+                    .flatMap(Set::stream)
+                    .collect(Collectors.toSet());
+            return userService.getUserList(allUserIds);
+        }
+        // 可以扩展 dept, post 等其他规则
+        return Collections.emptyList();
+    }
+
+    private CandidateRule parseCandidateRule(Map<String,String> extensionProperties) {
+        // 示例实现：假设存储在自定义属性中，你需要根据实际 BPMN XML 结构调整
+         String strategy = extensionProperties.get("choose_rule");
+         String param = extensionProperties.get("rule_value");
+         return new CandidateRule(strategy, param);
+
+        // 如果你的系统是基于 RuoYi-Vue-Pro 或类似框架，规则通常需要在 BpmTaskCandidateRule 表中查询
+        // 或者是直接解析 userTask.getCandidateGroups() 如果里面存的是 JSON 配置
+//        return null;
+    }
 
 
 }

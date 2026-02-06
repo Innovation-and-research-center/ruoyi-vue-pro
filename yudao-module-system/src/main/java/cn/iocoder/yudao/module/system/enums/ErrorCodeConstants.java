@@ -188,6 +188,8 @@ public interface ErrorCodeConstants {
     ErrorCode MEETING_TIME_ERROR = new ErrorCode(1_002_032_001, "结束时间不能早于开始时间");
     ErrorCode MEETING_TIME_BOOKED = new ErrorCode(1_002_032_002, "该时段已被预约，请重新选择");
 
+    ErrorCode USER_DEPT_NOT_EXISTS = new ErrorCode(1_002_033_000, "用户部门关联不存在");
+
 
 
 }

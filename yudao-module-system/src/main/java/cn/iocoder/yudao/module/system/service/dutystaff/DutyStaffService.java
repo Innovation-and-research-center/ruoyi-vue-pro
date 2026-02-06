@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.system.service.dutystaff;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import javax.validation.*;
 
@@ -64,5 +65,7 @@ public interface DutyStaffService {
     PageResult<DutyStaffDO> getStaffPage(DutyStaffPageReqVO pageReqVO);
 
     DutyImportRespVO importDutyList(List<Map<String, Object>> importDutys, boolean isUpdateSupport);
+
+    List<DutyStaffDO> getStaffListByDateRange(LocalDateTime startTime, LocalDateTime endTime);
 
 }

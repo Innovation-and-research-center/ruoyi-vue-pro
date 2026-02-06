@@ -9,6 +9,7 @@ import cn.iocoder.yudao.module.system.dal.dataobject.dutystaff.DutyStaffDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.dal.mysql.dutystaff.DutyStaffMapper;
 import cn.iocoder.yudao.module.system.dal.mysql.user.AdminUserMapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
@@ -93,6 +94,14 @@ public class DutyStaffServiceImpl implements DutyStaffService {
     @Override
     public PageResult<DutyStaffDO> getStaffPage(DutyStaffPageReqVO pageReqVO) {
         return staffMapper.selectPage(pageReqVO);
+    }
+
+    @Override
+    public List<DutyStaffDO> getStaffListByDateRange(LocalDateTime startTime, LocalDateTime endTime) {
+        return staffMapper.selectList(new LambdaQueryWrapper<DutyStaffDO>()
+                .ge(startTime != null, DutyStaffDO::getDutyDate, startTime)
+                .le(endTime != null, DutyStaffDO::getDutyDate, endTime)
+                .orderByAsc(DutyStaffDO::getDutyDate));
     }
 
     @Override

@@ -58,4 +58,7 @@ public class TimeExplainRespVO {
 
     private String processInstanceId;
 
+    @Schema(description = "文件路径")
+    private String filepath;
+
 }

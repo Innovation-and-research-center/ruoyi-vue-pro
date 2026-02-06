@@ -17,6 +17,7 @@ import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.service.dept.DeptService;
 import cn.iocoder.yudao.module.system.service.dutystaff.DutyStaffService;
 import io.swagger.v3.oas.annotations.Parameters;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -26,6 +27,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.Operation;
 import javax.validation.*;
 import javax.servlet.http.*;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.io.IOException;
 
@@ -42,6 +44,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import static cn.iocoder.yudao.framework.apilog.core.enums.OperateTypeEnum.*;
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList;
+import static cn.iocoder.yudao.framework.common.util.date.DateUtils.FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND;
 
 @Tag(name = "管理后台 - 值班")
 @RestController
@@ -215,4 +218,31 @@ public class DutyStaffController {
         return success(staffService.importDutyList(dataList, updateSupport));
     }
 
+
+    @GetMapping("/list")
+    @Operation(summary = "获得值班列表（用于日历展示）")
+    public CommonResult<List<DutyStaffRespVO>> getStaffList(
+            @RequestParam(value = "startTime", required = false) @DateTimeFormat(pattern = FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND) LocalDateTime startTime,
+            @RequestParam(value = "endTime", required = false) @DateTimeFormat(pattern = FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND) LocalDateTime endTime) {
+
+        List<DutyStaffDO> list = staffService.getStaffListByDateRange(startTime, endTime);
+        List<DutyStaffRespVO> result = BeanUtils.toBean(list, DutyStaffRespVO.class);
+        Set<Long> userIds = CollectionUtils.convertSet(list, DutyStaffDO::getUserId);
+        Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(userIds);
+        Set<Long> deptIds = CollectionUtils.convertSet(userMap.values(), AdminUserRespDTO::getDeptId);
+        Map<Long, DeptDO> deptMap = deptService.getDeptMap(deptIds);
+        result.forEach(vo -> {
+            // 获取用户
+            AdminUserRespDTO user = userMap.get(vo.getUserId());
+            if (user != null) {
+                vo.setStaffName(user.getNickname());
+                // 获取部门并设置名称
+                DeptDO dept = deptMap.get(user.getDeptId());
+                if (dept != null) {
+                    vo.setDeptName(dept.getName());
+                }
+            }
+        });
+        return success(result);
+    }
 }

@@ -44,9 +44,11 @@ import org.flowable.engine.ManagementService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
 import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.engine.runtime.ActivityInstance;
 import org.flowable.engine.runtime.Execution;
 import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.task.Comment;
 import org.flowable.task.api.DelegationState;
 import org.flowable.task.api.Task;
 import org.flowable.task.api.TaskInfo;
@@ -62,6 +64,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import javax.annotation.Resource;
 import javax.validation.Valid;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -108,6 +112,9 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     private AdminUserApi adminUserApi;
     @Resource
     private DeptApi deptApi;
+
+    public static final int QUERY_TYPE_PREV = 1; // 查前置
+    public static final int QUERY_TYPE_NEXT = 2; // 查后置
 
     // ========== Query 查询相关方法 ==========
 
@@ -562,6 +569,21 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         if (reasonRequire && StrUtil.isEmpty(reqVO.getReason())) {
             throw exception(TASK_REASON_REQUIRE);
         }
+        List<Comment> existingComments = taskService.getTaskComments(task.getId(), BpmCommentTypeEnum.COMMENT.getType());
+        Comment targetComment = null;
+        if (CollUtil.isNotEmpty(existingComments)) {
+            for (Comment comment : existingComments) {
+                // 注意：Flowable 存的 userId 是 String，传入的 userId 是 Long
+                if (StrUtil.equals(comment.getUserId(), String.valueOf(userId))) {
+                    targetComment = comment;
+                    break;
+                }
+            }
+        }
+        if (targetComment != null) {
+            taskService.deleteComment(targetComment.getId());
+        }
+        taskService.setVariableLocal(task.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON, reqVO.getReason());
         taskService.addComment(task.getId(), task.getProcessInstanceId(), BpmCommentTypeEnum.COMMENT.getType(),
                 BpmCommentTypeEnum.COMMENT.formatComment(reqVO.getReason()));
     }
@@ -1203,7 +1225,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         //    相关 issue：https://github.com/YunaiV/ruoyi-vue-pro/issues/1018
         runtimeService.createChangeActivityStateBuilder()
                 .processInstanceId(currentTask.getProcessInstanceId())
-                .moveActivityIdsToSingleActivityId(runExecutionIds, reqVO.getTargetTaskDefinitionKey())
+                .moveActivityIdsToSingleActivityId(returnTaskKeyList, reqVO.getTargetTaskDefinitionKey())
                 // 设置需要预测的任务 ids 的流程变量，用于辅助预测
                 .processVariable(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEED_SIMULATE_TASK_IDS, needSimulateTaskDefinitionKeys)
                 // 设置流程变量（local）节点退回标记, 用于退回到节点，不执行 BpmUserTaskAssignStartUserHandlerTypeEnum 策略，导致自动通过
@@ -1496,6 +1518,340 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     public void copyTask(Long userId, BpmTaskCopyReqVO reqVO) {
         processInstanceCopyService.createProcessInstanceCopy(reqVO.getCopyUserIds(), reqVO.getReason(), reqVO.getId());
     }
+
+    @Override
+    public BpmTaskTraceDTO getTaskTrace(String taskId,String processInstanceId,int queryType) {
+        BpmTaskTraceDTO result = new BpmTaskTraceDTO();
+
+        if ("StartEvent".equals(taskId)) {
+            fillProcessInfo(result, processInstanceId);
+            // 3. 处理转入/转出
+            result.setPreviousTasks(new ArrayList<>()); // 【需求】转入环节直接返回空
+            result.setNextTasks(new ArrayList<>());
+
+            // 如果是查“转出”(下一任务)，则查询流程的第一批人工任务
+            if (QUERY_TYPE_NEXT == queryType) {
+                result.setNextTasks(findNextNodesForStartEvent(processInstanceId));
+            }
+            fillUserNames(result);
+            return result;
+        }
+
+        // 1. 获取当前任务详情
+        HistoricTaskInstance currentTask = historyService.createHistoricTaskInstanceQuery()
+                .taskId(taskId)
+                .singleResult();
+
+        if (currentTask == null) {
+            throw new RuntimeException("未找到任务实例: " + taskId);
+        }
+        // 2. 获取流程实例信息 (用于在前端顶部展示：流程发起人、发起时间)
+        String procInstId = currentTask.getProcessInstanceId();
+        HistoricProcessInstance processInstance = historyService.createHistoricProcessInstanceQuery()
+                .processInstanceId(procInstId)
+                .singleResult();
+        if (processInstance != null) {
+            result.setProcessStartTime(convertDate(processInstance.getStartTime())); // 这就是第一个任务的开始时间
+            result.setStartUserId(processInstance.getStartUserId());    // 顺便拿到发起人
+        }
+        // 3. 填充当前任务信息
+        result.setCurrentTask(convert(currentTask));
+        result.setPreviousTasks(new ArrayList<>());
+        result.setNextTasks(new ArrayList<>());
+
+        // 4. 根据类型执行查询
+        if (QUERY_TYPE_PREV == queryType) {
+            result.setPreviousTasks(findPreviousNodes(currentTask));
+        } else if (QUERY_TYPE_NEXT == queryType) {
+            // 只有当前任务结束了才有后置
+            if (currentTask.getEndTime() != null) {
+                result.setNextTasks(findNextNodes(currentTask));
+            }
+        }
+        fillUserNames(result);
+        return result;
+
+    }
+
+    private void fillUserNames(BpmTaskTraceDTO result) {
+        // 1. 收集所有需要查询的 User ID
+        Set<Long> userIds = new HashSet<>();
+
+        // 收集发起人
+        if (result.getStartUserId() != null) {
+            userIds.add(Long.parseLong(result.getStartUserId()));
+        }
+        // 收集当前任务办理人
+        addUserId(userIds, result.getCurrentTask());
+        // 收集前置列表办理人
+        if (result.getPreviousTasks() != null) {
+            result.getPreviousTasks().forEach(node -> addUserId(userIds, node));
+        }
+        // 收集后置列表办理人
+        if (result.getNextTasks() != null) {
+            result.getNextTasks().forEach(node -> addUserId(userIds, node));
+        }
+
+        if (userIds.isEmpty()) return;
+
+        // 2. 调用 System 模块 API 获取用户信息 Map
+        Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(userIds);
+
+        // 3. 回填昵称
+        // 3.1 回填发起人名字 (如果前端需要单独展示)
+        if (result.getStartUserId() != null) {
+            AdminUserRespDTO startUser = userMap.get(Long.parseLong(result.getStartUserId()));
+            // 这里你可以选择扩展DTO加个 startUserName字段，或者前端自己查，这里暂时不做额外处理
+        }
+
+        // 3.2 回填当前、前置、后置任务的 assigneeName
+        setNickName(result.getCurrentTask(), userMap);
+        if (result.getPreviousTasks() != null) {
+            result.getPreviousTasks().forEach(node -> setNickName(node, userMap));
+        }
+        if (result.getNextTasks() != null) {
+            result.getNextTasks().forEach(node -> setNickName(node, userMap));
+        }
+    }
+
+    private void addUserId(Set<Long> userIds, BpmTaskFlowTaskNodeRespVO node) {
+        if (node != null && node.getAssignee() != null) {
+            try {
+                userIds.add(Long.parseLong(node.getAssignee()));
+            } catch (NumberFormatException e) {
+                // 忽略非数字ID
+            }
+        }
+    }
+
+    private void setNickName(BpmTaskFlowTaskNodeRespVO node, Map<Long, AdminUserRespDTO> userMap) {
+        if (node == null || node.getAssignee() == null) return;
+        try {
+            Long userId = Long.parseLong(node.getAssignee());
+            AdminUserRespDTO user = userMap.get(userId);
+            if (user != null) {
+                node.setAssigneeName(user.getNickname()); // 【需求】设置昵称
+                // 如果需要部门，也可以在这里 setDeptName(user.getDeptName())
+            }
+        } catch (Exception e) {
+            node.setAssigneeName(node.getAssignee()); // 兜底显示ID
+        }
+    }
+    private Integer calculateStatus(Date endTime, String deleteReason) {
+        // 1. 如果没有结束时间 -> 进行中
+        if (endTime == null) {
+            return 1;
+        }
+
+        // 2. 如果有结束时间
+        if (deleteReason == null) {
+            return 2; // 正常完成
+        }
+
+        // 3. 特殊处理 deleteReason
+        // "MI_END": 多实例任务正常结束
+        // "completed": 部分API调用会显式写入这个值
+        if ("MI_END".equals(deleteReason) || "completed".equalsIgnoreCase(deleteReason)) {
+            return 2; // 视为正常完成
+        }
+
+        // 4. 其他情况 (如 "deleted", "canceled", "jump" 等) -> 视为取消/驳回
+        return 3;
+    }
+
+    private void fillProcessInfo(BpmTaskTraceDTO result, String procInstId) {
+        if (procInstId == null) return;
+        HistoricProcessInstance processInstance = historyService.createHistoricProcessInstanceQuery()
+                .processInstanceId(procInstId)
+                .singleResult();
+        if (processInstance != null) {
+            result.setProcessStartTime(convertDate(processInstance.getStartTime()));
+            result.setStartUserId(processInstance.getStartUserId());
+        }
+    }
+
+    private List<BpmTaskFlowTaskNodeRespVO> findNextNodesForStartEvent(String processInstanceId) {
+        List<BpmTaskFlowTaskNodeRespVO> nodes = new ArrayList<>();
+
+        // 查询该流程下所有的 UserTask，按开始时间正序排列
+        List<HistoricActivityInstance> activities = historyService.createHistoricActivityInstanceQuery()
+                .processInstanceId(processInstanceId)
+                .activityType("userTask")
+                .orderByHistoricActivityInstanceStartTime().asc()
+                .list();
+
+        if (activities.isEmpty()) return nodes;
+
+        // 逻辑：取列表里最早的那个，以及和它同时开始的(并行)任务
+        HistoricActivityInstance firstNode = activities.get(0);
+        nodes.add(convert(firstNode));
+
+        // 处理并行网关：如果有多个任务几乎同时开始 (误差1秒内)
+        long baselineTime = firstNode.getStartTime().getTime();
+        for (int i = 1; i < activities.size(); i++) {
+            HistoricActivityInstance node = activities.get(i);
+            if (Math.abs(node.getStartTime().getTime() - baselineTime) < 1000) {
+                nodes.add(convert(node));
+            } else {
+                break; // 只要遇到时间差别大的，后面的肯定都是后续步骤了，直接跳出
+            }
+        }
+        return nodes;
+    }
+
+    private List<BpmTaskFlowTaskNodeRespVO> findPreviousNodes(HistoricTaskInstance currentTask) {
+        List<BpmTaskFlowTaskNodeRespVO> nodes = new ArrayList<>();
+        String procInstId = currentTask.getProcessInstanceId();
+
+        // 1. 获取流程实例，拿到“真正的”主流程开始节点ID
+        HistoricProcessInstance processInstance = historyService.createHistoricProcessInstanceQuery()
+                .processInstanceId(procInstId)
+                .singleResult();
+
+        // 这是皇室血统证明，只有ID等于这个的 startEvent 才是主流程的起点
+        String rootStartActivityId = processInstance.getStartActivityId();
+        String startUserId = processInstance.getStartUserId();
+
+        // 2. 查询：同时查 userTask 和 startEvent
+        List<String> targetTypes = Arrays.asList("userTask", "startEvent");
+
+        List<HistoricActivityInstance> activities = historyService.createHistoricActivityInstanceQuery()
+                .processInstanceId(procInstId)
+                .activityTypes(new HashSet<>(targetTypes)) // 查这两种
+                .finished()
+                .orderByHistoricActivityInstanceEndTime().desc()
+                .list();
+
+        if (activities.isEmpty()) return nodes;
+
+        HistoricActivityInstance baselineNode = null;
+
+        // 3. 遍历寻找基准点 (并在此处执行“杀掉子流程开始节点”的逻辑)
+        for (HistoricActivityInstance node : activities) {
+            // 跳过当前任务自己
+            if (node.getTaskId() != null && node.getTaskId().equals(currentTask.getId())) {
+                continue;
+            }
+
+            // 【关键逻辑】如果是开始节点，必须校验它是不是主流程的起点
+            if ("startEvent".equals(node.getActivityType())) {
+                // 如果这个节点的ID 不是 主流程的开始ID -> 说明它是子流程的开始 -> 滚蛋
+                if (rootStartActivityId != null && !rootStartActivityId.equals(node.getActivityId())) {
+                    continue;
+                }
+            }
+
+            // 正常的按时间查找逻辑
+            if (node.getEndTime().getTime() <= currentTask.getStartTime().getTime()) {
+                baselineNode = node;
+                break;
+            }
+        }
+
+        // 4. 组装结果 (处理并行网关汇聚)
+        if (baselineNode != null) {
+            nodes.add(convertWithStartUser(baselineNode, startUserId));
+
+            long baselineTime = baselineNode.getEndTime().getTime();
+            for (HistoricActivityInstance node : activities) {
+                // 排除基准节点本身 和 当前任务
+                if (node.getId().equals(baselineNode.getId()) ||
+                        (node.getTaskId() != null && node.getTaskId().equals(currentTask.getId()))) {
+                    continue;
+                }
+
+                // 【关键逻辑再次校验】并行汇聚时，万一混进来一个子流程开始节点，也得杀掉
+                if ("startEvent".equals(node.getActivityType())) {
+                    if (rootStartActivityId != null && !rootStartActivityId.equals(node.getActivityId())) {
+                        continue;
+                    }
+                }
+
+                // 时间容错 1000ms
+                if (Math.abs(node.getEndTime().getTime() - baselineTime) < 1000) {
+                    nodes.add(convert(node));
+                }
+            }
+        }
+        return nodes;
+    }
+    private BpmTaskFlowTaskNodeRespVO convertWithStartUser(HistoricActivityInstance activity, String startUserId) {
+        // 调用原本的 convert 基础转换
+        BpmTaskFlowTaskNodeRespVO vo = convert(activity);
+
+        // 【补丁逻辑】：如果是开始节点，且原本没拿到 assignee，强制把发起人塞进去
+        if ("startEvent".equals(activity.getActivityType())) {
+            if (vo.getAssignee() == null) {
+                vo.setAssignee(startUserId);
+            }
+            // 确保状态是已完成
+            vo.setStatus(2);
+        }
+        return vo;
+    }
+
+    private List<BpmTaskFlowTaskNodeRespVO> findNextNodes(HistoricTaskInstance currentTask) {
+        List<BpmTaskFlowTaskNodeRespVO> nodes = new ArrayList<>();
+
+        // 同样只查 userTask，忽略网关和结束节点
+        List<HistoricActivityInstance> activities = historyService.createHistoricActivityInstanceQuery()
+                .processInstanceId(currentTask.getProcessInstanceId())
+                .activityType("userTask")
+                .startedAfter(currentTask.getEndTime())
+                .orderByHistoricActivityInstanceStartTime().asc()
+                .list();
+
+        if (activities.isEmpty()) return nodes;
+
+        // 取最早开始的那个作为基准
+        HistoricActivityInstance firstNextNode = activities.get(0);
+        nodes.add(convert(firstNextNode));
+
+        // 处理并行网关分叉 (tolerance: 1000ms)
+        long baselineTime = firstNextNode.getStartTime().getTime();
+        for (int i = 1; i < activities.size(); i++) {
+            HistoricActivityInstance node = activities.get(i);
+            if (Math.abs(node.getStartTime().getTime() - baselineTime) < 1000) {
+                nodes.add(convert(node));
+            } else {
+                break;
+            }
+        }
+        return nodes;
+    }
+
+    private BpmTaskFlowTaskNodeRespVO convert(HistoricTaskInstance task) {
+        BpmTaskFlowTaskNodeRespVO dto = new BpmTaskFlowTaskNodeRespVO();
+        dto.setTaskId(task.getId());
+        dto.setTaskName(task.getName());
+        dto.setAssignee(task.getAssignee());
+        dto.setActivityType("userTask");
+        dto.setStartTime(task.getStartTime());
+        dto.setEndTime(task.getEndTime());
+        dto.setDuration(task.getDurationInMillis());
+        dto.setStatus(calculateStatus(task.getEndTime(), task.getDeleteReason()));
+        return dto;
+    }
+
+    private BpmTaskFlowTaskNodeRespVO convert(HistoricActivityInstance activity) {
+        BpmTaskFlowTaskNodeRespVO dto = new BpmTaskFlowTaskNodeRespVO();
+        dto.setTaskId(activity.getTaskId());
+        if ("startEvent".equals(activity.getActivityType())) {
+            dto.setTaskName(activity.getActivityName() != null ? activity.getActivityName() : "流程发起");
+            dto.setActivityType("startEvent");
+        } else {
+            dto.setTaskName(activity.getActivityName());
+            dto.setActivityType("userTask");
+        }
+//        dto.setTaskName(activity.getActivityName());
+        dto.setAssignee(activity.getAssignee());
+        dto.setStartTime(activity.getStartTime());
+        dto.setEndTime(activity.getEndTime());
+        dto.setDuration(activity.getDurationInMillis());
+        dto.setStatus(calculateStatus(activity.getEndTime(), activity.getDeleteReason()));
+        return dto;
+    }
+
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -1924,6 +2280,12 @@ public class BpmTaskServiceImpl implements BpmTaskService {
      */
     private BpmTaskServiceImpl getSelf() {
         return SpringUtil.getBean(getClass());
+    }
+
+
+    private LocalDateTime convertDate(Date date) {
+        if (date == null) return null;
+        return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime();
     }
 
 }

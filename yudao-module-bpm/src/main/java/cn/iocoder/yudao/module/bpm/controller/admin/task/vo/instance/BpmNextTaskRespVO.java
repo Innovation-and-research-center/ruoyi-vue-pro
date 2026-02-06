@@ -1,6 +1,9 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance;
 import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.ConditionResult;
+import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserSimpleRespVO;
 import lombok.Data;
+
+import java.util.List;
 import java.util.Map;
 
 @Data
@@ -16,6 +19,12 @@ public class BpmNextTaskRespVO {
 
     /** 目标节点的拓展属性 (Map形式) */
     private Map<String, String> extensionProperties;
+
+    private List<UserSimpleRespVO> candidateUsers2;
+
+    private String taskType;
+
+    private List<BpmUserGroupRespVO> candidateUsers;
 }
 
 

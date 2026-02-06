@@ -52,14 +52,12 @@ public class TimeExplainController {
 
     @PostMapping("/create")
     @Operation(summary = "创建外出请假补假")
-    @PreAuthorize("@ss.hasPermission('bpm:time-explain:create')")
     public CommonResult<Long> createTimeExplain(@Valid @RequestBody TimeExplainSaveReqVO createReqVO) {
         return success(timeExplainService.createTimeExplain(createReqVO));
     }
 
     @PostMapping("/createout")
     @Operation(summary = "创建外出")
-    @PreAuthorize("@ss.hasPermission('bpm:time-explain:create')")
     public CommonResult<Long> createOut(@Valid @RequestBody TimeExplainSaveReqVO createReqVO) {
         return success(timeExplainService.createOut(getLoginUserId(),createReqVO));
     }
@@ -68,7 +66,6 @@ public class TimeExplainController {
 
     @PutMapping("/update")
     @Operation(summary = "更新外出请假补假")
-    @PreAuthorize("@ss.hasPermission('bpm:time-explain:update')")
     public CommonResult<Boolean> updateTimeExplain(@Valid @RequestBody TimeExplainSaveReqVO updateReqVO) {
         timeExplainService.updateTimeExplain(updateReqVO);
         return success(true);
@@ -77,7 +74,6 @@ public class TimeExplainController {
     @DeleteMapping("/delete")
     @Operation(summary = "删除外出请假补假")
     @Parameter(name = "id", description = "编号", required = true)
-    @PreAuthorize("@ss.hasPermission('bpm:time-explain:delete')")
     public CommonResult<Boolean> deleteTimeExplain(@RequestParam("id") Long id) {
         timeExplainService.deleteTimeExplain(id);
         return success(true);
@@ -86,7 +82,6 @@ public class TimeExplainController {
     @DeleteMapping("/delete-list")
     @Parameter(name = "ids", description = "编号", required = true)
     @Operation(summary = "批量删除外出请假补假")
-                @PreAuthorize("@ss.hasPermission('bpm:time-explain:delete')")
     public CommonResult<Boolean> deleteTimeExplainList(@RequestParam("ids") List<Long> ids) {
         timeExplainService.deleteTimeExplainListByIds(ids);
         return success(true);
@@ -96,7 +91,6 @@ public class TimeExplainController {
     @Operation(summary = "获得外出请假补假")
     @Parameter(name = "id", description = "编号", required = true, example = "1024")
     @DataPermission(enable = false)
-    @PreAuthorize("@ss.hasPermission('bpm:time-explain:query')")
     public CommonResult<TimeExplainRespVO> getTimeExplain(@RequestParam("id") Long id) {
         TimeExplainDO timeExplain = timeExplainService.getTimeExplain(id);
         AdminUserRespDTO startUser = adminUserApi.getUser(Long.valueOf(timeExplain.getCreator()));
@@ -108,7 +102,6 @@ public class TimeExplainController {
 
     @GetMapping("/page")
     @Operation(summary = "获得外出请假补假分页")
-    @PreAuthorize("@ss.hasPermission('bpm:time-explain:query')")
     public CommonResult<PageResult<TimeExplainRespVO>> getTimeExplainPage(@Valid TimeExplainPageReqVO pageReqVO) {
         PageResult<TimeExplainDO> pageResult = timeExplainService.getTimeExplainPage(pageReqVO);
         return success(BeanUtils.toBean(pageResult, TimeExplainRespVO.class));
@@ -116,7 +109,6 @@ public class TimeExplainController {
 
     @GetMapping("/export-excel")
     @Operation(summary = "导出外出请假补假 Excel")
-    @PreAuthorize("@ss.hasPermission('bpm:time-explain:export')")
     @ApiAccessLog(operateType = EXPORT)
     public void exportTimeExplainExcel(@Valid TimeExplainPageReqVO pageReqVO,
               HttpServletResponse response) throws IOException {

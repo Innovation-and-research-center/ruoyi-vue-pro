@@ -55,14 +55,12 @@ public class LeaveController {
 
     @PostMapping("/create")
     @Operation(summary = "创建假期申请审批")
-    @PreAuthorize("@ss.hasPermission('bpm:leave:create')")
     public CommonResult<Long> createLeave(@Valid @RequestBody LeaveSaveReqVO createReqVO) {
         return success(leaveService.createLeave(getLoginUserId(),createReqVO));
     }
 
     @PutMapping("/update")
     @Operation(summary = "更新假期申请审批")
-    @PreAuthorize("@ss.hasPermission('bpm:leave:update')")
     public CommonResult<Boolean> updateLeave(@Valid @RequestBody LeaveSaveReqVO updateReqVO) {
         leaveService.updateLeave(updateReqVO);
         return success(true);
@@ -71,7 +69,6 @@ public class LeaveController {
     @DeleteMapping("/delete")
     @Operation(summary = "删除假期申请审批")
     @Parameter(name = "id", description = "编号", required = true)
-    @PreAuthorize("@ss.hasPermission('bpm:leave:delete')")
     public CommonResult<Boolean> deleteLeave(@RequestParam("id") Long id) {
         leaveService.deleteLeave(id);
         return success(true);
@@ -80,7 +77,6 @@ public class LeaveController {
     @DeleteMapping("/delete-list")
     @Parameter(name = "ids", description = "编号", required = true)
     @Operation(summary = "批量删除假期申请审批")
-    @PreAuthorize("@ss.hasPermission('bpm:leave:delete')")
     public CommonResult<Boolean> deleteLeaveList(@RequestParam("ids") List<Long> ids) {
         leaveService.deleteLeaveListByIds(ids);
         return success(true);
@@ -89,7 +85,6 @@ public class LeaveController {
     @GetMapping("/get")
     @Operation(summary = "获得假期申请审批")
     @Parameter(name = "id", description = "编号", required = true, example = "1024")
-    @PreAuthorize("@ss.hasPermission('bpm:leave:query')")
     @DataPermission(enable = false)
     public CommonResult<LeaveRespVO> getLeave(@RequestParam("id") Long id) {
         LeaveDO leave = leaveService.getLeave(id);
@@ -102,7 +97,6 @@ public class LeaveController {
 
     @GetMapping("/page")
     @Operation(summary = "获得假期申请审批分页")
-    @PreAuthorize("@ss.hasPermission('bpm:leave:query')")
     public CommonResult<PageResult<LeaveRespVO>> getLeavePage(@Valid LeavePageReqVO pageReqVO) {
         PageResult<LeaveDO> pageResult = leaveService.getLeavePage(pageReqVO);
         PageResult<LeaveRespVO> result = BeanUtils.toBean(pageResult, LeaveRespVO.class);
@@ -120,7 +114,6 @@ public class LeaveController {
 
     @GetMapping("/export-excel")
     @Operation(summary = "导出假期申请审批 Excel")
-    @PreAuthorize("@ss.hasPermission('bpm:leave:export')")
     @ApiAccessLog(operateType = EXPORT)
     public void exportLeaveExcel(@Valid LeavePageReqVO pageReqVO,
               HttpServletResponse response) throws IOException {
@@ -133,7 +126,6 @@ public class LeaveController {
 
     @GetMapping("/summary")
     @DataPermission(enable = false)
-    @PreAuthorize("@ss.hasPermission('bpm:leave:summary')")
     @Operation(summary = "获得请假统计列表", description = "根据年份、月份、部门、人员统计请假数据")
     public CommonResult<List<LeaveSummaryRespVO>> getLeaveSummary(@Valid LeaveSummaryReqVO reqVO) {
         return success(leaveService.getLeaveSummary(reqVO));
@@ -142,7 +134,6 @@ public class LeaveController {
 
     @GetMapping("/detail-list")
     @Operation(summary = "获得请假详细记录", description = "用于点击统计数字后查看详情")
-    @PreAuthorize("@ss.hasPermission('bpm:leave:summary')")
     public CommonResult<List<LeaveDO>> getLeaveDetailList(@Valid LeaveSummaryReqVO reqVO) {
         return success(leaveService.getLeaveDetailList(reqVO));
     }

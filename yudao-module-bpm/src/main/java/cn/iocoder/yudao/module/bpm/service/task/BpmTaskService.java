@@ -268,6 +268,8 @@ public interface BpmTaskService {
      */
     void withdrawTask(Long userId, String taskId);
 
+    BpmTaskTraceDTO getTaskTrace(String taskId,String processInstanceId,int type);
+
     // ========== Event 事件相关方法 ==========
 
     /**

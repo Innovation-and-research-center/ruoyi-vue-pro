@@ -1,9 +1,11 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.task;
 
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.util.number.NumberUtils;
+import cn.iocoder.yudao.module.bpm.controller.admin.base.user.UserSimpleBaseVO;
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.*;
 import cn.iocoder.yudao.module.bpm.convert.task.BpmTaskConvert;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmFormDO;
@@ -19,7 +21,12 @@ import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.StartEvent;
 import org.flowable.bpmn.model.UserTask;
+import org.flowable.engine.HistoryService;
+import org.flowable.engine.RepositoryService;
 import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.engine.runtime.ProcessInstance;
 import org.flowable.task.api.Task;
@@ -30,10 +37,9 @@ import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import javax.validation.Valid;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.*;
 import java.util.stream.Stream;
 
 import static cn.iocoder.yudao.framework.common.pojo.CommonResult.success;
@@ -59,6 +65,12 @@ public class BpmTaskController {
     private AdminUserApi adminUserApi;
     @Resource
     private DeptApi deptApi;
+
+    @Resource
+    private HistoryService historyService;
+
+    @Resource
+    private RepositoryService repositoryService;
 
 
     @GetMapping("todo-page")
@@ -128,21 +140,88 @@ public class BpmTaskController {
     public CommonResult<List<BpmTaskRespVO>> getTaskListByProcessInstanceId(
             @RequestParam("processInstanceId") String processInstanceId) {
         List<HistoricTaskInstance> taskList = taskService.getTaskListByProcessInstanceId(processInstanceId, true);
+
+        HistoricProcessInstance processInstance = historyService.createHistoricProcessInstanceQuery()
+                .processInstanceId(processInstanceId)
+                .singleResult();
         if (CollUtil.isEmpty(taskList)) {
             return success(Collections.emptyList());
         }
 
         // 拼接数据
-        Set<Long> userIds = convertSetByFlatMap(taskList, task ->
-                Stream.of(NumberUtils.parseLong(task.getAssignee()), NumberUtils.parseLong(task.getOwner())));
+        Set<Long> userIds = new HashSet<>();
+        if (CollUtil.isNotEmpty(taskList)) {
+            userIds.addAll(convertSetByFlatMap(taskList, task ->
+                    Stream.of(NumberUtils.parseLong(task.getAssignee()), NumberUtils.parseLong(task.getOwner()))));
+        }
+        if (processInstance != null && processInstance.getStartUserId() != null) {
+            userIds.add(NumberUtils.parseLong(processInstance.getStartUserId()));
+        }
+//        Set<Long> userIds = convertSetByFlatMap(taskList, task ->
+//                Stream.of(NumberUtils.parseLong(task.getAssignee()), NumberUtils.parseLong(task.getOwner())));
         Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(userIds);
         Map<Long, DeptRespDTO> deptMap = deptApi.getDeptMap(
                 convertSet(userMap.values(), AdminUserRespDTO::getDeptId));
         // 获得 Form Map
         Map<Long, BpmFormDO> formMap = formService.getFormMap(
                 convertSet(taskList, task -> NumberUtils.parseLong(task.getFormKey())));
-        return success(BpmTaskConvert.INSTANCE.buildTaskListByProcessInstanceId(taskList,
-                formMap, userMap, deptMap));
+        List<BpmTaskRespVO> resultList = BpmTaskConvert.INSTANCE.buildTaskListByProcessInstanceId(taskList,
+                formMap, userMap, deptMap);
+
+        if (processInstance != null) {
+            BpmTaskRespVO startNode = new BpmTaskRespVO();
+            String startNodeName = "流程发起";
+            BpmnModel bpmnModel = repositoryService.getBpmnModel(processInstance.getProcessDefinitionId());
+            if (bpmnModel != null) {
+                // 在主流程中查找类型为 StartEvent 的节点
+                FlowElement startElement = bpmnModel.getMainProcess().getFlowElements().stream()
+                        .filter(e -> e instanceof StartEvent)
+                        .findFirst()
+                        .orElse(null);
+
+                if (startElement != null) {
+                    // 如果画图时填了名称就用填的，没填就用默认的"流程发起"
+                    if (StrUtil.isNotEmpty(startElement.getName())) {
+                        startNodeName = startElement.getName();
+                    }
+                }
+            }
+            startNode.setId("StartEvent");      // 设置为 BPMN XML 里的真实 ID (例如 StartEvent_1)
+            startNode.setName(startNodeName);
+//            startNode.setName("流程发起"); // 节点名称
+            if (processInstance.getStartTime() != null) {
+                LocalDateTime startTime = processInstance.getStartTime().toInstant()
+                        .atZone(ZoneId.systemDefault())
+                        .toLocalDateTime();
+
+                startNode.setCreateTime(startTime);
+                startNode.setEndTime(startTime); // 发起即结束
+            }
+            startNode.setDurationInMillis(0L);
+            startNode.setStatus(2); // 假设 2 代表“已完成/审批通过”，根据你的前端字典调整
+
+            // 设置处理人信息 (利用之前查出来的 userMap)
+            Long startUserId = NumberUtils.parseLong(processInstance.getStartUserId());
+            AdminUserRespDTO startUser = userMap.get(startUserId);
+            if (startUser != null) {
+                // 根据 BpmTaskRespVO 的结构设置用户
+                // 假设你的 VO 里有 assigneeUser 对象
+                UserSimpleBaseVO userVO = new UserSimpleBaseVO();
+                userVO.setId(startUser.getId());
+                userVO.setNickname(startUser.getNickname());
+                userVO.setDeptId(startUser.getDeptId());
+                if (deptMap.get(startUser.getDeptId()) != null) {
+                    userVO.setDeptName(deptMap.get(startUser.getDeptId()).getName());
+                }
+                startNode.setAssigneeUser(userVO);
+            }
+
+            // 插入到列表头部 (Index 0)
+            resultList.add(0, startNode);
+        }
+        return success(resultList);
+//        return success(BpmTaskConvert.INSTANCE.buildTaskListByProcessInstanceId(taskList,
+//                formMap, userMap, deptMap));
     }
 
     @PutMapping("/approve")
@@ -153,13 +232,14 @@ public class BpmTaskController {
         return success(true);
     }
 
-    @PutMapping("/add-comment")
+    @PostMapping("/add-comment")
     @Operation(summary = "通过任务")
     @PreAuthorize("@ss.hasPermission('bpm:task:update')")
     public CommonResult<Boolean> addComment(@Valid @RequestBody BpmTaskApproveReqVO reqVO) {
         taskService.addComment(getLoginUserId(), reqVO);
         return success(true);
     }
+
 
     @PutMapping("/reject")
     @Operation(summary = "不通过任务")
@@ -233,6 +313,17 @@ public class BpmTaskController {
     public CommonResult<Boolean> withdrawTask(@RequestParam("taskId") String taskId) {
         taskService.withdrawTask(getLoginUserId(), taskId);
         return success(true);
+    }
+    @GetMapping("/trace/{taskId}")
+    public CommonResult<BpmTaskTraceDTO> getTaskTrace(
+            @Parameter(description = "任务ID", required = true) @PathVariable("taskId") String taskId,
+            @Parameter(description = "查询类型: 1-前置(来源), 2-后置(去向)", required = true) @RequestParam("type") Integer type,
+            @RequestParam(value = "processInstanceId", required = false) String processInstanceId) {
+        if (type == null || (type != 1 && type != 2)) {
+           type=1;
+        }
+        BpmTaskTraceDTO trace = taskService.getTaskTrace(taskId,processInstanceId,type);
+        return success(trace);
     }
 
     @GetMapping("/list-by-parent-task-id")

@@ -66,4 +66,7 @@ public class ConfflowRespVO {
 
     private Long creator;
 
+    @Schema(description = "附件路径")
+    private String attachFilePath;
+
 }
