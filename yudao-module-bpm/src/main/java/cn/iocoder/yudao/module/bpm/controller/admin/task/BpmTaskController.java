@@ -30,6 +30,7 @@ import org.flowable.engine.RepositoryService;
 import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.engine.runtime.ProcessInstance;
 import org.flowable.task.api.Task;
+import org.flowable.task.api.TaskQuery;
 import org.flowable.task.api.history.HistoricTaskInstance;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
@@ -341,6 +342,15 @@ public class BpmTaskController {
         Map<Long, DeptRespDTO> deptMap = deptApi.getDeptMap(
                 convertSet(userMap.values(), AdminUserRespDTO::getDeptId));
         return success(BpmTaskConvert.INSTANCE.buildTaskListByParentTaskId(taskList, userMap, deptMap));
+    }
+
+    @GetMapping("/get-count")
+    @Operation(summary = "获得当前用户的待办和已办任务数量")
+    public CommonResult<BpmTaskCountRespVO> getTaskCount() {
+        Long userId = getLoginUserId();
+        BpmTaskCountRespVO respVO = taskService.getTaskCount(userId);
+        return success(respVO);
+
     }
 
 //    @GetMapping("/next-node-list")

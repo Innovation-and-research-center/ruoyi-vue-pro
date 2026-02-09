@@ -333,4 +333,6 @@ public interface BpmTaskService {
      */
     void triggerTask(String processInstanceId, String taskDefineKey);
 
+    BpmTaskCountRespVO getTaskCount(long userId);
+
 }

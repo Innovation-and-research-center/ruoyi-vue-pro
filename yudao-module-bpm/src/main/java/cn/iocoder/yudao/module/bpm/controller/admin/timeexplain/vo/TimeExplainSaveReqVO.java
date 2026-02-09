@@ -47,4 +47,18 @@ public class TimeExplainSaveReqVO {
     @Schema(description = "发起人自选审批人 Map", example = "{taskKey1: [1, 2]}")
     private Map<String, List<Long>> startUserSelectAssignees;
 
+    /**
+     * 出发地
+     */
+    @Schema(description = "出发地")
+    private String startPlace;
+    /**
+     * 目的地
+     */
+    @Schema(description = "目的地")
+    private String endPlace;
+
+
+
+
 }

@@ -300,10 +300,79 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         if (pageVO.getStatus() != null) {
             taskQuery.taskVariableValueEquals(BpmnVariableConstants.TASK_VARIABLE_STATUS, pageVO.getStatus());
         }
-//        if (ArrayUtil.isNotEmpty(pageVO.getCreateTime())) {
-//            taskQuery.taskCreatedAfter(DateUtils.of(pageVO.getCreateTime()[0]));
-//            taskQuery.taskCreatedBefore(DateUtils.of(pageVO.getCreateTime()[1]));
-//        }
+        if (StrUtil.isNotEmpty(pageVO.getCategory())) {
+            taskQuery.taskCategory(pageVO.getCategory());
+        }
+        if (StrUtil.isNotEmpty(pageVO.getProcessDefinitionKey())) {
+            taskQuery.processDefinitionKey(pageVO.getProcessDefinitionKey());
+        }
+        if (ArrayUtil.isNotEmpty(pageVO.getCreateTime())) {
+            taskQuery.taskCreatedAfter(DateUtils.of(pageVO.getCreateTime()[0]));
+            taskQuery.taskCreatedBefore(DateUtils.of(pageVO.getCreateTime()[1]));
+        }
+        if (ArrayUtil.isNotEmpty(pageVO.getCreateTime())) {
+            taskQuery.taskCreatedAfter(DateUtils.of(pageVO.getCreateTime()[0]));
+            taskQuery.taskCreatedBefore(DateUtils.of(pageVO.getCreateTime()[1]));
+        }
+        Set<String> candidateProcessInstanceIds = null;
+
+        // 2.1 办件名称过滤
+        if (StrUtil.isNotBlank(pageVO.getProcessInstanceName())) {
+            List<HistoricProcessInstance> processInstances = historyService.createHistoricProcessInstanceQuery()
+                    .processInstanceNameLike("%" + pageVO.getProcessInstanceName() + "%")
+                    .list();
+            if (CollUtil.isEmpty(processInstances)) {
+                return PageResult.empty();
+            }
+            candidateProcessInstanceIds = convertSet(processInstances, HistoricProcessInstance::getId);
+        }
+
+        // 2.2 办结时限过滤 (PROCESS_DEADLINE_DATE)
+        if (ArrayUtil.isNotEmpty(pageVO.getProcessDeadline())) {
+            Date startTime = DateUtils.of(pageVO.getProcessDeadline()[0]);
+            Date endTime = DateUtils.of(pageVO.getProcessDeadline()[1]);
+
+            List<HistoricProcessInstance> instances = historyService.createHistoricProcessInstanceQuery()
+                    .variableValueGreaterThanOrEqual(PROCESS_DEADLINE_DATE, startTime)
+                    .variableValueLessThanOrEqual(PROCESS_DEADLINE_DATE, endTime)
+                    .list();
+
+            if (CollUtil.isEmpty(instances)) {
+                return PageResult.empty();
+            }
+            Set<String> deadlineIds = convertSet(instances, HistoricProcessInstance::getId);
+            if (candidateProcessInstanceIds == null) {
+                candidateProcessInstanceIds = deadlineIds;
+            } else {
+                candidateProcessInstanceIds.retainAll(deadlineIds);
+                if (CollUtil.isEmpty(candidateProcessInstanceIds)) {
+                    return PageResult.empty();
+                }
+            }
+        }
+        // 2.4 办件编号
+        if (StrUtil.isNotBlank(pageVO.getProcessInstanceId())) {
+            taskQuery.processInstanceId(pageVO.getProcessInstanceId());
+        }
+
+        // 2.5 环节时限 (任务 DueDate)
+        if (ArrayUtil.isNotEmpty(pageVO.getDueDate())) {
+            taskQuery.taskDueAfter(DateUtils.of(pageVO.getDueDate()[0]));
+            taskQuery.taskDueBefore(DateUtils.of(pageVO.getDueDate()[1]));
+        }
+
+        // 2.6 紧急程度 (流程变量)
+        if (pageVO.getUrgencyDegree() != null) {
+            taskQuery.processVariableValueEquals(PROCESS_URGENCY_DEGREE, String.valueOf(pageVO.getUrgencyDegree()));
+        }
+
+        // 2.7 来文单位 (流程变量)
+        if (StrUtil.isNotBlank(pageVO.getSendingUnit())) {
+            // 注意：HistoricTaskInstanceQuery 对于 processVariableValueLikeIgnoreCase 支持可能有限，
+            // 如果此处报错，可能需要先查 ProcessInstance 再 filter ID，或者精确匹配。
+            // 这里假设 flowable 历史查询支持该变量查询
+            taskQuery.processVariableValueLikeIgnoreCase(PROCESS_SOURCE_UNIT, "%" + pageVO.getSendingUnit() + "%");
+        }
         // 执行查询
         long count = taskQuery.count();
         if (count == 0) {
@@ -2331,6 +2400,29 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         // 若存在直接触发接收任务，执行后续节点
         FlowableUtils.execute(execution.getTenantId(),
                 () -> runtimeService.trigger(execution.getId()));
+    }
+
+    @Override
+    public BpmTaskCountRespVO getTaskCount(long userId){
+        // 1. 查询待办数量 (Active 的任务)
+        long todoCount = taskService.createTaskQuery()
+                .taskAssignee(String.valueOf(userId)) // 指派给自己
+                .active()
+                .count();
+
+        // 2. 查询已办数量 (历史任务中已完成的)
+        long doneCount = historyService.createHistoricTaskInstanceQuery()
+                .taskAssignee(String.valueOf(userId))
+                .finished()
+                .count();
+
+        // 3. 组装返回
+        BpmTaskCountRespVO vo = new BpmTaskCountRespVO();
+        vo.setTodoCount(todoCount);
+        vo.setDoneCount(doneCount);
+        vo.setTotalCount(todoCount + doneCount);
+        return vo;
+
     }
 
     /**

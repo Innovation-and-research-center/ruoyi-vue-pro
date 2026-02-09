@@ -34,7 +34,8 @@ public enum BpmTaskCandidateStrategyEnum implements ArrayValuable<Integer> {
     FORM_DEPT_LEADER(51, "表单内部门负责人"),
     EXPRESSION(60, "流程表达式"), // 表达式 ExpressionManager
     ASSIGN_EMPTY(1, "审批人为空"),
-    MANUAL_SELECTED(55,"手动选择")
+    MANUAL_SELECTED(55,"手动选择"),
+    LEADER_DEPT(56,"分管领导")
     ;
 
     public static final Integer[] ARRAYS = Arrays.stream(values()).map(BpmTaskCandidateStrategyEnum::getStrategy).toArray(Integer[]::new);

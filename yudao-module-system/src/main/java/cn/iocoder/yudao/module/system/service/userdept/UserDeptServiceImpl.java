@@ -118,4 +118,14 @@ public class UserDeptServiceImpl implements UserDeptService {
         }
     }
 
+    @Override
+    public Set<Long> getUserIdsByDeptId(Long deptId) {
+        // 1. 查询部门关联列表
+        // 注意：这里需要在 UserDeptMapper 中确保有 selectListByDeptId 方法
+        List<UserDeptDO> list = userDeptMapper.selectListByDeptId(deptId);
+
+        // 2. 转换为用户 ID 集合
+        return convertSet(list, UserDeptDO::getUserId);
+    }
+
 }

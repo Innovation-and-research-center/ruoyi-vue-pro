@@ -90,6 +90,20 @@ public interface BpmTaskConvert {
                 AdminUserRespDTO startUser = userMap.get(NumberUtils.parseLong(processInstance.getStartUserId()));
                 taskVO.setProcessInstance(BeanUtils.toBean(processInstance, BpmTaskRespVO.ProcessInstance.class));
                 taskVO.getProcessInstance().setStartUser(BeanUtils.toBean(startUser, UserSimpleBaseVO.class));
+                // 【修复1】设置发起时间
+                taskVO.getProcessInstance().setCreateTime(DateUtils.of(processInstance.getStartTime()));
+
+                // 【修复2】设置办件类型（即流程定义名称）
+                // 前端字段为 taskName，这里映射为流程名称
+                taskVO.setTaskName(processInstance.getProcessDefinitionName());
+
+                // 【修复3】设置紧急程度
+                // 从流程变量中获取 PROCESS_URGENCY_DEGREE
+                if (processInstance.getProcessVariables() != null) {
+                    taskVO.setUrgencyDegree(cn.hutool.core.map.MapUtil.getStr(processInstance.getProcessVariables(), PROCESS_URGENCY_DEGREE));
+                    // 如果还需要完成时间，也可以一并设置
+                    taskVO.setCompletionTime(cn.hutool.core.map.MapUtil.getStr(processInstance.getProcessVariables(), PROCESS_FINISH_TIME));
+                }
                 // 摘要
                 taskVO.getProcessInstance().setSummary(FlowableUtils.getSummary(processDefinitionInfoMap.get(processInstance.getProcessDefinitionId()),
                         processInstance.getProcessVariables()));

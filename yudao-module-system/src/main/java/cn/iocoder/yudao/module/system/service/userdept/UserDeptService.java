@@ -72,4 +72,6 @@ public interface UserDeptService {
      */
     void assignUserDept(UserAssignDeptReqVO reqVO);
 
+    Set<Long> getUserIdsByDeptId(Long deptId);
+
 }
