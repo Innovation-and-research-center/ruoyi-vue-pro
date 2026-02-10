@@ -353,6 +353,29 @@ public class BpmTaskController {
 
     }
 
+    @DeleteMapping("/finish-by-admin")
+    @Operation(summary = "管理员强制结束流程（模拟正常完成）")
+    @Parameter(name = "processInstanceId", description = "流程实例的编号", required = true)
+    @Parameter(name = "reason", description = "结束原因", required = true)
+    @PreAuthorize("@ss.hasPermission('bpm:task:complate')") // 建议使用更高级别的权限，如 bpm:process-instance:cancel
+    public CommonResult<Boolean> finishProcessInstanceByAdmin(
+            @RequestParam("processInstanceId") String processInstanceId,
+            @RequestParam("reason") String reason) {
+
+        taskService.finishProcessInstanceByAdmin(getLoginUserId(), processInstanceId, reason);
+        return success(true);
+    }
+
+    @PutMapping("/batch-approve-end")
+    @Operation(summary = "批量办结任务（仅限下一节点为主流程结束的任务）")
+    @PreAuthorize("@ss.hasPermission('bpm:task:update')")
+    public CommonResult<Boolean> batchApproveTaskIfEnd(@Valid @RequestBody BpmTaskBatchApproveReqVO reqVO) {
+        taskService.batchApproveTaskIfEnd(getLoginUserId(), reqVO);
+        return success(true);
+    }
+
+
+
 //    @GetMapping("/next-node-list")
 //    @Operation(summary = "获得指定任务下，可执行的节点列表")
 //    @Parameter(name = "taskId", description = "任务编号", required = true)

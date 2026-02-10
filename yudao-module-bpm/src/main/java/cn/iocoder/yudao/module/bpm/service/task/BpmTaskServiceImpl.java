@@ -39,6 +39,7 @@ import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.bpmn.model.*;
+import org.flowable.bpmn.model.Process;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.ManagementService;
 import org.flowable.engine.RuntimeService;
@@ -2438,6 +2439,99 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     private LocalDateTime convertDate(Date date) {
         if (date == null) return null;
         return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    // @DataPermission(enable = false) // 如果需要管理员操作任意部门的流程，建议加上此注解
+    public void finishProcessInstanceByAdmin(Long userId, String processInstanceId, String reason) {
+        // 1. 校验流程实例是否存在
+        ProcessInstance processInstance = processInstanceService.getProcessInstance(processInstanceId);
+        if (processInstance == null) {
+            throw exception(PROCESS_INSTANCE_NOT_EXISTS);
+        }
+
+        // 2. 【核心】设置流程结果为“审批通过”
+        // RuoYi-Vue-Pro 依赖 PROCESS_RESULT 变量来判断流程最终状态
+        // 如果不设置这个，直接跳到结束节点，状态可能是默认值或者空，导致业务表状态更新不正确
+        runtimeService.setVariable(processInstanceId,
+                BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_RESULT,
+                2);
+        // 如果没有 BpmProcessInstanceResultEnum，这里直接填 2 (代表通过)
+
+        // 3. 记录操作日志（可选，给当前正在运行的任务加个备注，说被管理员强制结束了）
+        List<Task> runningTasks = getRunningTaskListByProcessInstanceId(processInstanceId, null, null);
+        if (CollUtil.isNotEmpty(runningTasks)) {
+            AdminUserRespDTO adminUser = adminUserApi.getUser(userId);
+            String operateName = adminUser != null ? adminUser.getNickname() : "管理员";
+            for (Task task : runningTasks) {
+                String comment = StrUtil.format("流程被[{}]强制归档，原因：{}", operateName, reason);
+                // 添加备注类型为“取消”或其他，视你的业务需求而定
+                taskService.addComment(task.getId(), processInstanceId,
+                        BpmCommentTypeEnum.CANCEL.getType(), comment);
+            }
+        }
+
+        // 4. 调用现有的跳转逻辑，将所有活动节点移动到 EndEvent
+        // 注意：你现有的 moveTaskToEnd 方法里会把 runningTasks 标记为 Cancel，这符合逻辑（因为这些任务确实没做完）
+        // 但因为第2步我们设置了 Result=Approve，所以流程整体结果是“通过”
+        moveTaskToEnd(processInstanceId, reason);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void batchApproveTaskIfEnd(Long userId, BpmTaskBatchApproveReqVO reqVO) {
+        // 1. 遍历处理
+        for (String taskId : reqVO.getIds()) {
+            // 2. 校验任务存在性及权限（复用现有校验逻辑）
+            Task task = validateTask(userId, taskId);
+
+            // 3. 【核心校验】判断下一节点是否为“主流程的结束节点”
+            if (!isNextNodeMainProcessEnd(task)) {
+                // 如果不满足条件，直接抛出异常，提示具体的任务名称
+                throw exception(PROCESS_INSTANCE_NOT_END, task.getName());
+            }
+
+            // 4. 执行审批（复用现有的 approveTask 方法）
+            BpmTaskApproveReqVO approveReq = new BpmTaskApproveReqVO()
+                    .setId(taskId)
+                    .setReason(StrUtil.isBlank(reqVO.getReason()) ? "批量办结" : reqVO.getReason()); // 默认原因
+            approveTask(userId, approveReq);
+        }
+    }
+
+    private boolean isNextNodeMainProcessEnd(Task task) {
+        // 1. 获取 BPMN 模型
+        BpmnModel bpmnModel = modelService.getBpmnModelByDefinitionId(task.getProcessDefinitionId());
+        if (bpmnModel == null) {
+            return false;
+        }
+
+        // 2. 获取当前任务节点元素
+        FlowElement source = BpmnModelUtils.getFlowElementById(bpmnModel, task.getTaskDefinitionKey());
+        if (!(source instanceof FlowNode)) {
+            return false;
+        }
+
+        // 3. 遍历流出线，查找目标节点
+        List<SequenceFlow> outgoingFlows = ((FlowNode) source).getOutgoingFlows();
+        if (CollUtil.isEmpty(outgoingFlows)) {
+            return false;
+        }
+
+        for (SequenceFlow flow : outgoingFlows) {
+            FlowElement target = flow.getTargetFlowElement();
+
+            // 4. 判断目标是否为结束节点 (EndEvent)
+            if (target instanceof EndEvent) {
+                // 5. 【关键】判断该结束节点的父容器是否为 Process
+                // 如果是在子流程中，target.getParentContainer() 会是 SubProcess 类型，这里就会返回 false
+                if (target.getParentContainer() instanceof Process) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
 }

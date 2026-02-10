@@ -136,4 +136,14 @@ public class BpmnVariableConstants {
      */
     public static final String TASK_SIGN_PIC_URL = "TASK_SIGN_PIC_URL";
 
+    public static final String TASK_SIGN_TYPE = "TASK_SIGN_TYPE";
+
+    /**
+     * 任务的变量 - 审批人选择的审批人 Map
+     *
+     * @see org.flowable.task.api.Task#getTaskLocalVariables()
+     * @see BpmTaskCandidateStrategyEnum#APPROVE_USER_SELECT
+     */
+    public static final String PROCESS_INSTANCE_VARIABLE_RESULT = "process_result";
+
 }
