@@ -205,6 +205,7 @@ public class BpmProcessInstanceController {
     @GetMapping("/get-next-select-nodes")
     @Operation(summary = "获取下一个执行流程节点的选项")
     @PreAuthorize("@ss.hasPermission('bpm:process-instance:query')")
+    @DataPermission(enable = false)
     public CommonResult<List<BpmNextTaskRespVO>> getNextSelectNodes(@Valid BpmApprovalDetailReqVO reqVO) {
         if (StrUtil.isNotEmpty(reqVO.getProcessVariablesStr())) {
             reqVO.setProcessVariables(JsonUtils.parseObject(reqVO.getProcessVariablesStr(), Map.class));

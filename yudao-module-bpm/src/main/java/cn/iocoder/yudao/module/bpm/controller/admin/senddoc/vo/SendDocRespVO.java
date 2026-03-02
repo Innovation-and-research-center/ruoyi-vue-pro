@@ -214,7 +214,7 @@ public class SendDocRespVO {
 
     @Schema(description = "附件路径")
     @ExcelProperty("附件路径")
-    private String attachFilePath;
+    private List<String> attachFilePath;
 
     @Schema(description = "判断正文草稿，审批搞，套红正文是否存在")
     @ExcelProperty("判断正文草稿，审批搞，套红正文是否存在")

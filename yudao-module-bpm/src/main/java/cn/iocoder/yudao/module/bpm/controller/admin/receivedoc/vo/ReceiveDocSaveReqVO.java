@@ -41,7 +41,7 @@ public class ReceiveDocSaveReqVO {
     private String remark;
 
     @Schema(description = "文件类别")
-    private Short docSecondClass;
+    private String docSecondClass;
 
     @Schema(description = "附件路径")
     private String attachFilePath;

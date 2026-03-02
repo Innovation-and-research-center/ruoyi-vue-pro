@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.bpm.dal.dataobject.senddoc;
 
+import com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler;
 import lombok.*;
 import java.util.*;
 import java.time.LocalDateTime;
@@ -29,7 +30,7 @@ import cn.iocoder.yudao.framework.mybatis.core.dataobject.BaseDO;
  *
  * @author 管理员
  */
-@TableName("t_send_doc")
+@TableName(value = "t_send_doc", autoResultMap = true)
 @KeySequence("t_send_doc_seq") // 用于 Oracle、PostgreSQL、Kingbase、DB2、H2 数据库的主键自增。如果是 MySQL 等数据库，可不写。
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -243,7 +244,8 @@ public class SendDocDO extends BaseDO {
     /**
      * 附件路径
      */
-    private String attachFilePath;
+    @TableField(typeHandler = JacksonTypeHandler.class)
+    private List<String> attachFilePath;
     /**
      * 判断正文草稿，审批搞，套红正文是否存在
      */

@@ -33,5 +33,8 @@ public class BpmTaskApproveReqVO {
     @Schema(description = "下一节点", example = "assist")
     private String  nextNode;
 
+    @Schema(description = "当前节点审批完成时，需要动态追加的同级审批人用户 ID 列表（多实例加签）", example = "[10, 20]")
+    private List<Long> addSignUserIds;
+
 
 }

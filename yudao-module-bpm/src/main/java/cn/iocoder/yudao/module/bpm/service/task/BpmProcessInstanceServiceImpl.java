@@ -56,6 +56,7 @@ import cn.iocoder.yudao.module.system.dal.dataobject.dept.DeptDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.service.dept.DeptService;
 import cn.iocoder.yudao.module.system.service.user.AdminUserService;
+import cn.iocoder.yudao.module.system.service.userdept.UserDeptService;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import jodd.util.StringUtil;
@@ -154,6 +155,9 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
     @Resource
     private BpmProcessInstanceUnifiedMapper unifiedMapper;
+
+    @Resource
+    private UserDeptService userDeptService;
 
     // ========== Query 查询相关方法 ==========
 
@@ -393,6 +397,24 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             return Collections.emptyList(); // 如果没开启，直接返回空
         }
         List<BpmNextTaskRespVO> result = new ArrayList<>();
+
+        if (sourceElement instanceof UserTask) {
+            // 解析当前节点的拓展属性
+            Map<String, String> sourceProperties = parseAllProperties(sourceElement);
+            // 判断是否开启了内循环标识
+            if ("1".equals(sourceProperties.get("loop_flag"))) {
+                BpmNextTaskRespVO loopNode = new BpmNextTaskRespVO();
+                // 【关键】使用特殊后缀标识这是一个加签循环节点，前端需根据此后缀做判断
+                loopNode.setTaskDefKey(sourceElement.getId() + "_internal_loop");
+                loopNode.setTaskName(sourceElement.getName() + " - 内循环");
+                // 继承当前节点的选人规则 (choose_rule / rule_value)
+                // 这样它就能复用你下方 getCandidateUsers 的查询逻辑，查出候选人
+                loopNode.setExtensionProperties(sourceProperties);
+
+                result.add(loopNode); // 将虚拟节点加入到返回列表中
+            }
+        }
+
         if (sourceElement instanceof FlowNode) {
             analyzeOutgoingFlows((FlowNode) sourceElement, result);
         }
@@ -466,8 +488,12 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
                     treeList.add(group);
                 }
-
-                // 5.3 【排序】将“当前用户所在的部门”排在最前面
+                // 5.3 【排序】同部门 > 分管部门 > 其他部门
+                Long finalCurrentDeptId = currentDeptId;
+                Set<Long> managedDeptIds = userDeptService.getUserDeptIds(loginUserId);
+                if (managedDeptIds == null) {
+                    managedDeptIds = new HashSet<>();
+                }
                 if (currentDeptId != null) {
                     treeList.sort((d1, d2) -> {
                         // 当前部门排最前 (-1)

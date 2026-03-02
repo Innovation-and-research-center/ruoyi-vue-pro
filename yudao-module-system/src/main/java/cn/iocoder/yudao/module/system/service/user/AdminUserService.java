@@ -212,6 +212,8 @@ public interface AdminUserService {
      */
     List<AdminUserDO> getUserListByStatus(Integer status);
 
+
+    List<AdminUserDO> getUserListByStatus();
     /**
      * 判断密码是否匹配
      *

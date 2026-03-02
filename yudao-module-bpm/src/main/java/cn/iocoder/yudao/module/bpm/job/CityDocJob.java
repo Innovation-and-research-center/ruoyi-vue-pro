@@ -283,10 +283,10 @@ public class CityDocJob implements JobHandler {
         }
     }
 
-    private Short getDocClass(String title) {
+    private String getDocClass(String title) {
         // 1. 防御性判断
         if (StrUtil.isEmpty(title)) {
-            return 0;
+            return "";
         }
 
         // 2. 只有长度大于 4 才进行截取判断 (保持 C# 逻辑)
@@ -296,7 +296,7 @@ public class CityDocJob implements JobHandler {
             List<DictDataRespDTO> dictList = DictFrameworkUtils.getDictDataList("doc_class");
 
             if (dictList == null || dictList.isEmpty()) {
-                return 0;
+                return "";
             }
 
             // 4. 截取最后四个字
@@ -310,16 +310,16 @@ public class CityDocJob implements JobHandler {
                 // 逻辑：判断最后四个字中是否包含字典的 Label
                 if (suffix.contains(dict.getLabel())) {
                     try {
-                        return (short) Integer.parseInt(dict.getValue());
+                        return dict.getLabel();
                     } catch (NumberFormatException e) {
                         // 防止字典值配置的不是数字
-                        return 0;
+                        return "";
                     }
                 }
             }
         }
 
-        return 0;
+        return "";
     }
 
 }

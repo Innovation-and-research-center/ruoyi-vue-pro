@@ -36,6 +36,6 @@ public class ReceiveDocPageReqVO extends PageParam {
     private String urgencyDegree;
 
     @Schema(description = "文件类别")
-    private Short docSecondClass;
+    private String docSecondClass;
 
 }

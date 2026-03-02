@@ -323,23 +323,23 @@ public class ForestryDocJob implements JobHandler {
     /**
      * 解析二级分类 (逻辑复用)
      */
-    private Short getDocClass(String title) {
-        if (StrUtil.isEmpty(title)) return 0;
+    private String getDocClass(String title) {
+        if (StrUtil.isEmpty(title)) return "";
         if (title.length() > 4) {
             List<DictDataRespDTO> dictList = DictFrameworkUtils.getDictDataList("doc_class");
-            if (dictList == null || dictList.isEmpty()) return 0;
+            if (dictList == null || dictList.isEmpty()) return "";
             String suffix = title.substring(title.length() - 4);
             for (DictDataRespDTO dict : dictList) {
                 if (suffix.contains(dict.getLabel())) {
                     try {
-                        return (short) Integer.parseInt(dict.getValue());
+                        return dict.getLabel();
                     } catch (NumberFormatException e) {
-                        return 0;
+                        return "";
                     }
                 }
             }
         }
-        return 0;
+        return "";
     }
 
 

@@ -58,6 +58,7 @@ import org.flowable.task.api.history.HistoricTaskInstance;
 import org.flowable.task.api.history.HistoricTaskInstanceQuery;
 import org.flowable.task.service.impl.persistence.entity.TaskEntity;
 import org.flowable.task.service.impl.persistence.entity.TaskEntityImpl;
+import org.flowable.variable.api.history.HistoricVariableInstance;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -114,6 +115,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     private AdminUserApi adminUserApi;
     @Resource
     private DeptApi deptApi;
+
 
     public static final int QUERY_TYPE_PREV = 1; // 查前置
     public static final int QUERY_TYPE_NEXT = 2; // 查后置
@@ -794,6 +796,114 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             runtimeService.setVariable(task.getProcessInstanceId(), BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEED_SIMULATE_TASK_IDS, needSimulateTaskIdsByReturn);
         }
 
+        if (CollUtil.isNotEmpty(reqVO.getAddSignUserIds())) {
+
+            Execution taskExecution = runtimeService.createExecutionQuery()
+                    .executionId(task.getExecutionId())
+                    .singleResult();
+            Execution miRootExecution = runtimeService.createExecutionQuery()
+                    .executionId(taskExecution.getParentId())
+                    .singleResult();
+            String parentExecutionOfMiRoot = miRootExecution.getParentId();
+
+
+            String collectionVarName = "coll_userList"; // 兜底默认值
+            String elementVarName = "assignee";
+            org.flowable.bpmn.model.FlowElement flowElement = bpmnModel.getFlowElement(task.getTaskDefinitionKey());
+            if (flowElement instanceof org.flowable.bpmn.model.UserTask) {
+                org.flowable.bpmn.model.UserTask userTask = (org.flowable.bpmn.model.UserTask) flowElement;
+                if (userTask.getLoopCharacteristics() != null && StrUtil.isNotBlank(userTask.getLoopCharacteristics().getInputDataItem())) {
+                    // 将形如 "${coll_userList}" 的字符串，提取为 "coll_userList"
+                    collectionVarName = userTask.getLoopCharacteristics().getInputDataItem().replace("${", "").replace("}", "").trim();
+                }
+            }
+            // 使用动态解析出来的变量名，去引擎里取出现有的人员集合
+            Object collObj = runtimeService.getVariable(task.getProcessInstanceId(), collectionVarName);
+            List<Object> collUserList = collObj != null ? new ArrayList<>((Collection<?>) collObj) : new ArrayList<>();
+
+            for (Long addSignUserId : reqVO.getAddSignUserIds()) {
+                List<Task> beforeTasks = taskService.createTaskQuery()
+                        .processInstanceId(task.getProcessInstanceId())
+                        .taskDefinitionKey(task.getTaskDefinitionKey())
+                        .list();
+
+                Map<String, Object> miVars = new HashMap<>();
+                miVars.put(elementVarName, String.valueOf(addSignUserId));
+
+                Execution newExecution = runtimeService.addMultiInstanceExecution(
+                        task.getTaskDefinitionKey(),
+                        parentExecutionOfMiRoot,
+                        miVars
+                );
+
+                // 3. 通过新生成的 Execution ID 精确找到刚才创建的 Task
+                Task newTask = taskService.createTaskQuery()
+                        .executionId(newExecution.getId())
+                        .singleResult();
+
+                List<Task> afterTasks = taskService.createTaskQuery()
+                        .processInstanceId(task.getProcessInstanceId())
+                        .taskDefinitionKey(task.getTaskDefinitionKey())
+                        .list();
+
+                if (newTask != null) {
+                    // 注意：如果你的 BPMN 文件里已经正确配置了分配人为 ${assignee}，
+                    // 引擎在这里会自动根据 miVars 把人分配好，setAssignee 其实可以省略。
+                    // 但为了兜底和明确逻辑，保留手动设值也是可以的。
+                    taskService.setAssignee(newTask.getId(), String.valueOf(addSignUserId));
+                    taskService.setOwner(newTask.getId(), String.valueOf(addSignUserId));
+
+                    // 打上溯源烙印
+                    taskService.setVariableLocal(newTask.getId(), "internal_source_task_id", task.getId());
+                }
+
+                // 4. 往动态集合里追加新人员
+                if (!collUserList.contains(addSignUserId) && !collUserList.contains(String.valueOf(addSignUserId))) {
+                    collUserList.add(addSignUserId); // 建议统一存放 Long 型，保持与已有集合类型一致
+                }
+
+            }
+
+            // 【优化】：不再调用 runtimeService.setVariable，而是存入 variables 待 complete 统一提交
+            variables.put(collectionVarName, collUserList);
+
+            // ================= 新增逻辑：同步更新 RuoYi-Vue-Pro 的节点选人变量 =================
+            // 1. 获取现有的节点选人变量映射 (包含了 validateAndSetNextAssignees 可能已经初始化的数据)
+            Object lastNodeAssigneesObj = variables.get(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+            if (lastNodeAssigneesObj == null) {
+                lastNodeAssigneesObj = runtimeService.getVariable(task.getProcessInstanceId(), BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+            }
+
+            @SuppressWarnings("unchecked")
+            Map<String, List<Long>> lastNodeAssigneesMap = new HashMap<>();
+            if (lastNodeAssigneesObj != null) {
+                lastNodeAssigneesMap.putAll((Map<String, List<Long>>) lastNodeAssigneesObj);
+            }
+
+            // 2. 获取当前节点的已选人员列表，如果为空则初始化
+            List<Long> currentTaskAssignees = lastNodeAssigneesMap.getOrDefault(task.getTaskDefinitionKey(), new ArrayList<>());
+            Set<Long> uniqueAssignees = new LinkedHashSet<>(currentTaskAssignees);
+
+            // 3. 将本次加签的人员追加进去并去重
+            uniqueAssignees.addAll(reqVO.getAddSignUserIds());
+            lastNodeAssigneesMap.put(task.getTaskDefinitionKey(), new ArrayList<>(uniqueAssignees));
+
+            // 4. 【优化】：更新回 variables 集合中，防止被 complete 覆盖
+            variables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, lastNodeAssigneesMap);
+            // =================================================================================
+
+            try {
+                List<AdminUserRespDTO> addUsers = adminUserApi.getUserList(reqVO.getAddSignUserIds());
+                if (CollUtil.isNotEmpty(addUsers)) {
+                    String addNames = addUsers.stream().map(AdminUserRespDTO::getNickname).collect(Collectors.joining(","));
+                    String signComment = StrUtil.format("办理完成并向当前环节追加审批人: {}", addNames);
+                    taskService.addComment(task.getId(), task.getProcessInstanceId(), BpmCommentTypeEnum.APPROVE.getType(), signComment);
+                }
+            } catch (Exception e) {
+                log.warn("写入加签日志失败", e);
+            }
+        }
+
 
 
 
@@ -896,7 +1006,8 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 List<Long> newAssignees = nextAssignees != null ? nextAssignees.get(nodeId) : null;
 
                 if (CollUtil.isEmpty(newAssignees) && CollUtil.isEmpty(currentAssignees)) {
-                    throw exception(PROCESS_INSTANCE_APPROVE_USER_SELECT_ASSIGNEES_NOT_CONFIG, nextFlowNode.getName());
+                    continue;
+//                    throw exception(PROCESS_INSTANCE_APPROVE_USER_SELECT_ASSIGNEES_NOT_CONFIG, nextFlowNode.getName());
                 }
 
                 if (newAssignees == null) newAssignees = new ArrayList<>();
@@ -1831,6 +1942,23 @@ public class BpmTaskServiceImpl implements BpmTaskService {
 
     private List<BpmTaskFlowTaskNodeRespVO> findPreviousNodes(HistoricTaskInstance currentTask) {
         List<BpmTaskFlowTaskNodeRespVO> nodes = new ArrayList<>();
+
+        HistoricVariableInstance sourceVar = historyService.createHistoricVariableInstanceQuery()
+                .taskId(currentTask.getId())
+                .variableName("internal_source_task_id")
+                .singleResult();
+
+        if (sourceVar != null && sourceVar.getValue() != null) {
+            String sourceTaskId = sourceVar.getValue().toString();
+            // 直接精准查出它的“父亲”任务
+            HistoricTaskInstance sourceTask = historyService.createHistoricTaskInstanceQuery()
+                    .taskId(sourceTaskId).singleResult();
+            if (sourceTask != null) {
+                nodes.add(convert(sourceTask));
+                return nodes; // 命中内循环，直接返回！
+            }
+        }
+
         String procInstId = currentTask.getProcessInstanceId();
 
         // 1. 获取流程实例，拿到“真正的”主流程开始节点ID
@@ -1923,6 +2051,24 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     private List<BpmTaskFlowTaskNodeRespVO> findNextNodes(HistoricTaskInstance currentTask) {
         List<BpmTaskFlowTaskNodeRespVO> nodes = new ArrayList<>();
 
+
+        // ================= 【核心新增：寻找内循环派发出去的子任务】 =================
+        List<HistoricVariableInstance> targetVars = historyService.createHistoricVariableInstanceQuery()
+                .processInstanceId(currentTask.getProcessInstanceId())
+                .variableName("internal_source_task_id")
+                .variableValueEquals("internal_source_task_id", currentTask.getId())
+                .list();
+
+        if (CollUtil.isNotEmpty(targetVars)) {
+            for (HistoricVariableInstance var : targetVars) {
+                HistoricTaskInstance nextTask = historyService.createHistoricTaskInstanceQuery()
+                        .taskId(var.getTaskId()).singleResult();
+                if (nextTask != null) {
+                    nodes.add(convert(nextTask));
+                }
+            }
+            return nodes; // 命中内循环，直接返回！
+        }
         // 同样只查 userTask，忽略网关和结束节点
         List<HistoricActivityInstance> activities = historyService.createHistoricActivityInstanceQuery()
                 .processInstanceId(currentTask.getProcessInstanceId())

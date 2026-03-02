@@ -115,11 +115,27 @@ public class UserController {
     @GetMapping({"/list-all-simple", "/simple-list"})
     @Operation(summary = "获取用户精简信息列表", description = "只包含被开启的用户，主要用于前端的下拉选项")
     public CommonResult<List<UserSimpleRespVO>> getSimpleUserList() {
-        List<AdminUserDO> list = userService.getUserListByStatus(CommonStatusEnum.ENABLE.getStatus());
+        List<AdminUserDO> list = userService.getUserListByStatus();
         // 拼接数据
         Map<Long, DeptDO> deptMap = deptService.getDeptMap(
                 convertList(list, AdminUserDO::getDeptId));
-        return success(UserConvert.INSTANCE.convertSimpleList(list, deptMap));
+        List<UserSimpleRespVO> voList = UserConvert.INSTANCE.convertSimpleList(list, deptMap);
+
+        // 遍历填充 deptSort 字段
+        voList.forEach(vo -> {
+            if (vo.getDeptId() != null) {
+                DeptDO dept = deptMap.get(vo.getDeptId());
+                if (dept != null && dept.getSort() != null) {
+                    vo.setDeptSort(String.valueOf(dept.getSort()));
+                } else {
+                    vo.setDeptSort("99999"); // 默认给一个极大的值，排在最后
+                }
+            } else {
+                vo.setDeptSort("99999"); // 无部门的排在最后
+            }
+        });
+
+        return success(voList);
     }
 
     @GetMapping("/get")

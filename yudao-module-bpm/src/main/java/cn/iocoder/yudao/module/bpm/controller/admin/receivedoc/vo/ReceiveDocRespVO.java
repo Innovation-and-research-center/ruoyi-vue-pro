@@ -56,7 +56,7 @@ public class ReceiveDocRespVO {
     @Schema(description = "文件类别")
     @ExcelProperty(value = "文件类别", converter = DictConvert.class)
     @DictFormat("doc_class") // TODO 代码优化：建议设置到对应的 DictTypeConstants 枚举类中
-    private Short docSecondClass;
+    private String docSecondClass;
 
     @Schema(description = "主办办结时间")
     @ExcelProperty("主办办结时间")

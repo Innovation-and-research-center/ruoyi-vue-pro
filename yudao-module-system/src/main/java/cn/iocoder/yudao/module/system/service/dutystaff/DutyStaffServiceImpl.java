@@ -118,7 +118,8 @@ public class DutyStaffServiceImpl implements DutyStaffService {
         }
 
         // 2. 遍历，逐个创建 or 更新
-        DutyImportRespVO respVO = DutyImportRespVO.builder().createDutyNames(new ArrayList<>())
+        DutyImportRespVO respVO = DutyImportRespVO.builder()
+                .createDutyNames(new ArrayList<>())
                 .updateDutyNames(new ArrayList<>())
                 .failureDutyNames(new HashMap<>())
                 .build();
@@ -137,18 +138,27 @@ public class DutyStaffServiceImpl implements DutyStaffService {
             try {
                 if (dateString.contains("/")) {
                     dutyDate = LocalDate.parse(dateString, DateTimeFormatter.ofPattern("yyyy/M/d"));
-                } else {
+                } else if (dateString.contains("-")) {
+                    dutyDate = LocalDate.parse(dateString, DateTimeFormatter.ofPattern("yyyy-M-d"));
+                }else {
                     dutyDate = LocalDate.parse(dateString);
                 }
             } catch (Exception e) {
-                respVO.getFailureDutyNames().put(dateString, "日期格式错误");
+                respVO.getFailureDutyNames().put(dateString, "日期格式错误: " + dateString);
                 return;
             }
-
+            LocalDateTime queryTime = dutyDate.atStartOfDay();
+            List<DutyStaffDO> existingList = staffMapper.selectList(
+                    new LambdaQueryWrapper<DutyStaffDO>()
+                            .eq(DutyStaffDO::getDutyDate, queryTime) // 这里会自动处理类型转换
+                            .eq(DutyStaffDO::getDeleted, 0) // 显式加上未删除条件（如果全局没配置逻辑删除）
+            );
             // 遍历所有列，匹配字典
             for (Map.Entry<String, Object> entry : importDuty.entrySet()) {
                 String header = entry.getKey();
-                String staffName = (String) entry.getValue();
+                Object val = entry.getValue();
+                String staffName = val != null ? String.valueOf(val) : "";
+
                 if (!dictLabelToValue.containsKey(header)) {
                     continue; // 非值班类型列
                 }
@@ -171,29 +181,13 @@ public class DutyStaffServiceImpl implements DutyStaffService {
                 }
                 AdminUserDO user = users.get(0);
 
-                // 查找是否存在
-                // 注意：这里逻辑从"按日期查整行"变成了"按日期+类型查单条"
-                // 原逻辑 DutyStaffDO 没有 staffType 唯一约束，但根据 DO 定义，应该是 (Data, Type) 唯一?
-                // 原代码：staffMapper.selectByDate(date) 返回 List<DutyStaffDO>
-                // 我们需要找到对应 staffType 的那一条
-                List<DutyStaffDO> existingList = staffMapper.selectByDate(dateString); // 假设 Mapper 支持 String 或
-                                                                                       // LocalDate -> 这里要注意 Mapper 定义
-                // 原代码：staffMapper.selectByDate(importDuty.getDutyDate()) -> String param
-                // 现在我们需要根据 dutyDate 查找。
-                // 建议：staffMapper.selectByDate 应该接受 String 吗？原代码是 importDuty.getDutyDate()
-                // (String)。
-                // 让我们假设 Mapper 接受 String (日期字符串)。
-                // 实际上 Mapper XML 可能是按 date 查。
-                // 更好方式：按 (date, staffName) 还是 (date, staffType)?
-                // 原逻辑是 importDuty 有 leader 和 staff 两个字段，分别对应 type 1 和 2.
-                // 现在的 DO 确实有 staffType。
-
                 // 查找该日期下该类型的记录
                 DutyStaffDO matchedDuty = null;
-                if (existingList != null) {
+                if (CollUtil.isNotEmpty(existingList)) {
                     matchedDuty = existingList.stream()
                             .filter(d -> Objects.equals(d.getStaffType(), staffType))
-                            .findFirst().orElse(null);
+                            .findFirst()
+                            .orElse(null);
                 }
 
                 if (matchedDuty == null) {
@@ -213,10 +207,12 @@ public class DutyStaffServiceImpl implements DutyStaffService {
                         respVO.getFailureDutyNames().put(dateString, "已存在不能更新");
                         continue;
                     }
-                    matchedDuty.setStaffName(user.getUsername());
-                    matchedDuty.setUserId(user.getId());
-                    staffMapper.updateById(matchedDuty);
-                    respVO.getUpdateDutyNames().add(dateString + "-" + header);
+                    if (!Objects.equals(matchedDuty.getUserId(), user.getId())) {
+                        matchedDuty.setStaffName(user.getNickname());
+                        matchedDuty.setUserId(user.getId());
+                        staffMapper.updateById(matchedDuty);
+                        respVO.getUpdateDutyNames().add(dateString + "-" + header);
+                    }
                 }
             }
         });

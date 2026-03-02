@@ -121,7 +121,7 @@ public class ReceiveDocDO extends BaseDO {
      *
      * 枚举 {@link TODO doc_class 对应的类}
      */
-    private Short docSecondClass;
+    private String docSecondClass;
     /**
      * 收文审批意见
      */
