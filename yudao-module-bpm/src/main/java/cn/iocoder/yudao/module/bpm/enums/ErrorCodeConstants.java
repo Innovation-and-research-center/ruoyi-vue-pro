@@ -55,6 +55,7 @@ public interface ErrorCodeConstants {
     ErrorCode PROCESS_INSTANCE_APPROVE_USER_SELECT_ASSIGNEES_NOT_CONFIG = new ErrorCode(1_009_004_007, "下一个任务({})的审批人未配置");
     ErrorCode PROCESS_INSTANCE_CANCEL_CHILD_FAIL_NOT_ALLOW = new ErrorCode(1_009_004_008, "子流程取消失败，子流程不允许取消");
     ErrorCode PROCESS_INSTANCE_NOT_END = new ErrorCode(1_009_004_009, "任务({})的下一节点不是主流程结束节点，不支持批量办结");
+    ErrorCode PROCESS_INSTANCE_APPROVE_USER_SELECT_ASSIGNEES_IS_HAVE = new ErrorCode(1_009_004_010, "所选的({})的办理人已在办理该任务");
 
     // ========== 流程任务 1-009-005-000 ==========
     ErrorCode TASK_OPERATE_FAIL_ASSIGN_NOT_SELF = new ErrorCode(1_009_005_001, "操作失败，原因：该任务的审批人不是你");
@@ -76,6 +77,7 @@ public interface ErrorCodeConstants {
     ErrorCode TASK_WITHDRAW_FAIL_TASK_NOT_EXISTS = new ErrorCode(1_009_005_018, "撤回失败，未查询到用户已办任务！");
     ErrorCode TASK_WITHDRAW_FAIL_NOT_ALLOW = new ErrorCode(1_009_005_019, "撤回失败，此流程不允许撤回操作！");
     ErrorCode TASK_WITHDRAW_FAIL_NEXT_TASK_NOT_ALLOW = new ErrorCode(1_009_005_020, "撤回失败，下一节点不满足撤回条件！");
+    ErrorCode TASK_WITHDRAW_FAIL_NEXT_TASK_NOT_DOUBLE= new ErrorCode(1_009_005_021, "同环节加签表示当前环节尚未结束，不能同时选择【向下一环节流转】！");
 
     // ========== 动态表单模块 1-009-010-000 ==========
     ErrorCode FORM_NOT_EXISTS = new ErrorCode(1_009_010_000, "动态表单不存在");

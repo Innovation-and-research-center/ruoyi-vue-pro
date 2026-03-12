@@ -55,7 +55,7 @@ public class ConfflowController {
 
     @PostMapping("/create")
     @Operation(summary = "创建会议报告单")
-    @PreAuthorize("@ss.hasPermission('bpm:confflow:create')")
+//    @PreAuthorize("@ss.hasPermission('bpm:confflow:create')")
     public CommonResult<Long> createConfflow(@Valid @RequestBody ConfflowSaveReqVO createReqVO) {
         if (StrUtil.isNotEmpty(createReqVO.getProcessVariablesStr())) {
             createReqVO.setProcessVariables(JsonUtils.parseObject(createReqVO.getProcessVariablesStr(), Map.class));
@@ -65,7 +65,7 @@ public class ConfflowController {
 
     @PutMapping("/update")
     @Operation(summary = "更新会议报告单")
-    @PreAuthorize("@ss.hasPermission('bpm:confflow:update')")
+//    @PreAuthorize("@ss.hasPermission('bpm:confflow:update')")
     public CommonResult<Boolean> updateConfflow(@Valid @RequestBody ConfflowSaveReqVO updateReqVO) {
         confflowService.updateConfflow(updateReqVO);
         return success(true);
@@ -74,7 +74,7 @@ public class ConfflowController {
     @DeleteMapping("/delete")
     @Operation(summary = "删除会议报告单")
     @Parameter(name = "id", description = "编号", required = true)
-    @PreAuthorize("@ss.hasPermission('bpm:confflow:delete')")
+//    @PreAuthorize("@ss.hasPermission('bpm:confflow:delete')")
     public CommonResult<Boolean> deleteConfflow(@RequestParam("id") Long id) {
         confflowService.deleteConfflow(id);
         return success(true);
@@ -83,7 +83,7 @@ public class ConfflowController {
     @DeleteMapping("/delete-list")
     @Parameter(name = "ids", description = "编号", required = true)
     @Operation(summary = "批量删除会议报告单")
-                @PreAuthorize("@ss.hasPermission('bpm:confflow:delete')")
+//                @PreAuthorize("@ss.hasPermission('bpm:confflow:delete')")
     public CommonResult<Boolean> deleteConfflowList(@RequestParam("ids") List<Long> ids) {
         confflowService.deleteConfflowListByIds(ids);
         return success(true);
@@ -92,7 +92,7 @@ public class ConfflowController {
     @GetMapping("/get")
     @Operation(summary = "获得会议报告单")
     @Parameter(name = "id", description = "编号", required = true, example = "1024")
-    @PreAuthorize("@ss.hasPermission('bpm:confflow:query')")
+//    @PreAuthorize("@ss.hasPermission('bpm:confflow:query')")
     public CommonResult<ConfflowRespVO> getConfflow(@RequestParam("id") Long id) {
         ConfflowDO confflow = confflowService.getConfflow(id);
         return success(BeanUtils.toBean(confflow, ConfflowRespVO.class));
@@ -100,7 +100,7 @@ public class ConfflowController {
 
     @GetMapping("/page")
     @Operation(summary = "获得会议报告单分页")
-    @PreAuthorize("@ss.hasPermission('bpm:confflow:query')")
+//    @PreAuthorize("@ss.hasPermission('bpm:confflow:query')")
     public CommonResult<PageResult<ConfflowRespVO>> getConfflowPage(@Valid ConfflowPageReqVO pageReqVO) {
         PageResult<ConfflowDO> pageResult = confflowService.getConfflowPage(pageReqVO);
         PageResult<ConfflowRespVO> result = BeanUtils.toBean(pageResult, ConfflowRespVO.class);

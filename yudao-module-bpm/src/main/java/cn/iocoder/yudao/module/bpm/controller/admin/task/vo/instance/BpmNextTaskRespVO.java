@@ -25,6 +25,16 @@ public class BpmNextTaskRespVO {
     private String taskType;
 
     private List<BpmUserGroupRespVO> candidateUsers;
+
+    private String flowName;
+
+    private Integer flowSort;
+
+    /** 已经设置的任务人员 ID 集合 */
+    private List<Long> assignedUserIds;
+
+    /** 已经设置的任务人员详细信息 */
+    private List<UserSimpleRespVO> assignedUsers;
 }
 
 

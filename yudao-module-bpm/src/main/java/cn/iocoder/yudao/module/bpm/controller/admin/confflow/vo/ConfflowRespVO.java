@@ -69,4 +69,10 @@ public class ConfflowRespVO {
     @Schema(description = "附件路径")
     private String attachFilePath;
 
+    @Schema(description = "参会人员会议情况及建议")
+    private String situation;
+
+    @Schema(description = "召集单位及召集人")
+    private String joinUnit;
+
 }

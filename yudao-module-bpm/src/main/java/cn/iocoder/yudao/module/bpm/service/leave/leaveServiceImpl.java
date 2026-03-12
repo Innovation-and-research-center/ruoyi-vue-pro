@@ -114,12 +114,12 @@ public class LeaveServiceImpl implements LeaveService {
 
 
         //如果普通人员请假大于1天，或者中层副职请假7天及以内；分管领导-->人教科备案
-        if ((createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(1)) > 0 && createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(30))<=0 && roleCondition.equals("grade_3")) || (createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(7))<=0 && roleCondition == "grade_7"))
+        if ((createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(1)) > 0 && createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(30))<=0 && roleCondition.equals("grade_3")) || (createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(7))<=0 && roleCondition.equals("grade_7")))
         {
             days_condition3 = "3_6";
         }
         //如果中层正职，或者中层副职请假7天以上，或一般人员超过30天；分管领导-->局领导审核
-        if (roleCondition == "grade_11" || (createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(7))>0 && roleCondition.equals("grade_7")) || (createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(30))>0 && roleCondition == "grade_3"))
+        if (roleCondition == "grade_11" || (createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(7))>0 && roleCondition.equals("grade_7")) || (createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(30))>0 && roleCondition.equals("grade_3")))
         {
             days_condition3 = "3_5";
         }

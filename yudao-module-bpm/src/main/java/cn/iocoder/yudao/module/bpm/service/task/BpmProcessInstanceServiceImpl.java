@@ -346,8 +346,8 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         // 1.1 从 reqVO 中，读取公共变量
         Long startUserId = loginUserId; // 流程发起人
         HistoricProcessInstance historicProcessInstance = null; // 流程实例
-//        Integer processInstanceStatus = BpmProcessInstanceStatusEnum.NOT_START.getStatus(); // 流程状态
         Map<String, Object> processVariables = new HashMap<>(); // 流程变量
+
         // 1.2 如果是流程已发起的场景，则使用流程实例的数据
         if (reqVO.getProcessInstanceId() != null) {
             historicProcessInstance = getHistoricProcessInstance(reqVO.getProcessInstanceId());
@@ -362,10 +362,11 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         if (CollUtil.isNotEmpty(reqVO.getProcessVariables())) {
             processVariables.putAll(reqVO.getProcessVariables());
         }
-        // 特殊：如果是未发起的场景，则设置发起用户，解决“发起流程”时，需要使用到该变量的问题。例如说：https://t.zsxq.com/fMw5g
+        // 特殊：如果是未发起的场景，则设置发起用户，解决“发起流程”时，需要使用到该变量的问题。
         if (historicProcessInstance == null) {
             processVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_START_USER_ID, loginUserId);
         }
+
         ProcessDefinition processDefinition = processDefinitionService.getProcessDefinition(
                 historicProcessInstance != null ? historicProcessInstance.getProcessDefinitionId()
                         : reqVO.getProcessDefinitionId());
@@ -375,26 +376,28 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         if (bpmnModel == null) {
             throw exception(ErrorCodeConstants.MODEL_NOT_EXISTS);
         }
+
         FlowElement sourceElement = null;
-        if(reqVO.getTaskId() == null){
+        Task task = null; // 提取到外部声明，便于获取实例 ID
+
+        if (reqVO.getTaskId() == null) {
             Process process = bpmnModel.getMainProcess();
             sourceElement = process.getFlowElements().stream()
                     .filter(e -> e instanceof StartEvent)
                     .findFirst().orElse(null);
-        }
-        else{
+        } else {
             // 1.1 校验任务存在，且是当前用户的
-            Task task = taskService.validateTask(loginUserId, reqVO.getTaskId());
+            task = taskService.validateTask(loginUserId, reqVO.getTaskId());
             // 1.2 校验流程实例存在
             ProcessInstance instance = getProcessInstance(task.getProcessInstanceId());
             if (instance == null) {
                 throw exception(PROCESS_INSTANCE_NOT_EXISTS);
             }
             sourceElement = bpmnModel.getFlowElement(task.getTaskDefinitionKey());
-
         }
+
         if (!checkManualSelectProperty(sourceElement)) {
-            return Collections.emptyList(); // 如果没开启，直接返回空
+            return Collections.emptyList(); // 如果没开启手动选人，直接返回空
         }
         List<BpmNextTaskRespVO> result = new ArrayList<>();
 
@@ -404,139 +407,212 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             // 判断是否开启了内循环标识
             if ("1".equals(sourceProperties.get("loop_flag"))) {
                 BpmNextTaskRespVO loopNode = new BpmNextTaskRespVO();
-                // 【关键】使用特殊后缀标识这是一个加签循环节点，前端需根据此后缀做判断
                 loopNode.setTaskDefKey(sourceElement.getId() + "_internal_loop");
-                loopNode.setTaskName(sourceElement.getName() + " - 内循环");
-                // 继承当前节点的选人规则 (choose_rule / rule_value)
-                // 这样它就能复用你下方 getCandidateUsers 的查询逻辑，查出候选人
+                loopNode.setTaskName("部门内循环或同环节移交");
+                loopNode.setFlowName("部门内循环或同环节移交");
+                loopNode.setFlowSort(2);
                 loopNode.setExtensionProperties(sourceProperties);
-
-                result.add(loopNode); // 将虚拟节点加入到返回列表中
+                result.add(loopNode);
             }
         }
 
         if (sourceElement instanceof FlowNode) {
-            analyzeOutgoingFlows((FlowNode) sourceElement, result);
+            analyzeOutgoingFlows((FlowNode) sourceElement, result, null);
         }
+
         AdminUserDO loginUser = userService.getUser(loginUserId);
         Long currentDeptId = (loginUser != null) ? loginUser.getDeptId() : null;
+
+        Set<Long> managedDeptIds = userDeptService.getUserDeptIds(loginUserId);
+        if (managedDeptIds == null) {
+            managedDeptIds = new HashSet<>();
+        }
+
         Map<String, List<AdminUserDO>> nodeCandidateMap = new HashMap<>();
         Set<Long> deptIdsToQuery = new HashSet<>();
-        for (BpmNextTaskRespVO node : result) {
 
-            // 只有 UserTask (用户任务) 才需要选人
+        // =========================================================================================
+        // 【终极无死角方案：真实任务表(含候选人) + 历史变量表 双管齐下】
+        // =========================================================================================
+        Map<String, Object> selectedAssigneesMap = new HashMap<>();
+        Set<String> targetTaskKeys = result.stream().map(BpmNextTaskRespVO::getTaskDefKey).collect(Collectors.toSet());
+
+        if (task != null && task.getProcessInstanceId() != null) {
+            String processInstanceId = task.getProcessInstanceId();
+
+            // 途径 1：从真实任务表提取 (处理并行分支/会签已经生成的实际任务)
+            List<org.flowable.task.api.history.HistoricTaskInstance> historicTasks = historyService.createHistoricTaskInstanceQuery()
+                    .processInstanceId(processInstanceId)
+                    .list();
+
+            for (org.flowable.task.api.history.HistoricTaskInstance hiTask : historicTasks) {
+                String taskKey = hiTask.getTaskDefinitionKey();
+
+                if (targetTaskKeys.contains(taskKey)) {
+                    List<Long> existingIds = selectedAssigneesMap.containsKey(taskKey) ?
+                            Convert.toList(Long.class, selectedAssigneesMap.get(taskKey)) : new ArrayList<>();
+                    boolean added = false;
+
+                    // 1.1 提取直接派发/签收的处理人
+                    if (StrUtil.isNotBlank(hiTask.getAssignee())) {
+                        Long assigneeId = Convert.toLong(hiTask.getAssignee(), null);
+                        if (assigneeId != null && !existingIds.contains(assigneeId)) {
+                            existingIds.add(assigneeId);
+                            added = true;
+                        }
+                    }
+
+                    // 1.2 提取处于候选组/未签收状态的人员 (IdentityLink)
+                    List<org.flowable.identitylink.api.history.HistoricIdentityLink> links = historyService.getHistoricIdentityLinksForTask(hiTask.getId());
+                    for (org.flowable.identitylink.api.history.HistoricIdentityLink link : links) {
+                        if (StrUtil.isNotBlank(link.getUserId())) {
+                            Long candidateId = Convert.toLong(link.getUserId(), null);
+                            if (candidateId != null && !existingIds.contains(candidateId)) {
+                                existingIds.add(candidateId);
+                                added = true;
+                            }
+                        }
+                    }
+
+                    if (added) {
+                        selectedAssigneesMap.put(taskKey, existingIds);
+                    }
+                }
+            }
+
+            // 途径 2：从历史变量表提取 (处理预测出来的但还没走到、未生成真实任务的节点)
+            List<org.flowable.variable.api.history.HistoricVariableInstance> varInstances = historyService.createHistoricVariableInstanceQuery()
+                    .processInstanceId(processInstanceId)
+                    .variableName(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES)
+                    .list();
+
+            for (org.flowable.variable.api.history.HistoricVariableInstance var : varInstances) {
+                if (var.getValue() instanceof Map) {
+                    Map<String, Object> mapValue = (Map<String, Object>) var.getValue();
+                    for (Map.Entry<String, Object> entry : mapValue.entrySet()) {
+                        String taskKey = entry.getKey();
+                        if (!targetTaskKeys.contains(taskKey)) continue;
+
+                        List<Long> userIds = Convert.toList(Long.class, entry.getValue());
+                        if (CollUtil.isNotEmpty(userIds)) {
+                            List<Long> existingIds = selectedAssigneesMap.containsKey(taskKey) ?
+                                    Convert.toList(Long.class, selectedAssigneesMap.get(taskKey)) : new ArrayList<>();
+                            for (Long id : userIds) {
+                                if (!existingIds.contains(id)) existingIds.add(id);
+                            }
+                            selectedAssigneesMap.put(taskKey, existingIds);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 途径 3：兜底从前端传入的流程变量获取
+        if (selectedAssigneesMap.isEmpty()) {
+            Object assigneesObj = processVariables.get(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_START_USER_SELECT_ASSIGNEES);
+            if (assigneesObj instanceof Map) {
+                selectedAssigneesMap.putAll((Map<String, Object>) assigneesObj);
+            }
+        }
+        // =========================================================================================
+
+        Set<Long> allAssignedUserIdsToQuery = new HashSet<>();
+        for (BpmNextTaskRespVO node : result) {
+            // 解析候选人逻辑
             if (!node.getTaskDefKey().equals("end")) {
                 CandidateRule rule = parseCandidateRule(node.getExtensionProperties());
-
                 if (rule != null) {
-
                     List<AdminUserDO> users = getCandidateUsers(rule.getType(), rule.getValue());
                     if (CollUtil.isNotEmpty(users)) {
-                        // A. 存入临时 Map
                         nodeCandidateMap.put(node.getTaskDefKey(), users);
-                        // B. 收集部门 ID (过滤掉 null)
                         users.forEach(u -> {
                             if (u.getDeptId() != null) deptIdsToQuery.add(u.getDeptId());
                         });
                     }
                 }
             }
+
+            // 收集已分配的人员 ID，准备统一查库
+            if (selectedAssigneesMap.containsKey(node.getTaskDefKey())) {
+                List<Long> assignedIds = Convert.toList(Long.class, selectedAssigneesMap.get(node.getTaskDefKey()));
+                if (CollUtil.isNotEmpty(assignedIds)) {
+                    node.setAssignedUserIds(assignedIds);
+                    allAssignedUserIdsToQuery.addAll(assignedIds);
+                }
+            }
         }
 
+        // 统一查询所有的已分配用户详细信息 (消除 N+1)
+        Map<Long, AdminUserDO> globalAssignedUserMap = new HashMap<>();
+        if (CollUtil.isNotEmpty(allAssignedUserIdsToQuery)) {
+            List<AdminUserDO> allAssignedUsers = userService.getUserList(allAssignedUserIdsToQuery);
+            globalAssignedUserMap = CollectionUtils.convertMap(allAssignedUsers, AdminUserDO::getId);
+            // 将这批人的部门 ID 加入待查询集合
+            allAssignedUsers.forEach(u -> {
+                if (u.getDeptId() != null) deptIdsToQuery.add(u.getDeptId());
+            });
+        }
+
+        // 统一查询所有的部门信息
         Map<Long, DeptDO> deptMap = new HashMap<>();
         if (CollUtil.isNotEmpty(deptIdsToQuery)) {
-            // 假设你的 deptService 有 getDeptList(Collection<Long> ids) 或者 getDeptMap(ids)
             List<DeptDO> deptList = deptService.getDeptList(deptIdsToQuery);
-            // 将 List 转为 Map
             deptMap = CollectionUtils.convertMap(deptList, DeptDO::getId);
         }
 
         for (BpmNextTaskRespVO node : result) {
+            // 组装候选人员树结构
             List<AdminUserDO> rawUsers = nodeCandidateMap.get(node.getTaskDefKey());
-
             if (CollUtil.isNotEmpty(rawUsers)) {
-                // 5.1 【分组】按部门 ID 分组 (Key: DeptId, Value: Users)
-                // 使用 Optional 处理用户没有部门的情况 (归为 -1L)
                 Map<Long, List<AdminUserDO>> usersByDept = rawUsers.stream()
-                        .collect(Collectors.groupingBy(
-                                u -> u.getDeptId() != null ? u.getDeptId() : -1L
-                        ));
+                        .collect(Collectors.groupingBy(u -> u.getDeptId() != null ? u.getDeptId() : -1L));
 
                 List<BpmUserGroupRespVO> treeList = new ArrayList<>();
-
-                // 5.2 【构建树】将 Map 转为 List<BpmUserGroupRespVO>
                 for (Map.Entry<Long, List<AdminUserDO>> entry : usersByDept.entrySet()) {
                     Long deptId = entry.getKey();
                     List<AdminUserDO> deptUsers = entry.getValue();
 
                     BpmUserGroupRespVO group = new BpmUserGroupRespVO();
-
-                    // 处理部门名称
                     if (deptId == -1L) {
                         group.setId(-1L);
-                        group.setName("未分配部门"); // 或者是 "其他"
+                        group.setName("未分配部门");
                     } else {
                         DeptDO dept = deptMap.get(deptId);
                         group.setId(deptId);
                         group.setName(dept != null ? dept.getName() : "未知部门");
                     }
-
-                    // 转换用户列表 (这里不再需要 setUserDeptName，因为父级已经是部门了)
-                    // 假设 UserConvert.INSTANCE.convertSimpleList(List<AdminUserDO>) 存在，只转基本信息
-                    // 如果没有不带 deptMap 的 convertSimpleList，可以用带 null 的：
                     group.setChildren(UserConvert.INSTANCE.convertSimpleList(deptUsers, null));
-
                     treeList.add(group);
                 }
-                // 5.3 【排序】同部门 > 分管部门 > 其他部门
-                Long finalCurrentDeptId = currentDeptId;
-                Set<Long> managedDeptIds = userDeptService.getUserDeptIds(loginUserId);
-                if (managedDeptIds == null) {
-                    managedDeptIds = new HashSet<>();
-                }
-                if (currentDeptId != null) {
-                    treeList.sort((d1, d2) -> {
-                        // 当前部门排最前 (-1)
-                        boolean d1IsCurrent = Objects.equals(d1.getId(), currentDeptId);
-                        boolean d2IsCurrent = Objects.equals(d2.getId(), currentDeptId);
 
+                Long finalCurrentDeptId = currentDeptId;
+                if (finalCurrentDeptId != null) {
+                    treeList.sort((d1, d2) -> {
+                        boolean d1IsCurrent = Objects.equals(d1.getId(), finalCurrentDeptId);
+                        boolean d2IsCurrent = Objects.equals(d2.getId(), finalCurrentDeptId);
                         if (d1IsCurrent && !d2IsCurrent) return -1;
                         if (!d1IsCurrent && d2IsCurrent) return 1;
-
-                        // 其他部门按 ID 或 名称 排序 (可选)
                         return Long.compare(d1.getId(), d2.getId());
                     });
                 }
-
-                // 5.4 赋值
                 node.setCandidateUsers(treeList);
+            }
+
+            // 组装已设置的任务人员详细信息
+            if (CollUtil.isNotEmpty(node.getAssignedUserIds())) {
+                List<AdminUserDO> assignedUsersForNode = new ArrayList<>();
+                for (Long uid : node.getAssignedUserIds()) {
+                    AdminUserDO u = globalAssignedUserMap.get(uid);
+                    if (u != null) {
+                        assignedUsersForNode.add(u);
+                    }
+                }
+                node.setAssignedUsers(UserConvert.INSTANCE.convertSimpleList(assignedUsersForNode, deptMap));
             }
         }
 
-//        for (BpmNextTaskRespVO node : result) {
-//            List<AdminUserDO> candidateUsers = nodeCandidateMap.get(node.getTaskDefKey());
-//
-//            if (CollUtil.isNotEmpty(candidateUsers)) {
-//                // 5.1 【排序】同部门优先
-//                if (currentDeptId != null) {
-//                    candidateUsers.sort((u1, u2) -> {
-//                        boolean u1In = Objects.equals(u1.getDeptId(), currentDeptId);
-//                        boolean u2In = Objects.equals(u2.getDeptId(), currentDeptId);
-//                        if (u1In && !u2In) return -1;
-//                        if (!u1In && u2In) return 1;
-//                        return 0;
-//                    });
-//                }
-//
-//                // 5.2 【转换】使用正确的 deptMap 进行转换
-//                node.setCandidateUsers(UserConvert.INSTANCE.convertSimpleList(candidateUsers, deptMap));
-//            }
-//        }
-//
-
         return result;
     }
-
     @Override
     public BpmNextTaskRespVO getCurrentNode(Long loginUserId, BpmApprovalDetailReqVO reqVO) {
 
@@ -573,7 +649,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             throw exception(PROCESS_INSTANCE_NOT_EXISTS);
         }
         FlowElement sourceElement = bpmnModel.getFlowElement(task.getTaskDefinitionKey());;
-        return buildTaskOption((UserTask) sourceElement, null);
+        return buildTaskOption((UserTask) sourceElement, null,null);
 
     }
 
@@ -707,18 +783,22 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         return false;
     }
 
-    private void analyzeOutgoingFlows(FlowNode source, List<BpmNextTaskRespVO> result) {
+    private void analyzeOutgoingFlows(FlowNode source, List<BpmNextTaskRespVO> result, String incomingCondition) {
         List<SequenceFlow> outgoingFlows = source.getOutgoingFlows();
 
         for (SequenceFlow flow : outgoingFlows) {
             FlowElement target = flow.getTargetFlowElement();
 
+            String currentCondition = StringUtil.isNotEmpty(flow.getConditionExpression())
+                    ? flow.getConditionExpression()
+                    : incomingCondition;
+
             if (target instanceof UserTask) {
                 // 找到目标任务
-                result.add(buildTaskOption((UserTask) target, flow.getConditionExpression()));
+                result.add(buildTaskOption((UserTask) target, currentCondition,flow));
             } else if (target instanceof Gateway) {
                 // 遇到网关，递归穿透
-                analyzeOutgoingFlows((FlowNode) target, result);
+                analyzeOutgoingFlows((FlowNode) target, result,currentCondition);
             }else if (target instanceof SubProcess) {
                 // ================== 新增逻辑开始 ==================
                 // 3. 遇到子流程 (嵌入式子流程)
@@ -735,7 +815,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                     if (subElement instanceof StartEvent) {
                         // 找到 StartEvent 后，将其视为普通的 FlowNode，递归调用本方法
                         // 这样就能顺着 StartEvent -> 线 -> 内部的 UserTask 找到了
-                        analyzeOutgoingFlows((FlowNode) subElement, result);
+                        analyzeOutgoingFlows((FlowNode) subElement, result,currentCondition);
                     }
                 }
 
@@ -765,7 +845,15 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                 // 3. 找到结束事件：处理流程终点
                 // 这里可以根据业务需求决定是否加入 result，或者打上一个“流程结束”的标记
                 String targetName = StringUtil.isNotEmpty(target.getName()) ? target.getName() : "结束";
-                result.add(new BpmNextTaskRespVO().setTaskName(targetName).setTaskDefKey("end"));
+                BpmNextTaskRespVO endNodeVO = new BpmNextTaskRespVO()
+                        .setTaskName(targetName)
+                        .setTaskDefKey("end");
+
+                // 【关键新增】提取指向结束节点的连线条件
+                ConditionResult extractedValue = extractConditionValue(currentCondition);
+                endNodeVO.setConditionExpression(extractedValue);
+
+                result.add(endNodeVO);
             }
 
         }
@@ -794,7 +882,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
     }
 
 
-    private BpmNextTaskRespVO buildTaskOption(UserTask userTask, String condition) {
+    private BpmNextTaskRespVO buildTaskOption(UserTask userTask, String condition,SequenceFlow flow) {
         BpmNextTaskRespVO vo = new BpmNextTaskRespVO();
         vo.setTaskDefKey(userTask.getId());
         vo.setTaskName(userTask.getName());
@@ -802,6 +890,14 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         vo.setConditionExpression(extractedValue);
         // 解析目标节点的拓展属性
         vo.setExtensionProperties(parseAllProperties(userTask));
+        if (flow != null) {
+            vo.setFlowName(flow.getName());
+            Map<String, String> flowProperties = parseAllProperties(flow);
+            if (flowProperties.containsKey("order") && StringUtil.isNotEmpty(flowProperties.get("order"))) {
+                // 使用 Hutool 的 Convert 安全转换为 Integer
+                vo.setFlowSort(Convert.toInt(flowProperties.get("order")));
+            }
+        }
         return vo;
     }
 
@@ -843,7 +939,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             FlowElement target = flow.getTargetFlowElement();
             if (target instanceof UserTask) {
                 // 网关出来的线通常带有条件
-                result.add(buildTaskOption((UserTask) target, flow.getConditionExpression()));
+                result.add(buildTaskOption((UserTask) target, flow.getConditionExpression(),flow));
             } else if (target instanceof Gateway) {
                 // 如果是连续网关，递归找
                 traverseGateway((Gateway) target, result);

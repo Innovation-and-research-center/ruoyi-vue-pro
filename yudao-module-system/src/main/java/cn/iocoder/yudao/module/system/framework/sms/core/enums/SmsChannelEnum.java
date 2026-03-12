@@ -19,8 +19,8 @@ public enum SmsChannelEnum {
     TENCENT("TENCENT", "腾讯云"),
     HUAWEI("HUAWEI", "华为云"),
     QINIU("QINIU", "七牛云"),
-//    DG_WORK("DG_WORK", "浙政钉"),
-//    MY_INTERNAL("MY_INTERNAL", "臻善短信接口");
+    DG_WORK("DG_WORK", "浙政钉"),
+    ZHANSHAN("ZHANSHAN", "臻善短信接口");
     ;
 
     /**

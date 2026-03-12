@@ -97,6 +97,7 @@ public class TimeExplainController {
         DeptRespDTO dept = deptApi.getDept(startUser.getDeptId());
         TimeExplainRespVO result = BeanUtils.toBean(timeExplain, TimeExplainRespVO.class);
         result.setDeptName(dept.getName());
+        result.setUserName(startUser.getNickname());
         return success(result);
     }
 

@@ -78,10 +78,10 @@ public class CityNoticeJob implements JobHandler {
                     + "?strMap.userUuid=" + configApi.getConfigValueByKey(NOTICE_USER_UUID)
                     + "&page=1&limit=10&start=0";
 
-            String result = HttpUtil.get(listUrl);
+//            String result = HttpUtil.get(listUrl);
 
-            log.info("请求的字符串："+result);
-//            String result = ResourceUtil.readUtf8Str("mock/notice_list.json");;
+//            log.info("请求的字符串："+result);
+            String result = ResourceUtil.readUtf8Str("mock/notice_list.json");;
             if (StrUtil.isEmpty(result)) {
                 log.warn("【市局公告】接口返回结果为空");
                 return "接口返回为空";
@@ -125,16 +125,16 @@ public class CityNoticeJob implements JobHandler {
 
         // 2. 获取详情 (C# /public/oaNotice/showOaNoticeDetail.do)
         String url = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/showOaNoticeDetail.do?oanoUuid=" + noticeUuid;
-        String result = HttpUtil.get(url);
-//        String mockFileName = "mock/detail/" + noticeUuid + ".json";
-//        String result;
-//        try {
-//            result = ResourceUtil.readUtf8Str(mockFileName);
-//            log.info("【测试模式】读取本地详情文件: {}", mockFileName);
-//        } catch (Exception e) {
-//            log.error("找不到模拟文件: {}", mockFileName);
-//            return false;
-//        }
+//        String result = HttpUtil.get(url);
+        String mockFileName = "mock/detail/" + noticeUuid + ".json";
+        String result;
+        try {
+            result = ResourceUtil.readUtf8Str(mockFileName);
+            log.info("【测试模式】读取本地详情文件: {}", mockFileName);
+        } catch (Exception e) {
+            log.error("找不到模拟文件: {}", mockFileName);
+            return false;
+        }
 
         // 注意：C# 返回的是 ResultData<NoticeDetail>
         NoticeResult<NoticeDetailDTO> resDetail = JSONUtil.toBean(result, new TypeReference<NoticeResult<NoticeDetailDTO>>() {}, false);
@@ -276,8 +276,8 @@ public class CityNoticeJob implements JobHandler {
             // C# Url: /public/oaNotice/loadFile.do?CMD=DF&uuid=...
             String downloadUrl = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/loadFile.do?CMD=DF&uuid=" + fileUuid;
 
-            byte[] fileBytes = HttpUtil.downloadBytes(downloadUrl);
-//            byte[] fileBytes = ResourceUtil.readBytes("mock/test.pdf");
+//            byte[] fileBytes = HttpUtil.downloadBytes(downloadUrl);
+            byte[] fileBytes = ResourceUtil.readBytes("mock/test.pdf");
             if (fileBytes == null || fileBytes.length == 0) return null;
 
             // 上传到 FileService

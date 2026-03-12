@@ -28,4 +28,8 @@ public class ReceiveFileRespVO {
      * 显示类型（0都显示1仅在pc显示2仅在app显示）
      */
     private Short showType;
+
+    private String path;
+
+    private Integer size;
 }

@@ -18,7 +18,8 @@ import org.apache.ibatis.annotations.Mapper;
 public interface ReceiveDocAttachMapper extends BaseMapperX<ReceiveDocAttachDO> {
 
     default List<ReceiveDocAttachDO> selectListByReceiveDocId(Long receiveDocId) {
-        return selectList(ReceiveDocAttachDO::getReceiveDocId, receiveDocId);
+        return selectList(ReceiveDocAttachDO::getReceiveDocId, receiveDocId,
+                ReceiveDocAttachDO::getDeleted,0);
     }
 
     default int deleteByReceiveDocId(Long receiveDocId) {

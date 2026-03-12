@@ -280,6 +280,9 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         validateReceiveDocExists(updateReqVO.getId());
         // 更新
         ReceiveDocDO updateObj = BeanUtils.toBean(updateReqVO, ReceiveDocDO.class);
+
+        updateObj.setReceiveDocNumber(null);
+        updateObj.setDocSequence(null);
         receiveDocMapper.updateById(updateObj);
 
         // 更新子表
@@ -332,6 +335,9 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         validateReceiveDocExists(updateReqVO.getId());
         // 更新
         ReceiveDocDO updateObj = BeanUtils.toBean(updateReqVO, ReceiveDocDO.class);
+
+        updateObj.setReceiveDocNumber(null);
+        updateObj.setDocSequence(null);
         receiveDocMapper.updateById(updateObj);
 
         // 更新子表

@@ -10,6 +10,8 @@ import cn.hutool.json.JSONUtil;
 import cn.iocoder.yudao.framework.common.biz.system.dict.dto.DictDataRespDTO;
 import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.framework.quartz.core.handler.JobHandler;
+import cn.iocoder.yudao.framework.tenant.core.context.TenantContextHolder;
+import cn.iocoder.yudao.framework.tenant.core.job.TenantJob;
 import cn.iocoder.yudao.module.bpm.controller.admin.fileexchange.vo.FileExchangeSaveReqVO;
 import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.ReceiveDocSaveReqVO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.fileexchange.FileExchangeDO;
@@ -59,8 +61,15 @@ public class CityDocJob implements JobHandler {
     private ReceiveDocAttachMapper receiveDocAttachMapper;
     @Resource
     private FileService fileService;
+
+    @TenantJob
     @Override
     public String execute(String param) throws Exception {
+        Long currentTenantId = TenantContextHolder.getTenantId();
+        if (currentTenantId == null || !currentTenantId.equals(1L)) {
+            log.info("当前租户[{}]非目标租户，跳过市局收文同步", currentTenantId);
+            return "跳过非目标租户";
+        }
         try {
             String listUrl = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/oa/api/public/service/showCoreExchgappData.do"
                     + "?ceadReceiverUuid=" + configApi.getConfigValueByKey(RECEIVE_UUID_KEY) + "&ceadState=0";

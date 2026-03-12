@@ -92,6 +92,7 @@ public class LeaveController {
         DeptRespDTO dept = deptApi.getDept(startUser.getDeptId());
         LeaveRespVO result = BeanUtils.toBean(leave, LeaveRespVO.class);
         result.setDeptName(dept.getName());
+        result.setNickName(startUser.getNickname());
         return success(result);
     }
 

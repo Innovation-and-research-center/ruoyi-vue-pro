@@ -723,7 +723,6 @@ public class BpmTaskServiceImpl implements BpmTaskService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    @DataPermission(enable = false) // 关闭数据权限，避免查询不到用户数据。相关案例：https://gitee.com/zhijiantianya/yudao-cloud/issues/ID1UYA
     public void approveTask(Long userId, @Valid BpmTaskApproveReqVO reqVO) {
         // 1.1 校验任务存在
         Task task = validateTask(userId, reqVO.getId());
@@ -744,6 +743,19 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             throw exception(TASK_REASON_REQUIRE);
         }
 
+        // =================================================================================
+        // 【第 1 道防线】：严格互斥拦截！同环节加签 与 向下流转 绝不能同时进行！
+        // =================================================================================
+        if (CollUtil.isNotEmpty(reqVO.getAddSignUserIds())) {
+            boolean hasNextRouting = StrUtil.isNotEmpty(reqVO.getNextNode())
+                    || CollUtil.isNotEmpty(reqVO.getNextAssignees())
+                    || CollUtil.isNotEmpty(reqVO.getNextNodeAssignees());
+
+            if (hasNextRouting) {
+                throw exception(TASK_WITHDRAW_FAIL_NEXT_TASK_NOT_DOUBLE);
+            }
+        }
+
         // 情况一：被委派的任务，不调用 complete 去完成任务
         if (DelegationState.PENDING.equals(task.getDelegationState())) {
             approveDelegateTask(reqVO, task);
@@ -756,7 +768,6 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             return;
         }
 
-        // 情况三：审批普通的任务。大多数情况下，都是这样
         // 2.1 更新 task 状态、原因、签字
         updateTaskStatusAndReason(task.getId(), BpmTaskStatusEnum.APPROVE.getStatus(), reqVO.getReason());
         if (signEnable) {
@@ -766,10 +777,37 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         taskService.addComment(task.getId(), task.getProcessInstanceId(), BpmCommentTypeEnum.APPROVE.getType(),
                 BpmCommentTypeEnum.APPROVE.formatComment(reqVO.getReason()));
 
-        // 3. 设置流程变量。如果流程变量前端传空，需要从历史实例中获取，原因：前端表单如果在当前节点无可编辑的字段时 variables 一定会为空
-        // 场景一：A 节点发起，B 节点表单无可编辑字段，审批通过时，C 节点需要流程变量获取下一个执行节点，但因为 B 节点无可编辑的字段，variables 为空，流程可能出现问题。
-        // 场景二：A 节点发起，B 节点只有某一个字段可编辑（比如 day），但 C 节点需要多个节点。
-        //       （比如 work + day 变量，在发起时填写，因为 B 节点只有 day 的编辑权限，在审批后，variables 会缺少 work 的值）
+        // =================================================================================
+        // 【第 2 道防线】：分离锁定 Execution 口袋 (完美解决连线报错 No outgoing sequence flow)
+        // =================================================================================
+        org.flowable.engine.runtime.Execution taskExecution = runtimeService.createExecutionQuery()
+                .executionId(task.getExecutionId())
+                .singleResult();
+
+        // 1. 用于存【路由变量】的口袋（必须能活到走连线那一刻）
+        String localVariableExecutionId = taskExecution.getId();
+        // 2. 用于【动态加签】的会签根节点
+        String miRootExecutionId = null;
+
+        if (taskExecution.getParentId() != null) {
+            org.flowable.engine.runtime.Execution parentExecution = runtimeService.createExecutionQuery()
+                    .executionId(taskExecution.getParentId())
+                    .singleResult();
+            // 只有身上带 nrOfInstances 计数器的，才是真正的多实例会签树根！
+            if (parentExecution != null && runtimeService.hasVariableLocal(parentExecution.getId(), "nrOfInstances")) {
+                miRootExecutionId = parentExecution.getId(); // 锁定 MI Root 给下面的加签代码用
+
+                // 【修复报错核心】：多实例办结时 MI Root 会被引擎物理销毁！
+                // 路由变量必须存放在 MI Root 的上一级（进线分支 Execution），才能活到走连线评估那一刻！
+                if (parentExecution.getParentId() != null) {
+                    localVariableExecutionId = parentExecution.getParentId();
+                } else {
+                    localVariableExecutionId = parentExecution.getId(); // 极小概率兜底
+                }
+            }
+        }
+
+        // 3. 准备合并流程变量
         Map<String, Object> processVariables = new HashMap<>();
         if (CollUtil.isNotEmpty(instance.getProcessVariables())) { // 获取历史中流程变量
             processVariables.putAll(instance.getProcessVariables());
@@ -777,101 +815,248 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         if (CollUtil.isNotEmpty(reqVO.getVariables())) { // 合并前端传递的流程变量，以前端为准
             processVariables.putAll(reqVO.getVariables());
         }
-        //更新下一节点变量
+
+        // =================================================================================
+        // 【关键接力】：从安全的局部口袋中读取“历史选人名单”，喂给全局进行正确 Merge！
+        // =================================================================================
+        Object localAssigneeMap = runtimeService.getVariableLocal(localVariableExecutionId, BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+        if (localAssigneeMap != null) {
+            processVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, localAssigneeMap);
+        }
+
+        // 更新下一节点变量
         if (StrUtil.isNotEmpty(reqVO.getNextNode())) {
             processVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEXT_NODE, reqVO.getNextNode());
         }
-        Map<String, List<Long>> nextNodeAssignees = CollUtil.isNotEmpty(reqVO.getNextAssignees())?reqVO.getNextAssignees():reqVO.getNextNodeAssignees();
+
         // 4. 校验并处理 APPROVE_USER_SELECT 当前审批人，选择下一节点审批人的逻辑
+        Map<String, List<Long>> nextNodeAssignees = CollUtil.isNotEmpty(reqVO.getNextAssignees()) ? reqVO.getNextAssignees() : reqVO.getNextNodeAssignees();
         Map<String, Object> variables = validateAndSetNextAssignees(task.getTaskDefinitionKey(), processVariables,
-                bpmnModel, nextNodeAssignees, instance,task.getId());
+                bpmnModel, nextNodeAssignees, instance, task.getId());
 
-        runtimeService.setVariables(task.getProcessInstanceId(), variables);
+        // =================================================================================
+        // 【第 3 道防线】：防穿透拦截！如果选的目标人均有任务，安静销毁冗余 Token
+        // =================================================================================
+        if (Boolean.TRUE.equals(variables.get("KILL_CURRENT_TOKEN_FLAG"))) {
+            EndEvent endEvent = BpmnModelUtils.getEndEvent(bpmnModel);
+            Assert.notNull(endEvent, "流程中未找到结束节点");
 
-        // 5. 如果当前节点 Id 存在于需要预测的流程节点中，从中移除。 流程变量在回退操作中设置
-        Object needSimulateTaskIds = runtimeService.getVariable(task.getProcessInstanceId(), BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEED_SIMULATE_TASK_IDS);
-        Set<String> needSimulateTaskIdsByReturn = Convert.toSet(String.class, needSimulateTaskIds);
-        if (needSimulateTaskIdsByReturn.contains(task.getTaskDefinitionKey())) {
-            needSimulateTaskIdsByReturn.remove(task.getTaskDefinitionKey());
-            runtimeService.setVariable(task.getProcessInstanceId(), BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEED_SIMULATE_TASK_IDS, needSimulateTaskIdsByReturn);
+            String mergeReason = "系统检测到所选目标人员均正在办理该环节，为避免重复派发，本分支已自动结束。";
+            taskService.addComment(task.getId(), task.getProcessInstanceId(), BpmCommentTypeEnum.APPROVE.getType(), mergeReason);
+            updateTaskStatusAndReason(task.getId(), BpmTaskStatusEnum.APPROVE.getStatus(), mergeReason);
+
+            runtimeService.createChangeActivityStateBuilder()
+                    .processInstanceId(task.getProcessInstanceId())
+                    .moveExecutionsToSingleActivityId(CollUtil.newArrayList(task.getExecutionId()), endEvent.getId())
+                    .changeState();
+            return; // 【必须 return】
         }
 
+        // =================================================================================
+        // 【第 4 道防线】：终极物理隔离！剥离【路由条件】与【人员名单】，严防并发全局污染！
+        // =================================================================================
+        Map<String, Object> localIsolatedVariables = new HashMap<>();
+
+        // 4.1 剥离选人变量
+        String assigneeVarKey = BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES;
+        if (variables.containsKey(assigneeVarKey)) {
+            localIsolatedVariables.put(assigneeVarKey, variables.get(assigneeVarKey));
+            variables.remove(assigneeVarKey); // 从将要全局保存的 Map 中彻底剔除
+            runtimeService.removeVariable(task.getProcessInstanceId(), assigneeVarKey); // 物理删除全局数据库残留
+        }
+
+        // 4.2 剥离当前节点的出线路由条件 (如 select_node_xx)
+        org.flowable.bpmn.model.FlowElement currentFlowElement = bpmnModel.getFlowElement(task.getTaskDefinitionKey());
+        if (currentFlowElement instanceof org.flowable.bpmn.model.FlowNode) {
+            List<org.flowable.bpmn.model.SequenceFlow> outgoingFlows = ((org.flowable.bpmn.model.FlowNode) currentFlowElement).getOutgoingFlows();
+            for (org.flowable.bpmn.model.SequenceFlow flow : outgoingFlows) {
+                String condition = flow.getConditionExpression();
+                if (cn.hutool.core.util.StrUtil.isNotBlank(condition)) {
+                    java.util.regex.Matcher m = java.util.regex.Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*").matcher(condition);
+                    while (m.find()) {
+                        String match = m.group();
+                        if (!"variables".equals(match) && !"get".equals(match) && !"null".equals(match) && !"empty".equals(match)) {
+                            // 【终极修复：物理抹杀共享口袋里的历史决策】严防并发遗留意图累加
+                            runtimeService.removeVariable(task.getProcessInstanceId(), match); // 删全局残留
+//                            if (runtimeService.hasVariableLocal(localVariableExecutionId, match)) {
+//                                runtimeService.removeVariableLocal(localVariableExecutionId, match); // 删该分支留下的局部历史
+//                            }
+
+                            // 提取本次提交的新选择
+                            if (variables.containsKey(match)) {
+                                localIsolatedVariables.put(match, variables.get(match));
+                                variables.remove(match); // 从将要全量覆盖的集合中剥离
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // =================================================================================
+        // 【第 5 道防线】：双轨数据写入！
+        // =================================================================================
+        // 5.1 全局写入：只保留真正的纯业务变量（表单填的数据等）
+        runtimeService.setVariables(task.getProcessInstanceId(), variables);
+
+        // 5.2 局部写入：将剥离出来的危险数据死死绑定在存活分支 (localVariableExecutionId) 的专属口袋上！
+        if (!localIsolatedVariables.isEmpty()) {
+            runtimeService.setVariablesLocal(localVariableExecutionId, localIsolatedVariables);
+        }
+
+        // =================================================================================
+        // 【标准加签】：同环节动态追加审批人 (使用 Flowable 原生 API)
+        // =================================================================================
         if (CollUtil.isNotEmpty(reqVO.getAddSignUserIds())) {
+            if (miRootExecutionId == null) {
+                throw new RuntimeException("当前节点非多实例节点，无法进行同环节加签！");
+            }
 
-            Execution taskExecution = runtimeService.createExecutionQuery()
-                    .executionId(task.getExecutionId())
+            org.flowable.engine.runtime.Execution miRootExecution = runtimeService.createExecutionQuery()
+                    .executionId(miRootExecutionId) // 准确使用刚才锁定的 MI Root
                     .singleResult();
-            Execution miRootExecution = runtimeService.createExecutionQuery()
-                    .executionId(taskExecution.getParentId())
-                    .singleResult();
-            String parentExecutionOfMiRoot = miRootExecution.getParentId();
 
-
-            String collectionVarName = "coll_userList"; // 兜底默认值
+            String collectionVarName = "coll_userList";
             String elementVarName = "assignee";
-            org.flowable.bpmn.model.FlowElement flowElement = bpmnModel.getFlowElement(task.getTaskDefinitionKey());
-            if (flowElement instanceof org.flowable.bpmn.model.UserTask) {
-                org.flowable.bpmn.model.UserTask userTask = (org.flowable.bpmn.model.UserTask) flowElement;
+            if (currentFlowElement instanceof org.flowable.bpmn.model.UserTask) {
+                org.flowable.bpmn.model.UserTask userTask = (org.flowable.bpmn.model.UserTask) currentFlowElement;
                 if (userTask.getLoopCharacteristics() != null && StrUtil.isNotBlank(userTask.getLoopCharacteristics().getInputDataItem())) {
-                    // 将形如 "${coll_userList}" 的字符串，提取为 "coll_userList"
                     collectionVarName = userTask.getLoopCharacteristics().getInputDataItem().replace("${", "").replace("}", "").trim();
                 }
             }
-            // 使用动态解析出来的变量名，去引擎里取出现有的人员集合
-            Object collObj = runtimeService.getVariable(task.getProcessInstanceId(), collectionVarName);
+
+            // 【全局雷达】：直接查询数据库，获取该节点当前所有的活跃办理人！防跨 Token 穿透加签！
+            List<Task> activeTasksInThisNode = taskService.createTaskQuery()
+                    .processInstanceId(task.getProcessInstanceId())
+                    .taskDefinitionKey(task.getTaskDefinitionKey())
+                    .active()
+                    .list();
+            Set<String> activeAssignees = activeTasksInThisNode.stream()
+                    .map(Task::getAssignee)
+                    .filter(cn.hutool.core.util.StrUtil::isNotBlank)
+                    .collect(Collectors.toSet());
+
+            Object collObj = runtimeService.getVariableLocal(miRootExecutionId, collectionVarName);
+            if (collObj == null) {
+                // 兜底：如果局部没有，再去全局拿
+                collObj = runtimeService.getVariable(task.getProcessInstanceId(), collectionVarName);
+            }
             List<Object> collUserList = collObj != null ? new ArrayList<>((Collection<?>) collObj) : new ArrayList<>();
 
             for (Long addSignUserId : reqVO.getAddSignUserIds()) {
-                List<Task> beforeTasks = taskService.createTaskQuery()
-                        .processInstanceId(task.getProcessInstanceId())
-                        .taskDefinitionKey(task.getTaskDefinitionKey())
-                        .list();
+                String userIdStr = String.valueOf(addSignUserId);
+
+                // 【核心防线】：只要他已经在活跃任务列表里了，直接跳过！
+                if (activeAssignees.contains(userIdStr)) {
+                    continue;
+                }
+
+                // 维护引擎底层集合，防止 Flowable 内部多实例数据脱节
+                if (!collUserList.contains(addSignUserId) && !collUserList.contains(userIdStr)) {
+                    collUserList.add(addSignUserId);
+                }
 
                 Map<String, Object> miVars = new HashMap<>();
-                miVars.put(elementVarName, String.valueOf(addSignUserId));
+                miVars.put(elementVarName, userIdStr);
 
-                Execution newExecution = runtimeService.addMultiInstanceExecution(
-                        task.getTaskDefinitionKey(),
-                        parentExecutionOfMiRoot,
-                        miVars
-                );
+                // ====================================================================
+                // 【官方原生 API】：一句话替代之前几十行的底层复杂逻辑
+                // ====================================================================
+//                org.flowable.engine.runtime.Execution newExecution = runtimeService.addMultiInstanceExecution(
+//                        task.getTaskDefinitionKey(),
+//                        miRootExecution.getParentId(), // ✅ 【唯一修改点】：传入整个流程实例的 ID！
+//                        miVars
+//                );
+                Integer tempNrOfInstances = (Integer) runtimeService.getVariableLocal(miRootExecutionId, "nrOfInstances");
+                if (tempNrOfInstances == null) tempNrOfInstances = 0;
 
-                // 3. 通过新生成的 Execution ID 精确找到刚才创建的 Task
-                Task newTask = taskService.createTaskQuery()
-                        .executionId(newExecution.getId())
-                        .singleResult();
+                // 【修复编译报错】：声明一个 final 变量，专门传给内部类当 loopCounter 用！
+                final int loopCounterIndex = tempNrOfInstances;
 
-                List<Task> afterTasks = taskService.createTaskQuery()
-                        .processInstanceId(task.getProcessInstanceId())
-                        .taskDefinitionKey(task.getTaskDefinitionKey())
-                        .list();
+                // 外层事务执行总人数 + 1
+                runtimeService.setVariableLocal(miRootExecutionId, "nrOfInstances", loopCounterIndex + 1);
 
+                Integer tempNrOfActive = (Integer) runtimeService.getVariableLocal(miRootExecutionId, "nrOfActiveInstances");
+                if (tempNrOfActive == null) tempNrOfActive = 0;
+                // 外层事务执行活跃人数 + 1
+                runtimeService.setVariableLocal(miRootExecutionId, "nrOfActiveInstances", tempNrOfActive + 1);
+                org.flowable.engine.runtime.Execution newExecution = managementService.executeCommand(new org.flowable.common.engine.impl.interceptor.Command<org.flowable.engine.runtime.Execution>() {
+                    @Override
+                    public org.flowable.engine.runtime.Execution execute(org.flowable.common.engine.impl.interceptor.CommandContext commandContext) {
+                        org.flowable.engine.impl.persistence.entity.ExecutionEntityManager executionEntityManager =
+                                org.flowable.engine.impl.util.CommandContextUtil.getExecutionEntityManager(commandContext);
+
+                        org.flowable.engine.impl.persistence.entity.ExecutionEntity miRoot =
+                                executionEntityManager.findById(miRootExecution.getId());
+                        org.flowable.engine.impl.persistence.entity.ExecutionEntity childExecution =
+                                executionEntityManager.createChildExecution(miRoot);
+                        childExecution.setCurrentFlowElement(miRoot.getCurrentFlowElement());
+
+                        // 【修改点】：直接拿外面准备好的 currentNrOfInstances 作为编号
+                        childExecution.setVariablesLocal(miVars);
+                        childExecution.setVariableLocal("loopCounter", loopCounterIndex);
+                        childExecution.setActive(true);
+                        childExecution.setScope(false);
+
+                        org.flowable.engine.impl.util.CommandContextUtil.getAgenda(commandContext)
+                                .planContinueProcessOperation(childExecution);
+
+                        return childExecution;
+                    }
+//                    public org.flowable.engine.runtime.Execution execute(org.flowable.common.engine.impl.interceptor.CommandContext commandContext) {
+//                        org.flowable.engine.impl.persistence.entity.ExecutionEntityManager executionEntityManager =
+//                                org.flowable.engine.impl.util.CommandContextUtil.getExecutionEntityManager(commandContext);
+//
+//                        // 1. 【核心防御】：精准锁定当前这根 Token 的 MI Root，指哪打哪，绝对不会找错！
+//                        org.flowable.engine.impl.persistence.entity.ExecutionEntity miRoot =
+//                                executionEntityManager.findById(miRootExecution.getId());
+//
+//                        // 2. 创建子 Execution 挂载在这棵指定的树上
+//                        org.flowable.engine.impl.persistence.entity.ExecutionEntity childExecution =
+//                                executionEntityManager.createChildExecution(miRoot);
+//                        childExecution.setCurrentFlowElement(miRoot.getCurrentFlowElement());
+//
+//                        // 3. 手动维护多实例的计数器
+//                        Integer nrOfInstances = (Integer) miRoot.getVariableLocal("nrOfInstances");
+//                        if (nrOfInstances == null) nrOfInstances = 0;
+//                        miRoot.setVariableLocal("nrOfInstances", nrOfInstances + 1);
+//
+//                        Integer nrOfActiveInstances = (Integer) miRoot.getVariableLocal("nrOfActiveInstances");
+//                        if (nrOfActiveInstances == null) nrOfActiveInstances = 0;
+//                        miRoot.setVariableLocal("nrOfActiveInstances", nrOfActiveInstances + 1);
+//
+//                        // 4. 设置局部变量（传入张三的 assignee）
+//                        childExecution.setVariablesLocal(miVars);
+//                        childExecution.setVariableLocal("loopCounter", nrOfInstances);
+//                        childExecution.setActive(true);
+//                        childExecution.setScope(false);
+//
+//                        // 5. 触发引擎继续流转，生成物理 Task 数据
+//                        org.flowable.engine.impl.util.CommandContextUtil.getAgenda(commandContext)
+//                                .planContinueProcessOperation(childExecution);
+//
+//                        return childExecution;
+//                    }
+                });
+
+                Task newTask = taskService.createTaskQuery().executionId(newExecution.getId()).singleResult();
                 if (newTask != null) {
-                    // 注意：如果你的 BPMN 文件里已经正确配置了分配人为 ${assignee}，
-                    // 引擎在这里会自动根据 miVars 把人分配好，setAssignee 其实可以省略。
-                    // 但为了兜底和明确逻辑，保留手动设值也是可以的。
-                    taskService.setAssignee(newTask.getId(), String.valueOf(addSignUserId));
-                    taskService.setOwner(newTask.getId(), String.valueOf(addSignUserId));
-
-                    // 打上溯源烙印
+                    taskService.setAssignee(newTask.getId(), userIdStr);
+                    taskService.setOwner(newTask.getId(), userIdStr);
                     taskService.setVariableLocal(newTask.getId(), "internal_source_task_id", task.getId());
                 }
-
-                // 4. 往动态集合里追加新人员
-                if (!collUserList.contains(addSignUserId) && !collUserList.contains(String.valueOf(addSignUserId))) {
-                    collUserList.add(addSignUserId); // 建议统一存放 Long 型，保持与已有集合类型一致
-                }
-
             }
 
-            // 【优化】：不再调用 runtimeService.setVariable，而是存入 variables 待 complete 统一提交
-            variables.put(collectionVarName, collUserList);
+            // 【终极隔离】：无视全局，强行把加签后的名单私有化到当前 Token 的 MI Root 上！严防多 Token 交叉泄露覆盖！
+            runtimeService.setVariableLocal(miRootExecutionId, collectionVarName, collUserList);
+            variables.remove(collectionVarName);
 
-            // ================= 新增逻辑：同步更新 RuoYi-Vue-Pro 的节点选人变量 =================
-            // 1. 获取现有的节点选人变量映射 (包含了 validateAndSetNextAssignees 可能已经初始化的数据)
-            Object lastNodeAssigneesObj = variables.get(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+            // ====================================================================
+            // 【严防死守】：将加签选人历史更新到 Local 口袋！绝不能泄露回 variables 全局！
+            // ====================================================================
+            Object lastNodeAssigneesObj = localIsolatedVariables.get(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
             if (lastNodeAssigneesObj == null) {
-                lastNodeAssigneesObj = runtimeService.getVariable(task.getProcessInstanceId(), BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+                lastNodeAssigneesObj = runtimeService.getVariableLocal(localVariableExecutionId, BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
             }
 
             @SuppressWarnings("unchecked")
@@ -880,23 +1065,20 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 lastNodeAssigneesMap.putAll((Map<String, List<Long>>) lastNodeAssigneesObj);
             }
 
-            // 2. 获取当前节点的已选人员列表，如果为空则初始化
             List<Long> currentTaskAssignees = lastNodeAssigneesMap.getOrDefault(task.getTaskDefinitionKey(), new ArrayList<>());
             Set<Long> uniqueAssignees = new LinkedHashSet<>(currentTaskAssignees);
-
-            // 3. 将本次加签的人员追加进去并去重
             uniqueAssignees.addAll(reqVO.getAddSignUserIds());
             lastNodeAssigneesMap.put(task.getTaskDefinitionKey(), new ArrayList<>(uniqueAssignees));
 
-            // 4. 【优化】：更新回 variables 集合中，防止被 complete 覆盖
-            variables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, lastNodeAssigneesMap);
-            // =================================================================================
+            // 重新写回安全的局部口袋 (localVariableExecutionId)
+            localIsolatedVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, lastNodeAssigneesMap);
+            runtimeService.setVariablesLocal(localVariableExecutionId, localIsolatedVariables);
 
             try {
                 List<AdminUserRespDTO> addUsers = adminUserApi.getUserList(reqVO.getAddSignUserIds());
                 if (CollUtil.isNotEmpty(addUsers)) {
                     String addNames = addUsers.stream().map(AdminUserRespDTO::getNickname).collect(Collectors.joining(","));
-                    String signComment = StrUtil.format("办理完成并向当前环节追加审批人: {}", addNames);
+                    String signComment = StrUtil.format("办理完成并向当前环节动态追加审批人: {}", addNames);
                     taskService.addComment(task.getId(), task.getProcessInstanceId(), BpmCommentTypeEnum.APPROVE.getType(), signComment);
                 }
             } catch (Exception e) {
@@ -904,16 +1086,22 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             }
         }
 
+        // 6. 如果当前节点 Id 存在于需要预测的流程节点中，从中移除 (清理模拟历史残留)
+        Object needSimulateTaskIds = runtimeService.getVariable(task.getProcessInstanceId(), BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEED_SIMULATE_TASK_IDS);
+        if (needSimulateTaskIds != null) {
+            Set<String> needSimulateTaskIdsByReturn = Convert.toSet(String.class, needSimulateTaskIds);
+            if (needSimulateTaskIdsByReturn.contains(task.getTaskDefinitionKey())) {
+                needSimulateTaskIdsByReturn.remove(task.getTaskDefinitionKey());
+                runtimeService.setVariable(task.getProcessInstanceId(), BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEED_SIMULATE_TASK_IDS, needSimulateTaskIdsByReturn);
+            }
+        }
 
-
-
-        // 6. 调用 BPM complete 去完成任务
+        // 7. 调用 BPM complete 去完成任务 (此时的 variables 已经完全脱敏剥离，绝对纯净安全！)
         taskService.complete(task.getId(), variables, true);
 
         // 【加签专属】处理加签任务
         handleParentTaskIfSign(task.getParentTaskId());
     }
-
     /**
      * 校验选择的下一个节点的审批人，是否合法
      * <p>
@@ -989,7 +1177,6 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 variables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_APPROVE_USER_SELECT_ASSIGNEES, approveUserSelectAssignees);
             }
 
-
             // 2.3 情况三：如果节点中的审批人策略为 手动，在审批时选择下一个节点的审批人，并且该节点的审批人为空
             if (ObjUtil.equals(candidateStrategy, BpmTaskCandidateStrategyEnum.MANUAL_SELECTED.getStrategy())) {
 
@@ -1001,155 +1188,57 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                     finalAssigneeMap = new HashMap<>();
                 }
 
-                List<Long> currentAssignees = finalAssigneeMap.get(nodeId);
-                // newAssignees: 前端本次提交新选择的人员名单
+                // newAssignees: 前端本次提交新选择的人员名单 (例如：[张三, 李四])
                 List<Long> newAssignees = nextAssignees != null ? nextAssignees.get(nodeId) : null;
-
-                if (CollUtil.isEmpty(newAssignees) && CollUtil.isEmpty(currentAssignees)) {
+                if (CollUtil.isEmpty(newAssignees)) {
                     continue;
-//                    throw exception(PROCESS_INSTANCE_APPROVE_USER_SELECT_ASSIGNEES_NOT_CONFIG, nextFlowNode.getName());
                 }
 
-                if (newAssignees == null) newAssignees = new ArrayList<>();
+                List<Long> historyAssignees = finalAssigneeMap.getOrDefault(nodeId, new ArrayList<>());
+                Set<Long> mergedSet = new LinkedHashSet<>(historyAssignees);
+                mergedSet.addAll(newAssignees);
 
-                long activeTaskCount = taskService.createTaskQuery()
+                List<Task> runningTasks = taskService.createTaskQuery()
                         .processInstanceId(processInstanceId)
                         .taskDefinitionKey(nodeId)
-                        .active() // 仅查询未完成的任务
-                        .count();
+                        .active()
+                        .list();
 
-                if (activeTaskCount > 0) {
+                if (CollUtil.isNotEmpty(runningTasks)) {
                     // ==========================================
-                    // 场景 A：节点正在运行 -> 【加签模式】
+                    // 场景 A：节点正在运行 -> 【动态加签模式】
                     // ==========================================
-                    Set<Long> targetTotalSet = new LinkedHashSet<>();
-                    if (CollUtil.isNotEmpty(currentAssignees)) {
-                        targetTotalSet.addAll(currentAssignees);
-                    }
-                    if (CollUtil.isNotEmpty(newAssignees)) {
-                        targetTotalSet.addAll(newAssignees);
-                    }
-                    Set<Long> uniqueSet = new LinkedHashSet<>();
-                    List<Task> runningTasks = taskService.createTaskQuery()
-                            .processInstanceId(processInstanceId)
-                            .taskDefinitionKey(nodeId)
-                            .active()
-                            .list();
+                    // 1. 提取当前正在运行的任务的审批人
                     Set<String> runningUserIds = runningTasks.stream()
                             .map(Task::getAssignee)
+                            .filter(StrUtil::isNotBlank)
                             .collect(Collectors.toSet());
+
+                    // 2. 找出需要真正创建新任务的人员（前端传来的名单 - 正在运行的名单）
+                    // 重点：这里不去重历史已完成的人员！只要不在运行中，就重新生成！
                     Set<Long> tasksToCreate = new LinkedHashSet<>();
-                    for (Long userId : targetTotalSet) {
-                        // 【核心修改点】：只判断 runningUserIds
-                        // 如果 user 不在 running 列表里 -> 说明他要么是新的，要么是已办完的 -> 都要创建任务
-                        // 如果 user 在 running 列表里 -> 说明他有任务还没做完 -> 跳过，不重复发
+                    for (Long userId : mergedSet) {
                         if (!runningUserIds.contains(String.valueOf(userId))) {
                             tasksToCreate.add(userId);
                         }
                     }
-//                    // 4.1 更新变量 (合并历史+新增，用于记录完整名单)
-//                    if (CollUtil.isNotEmpty(currentAssignees)) {
-//                        uniqueSet.addAll(currentAssignees);
-//                    }
-//                    uniqueSet.addAll(newAssignees);
-                    finalAssigneeMap.put(nodeId, new ArrayList<>(tasksToCreate));
-                }
-                else {
-                    // 节点当前没在运行，检查是否有历史 (区分 重办 还是 首发)
-                    long finishedCount = historyService.createHistoricActivityInstanceQuery()
-                            .processInstanceId(processInstanceId)
-                            .activityId(nodeId)
-                            .finished()
-                            .count();
-                    // 没有正在运行的并且存在完成的历史数据
-                    if (finishedCount > 0) {
-                        Map<String, Long> updateDateMap = (Map<String, Long>) variables.get(
-                                BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_UPDATE_TIME);
-                        if (updateDateMap == null) {
-                            updateDateMap = new HashMap<>();
-                        }
-                        Task currentTask = taskService.createTaskQuery().taskId(taskId).singleResult();
-                        long myTaskStartTime = currentTask.getCreateTime().getTime();
-                        Long lastUpdateTime = updateDateMap.get(nodeId);
-                        List<Long> existingAssignees = finalAssigneeMap.get(nodeId);
-                        Set<Long> targetSet = new LinkedHashSet<>();
-                        boolean isDirtyData = false;
-                        if (lastUpdateTime == null) {
-                            // 从来没更新过，肯定是第一次
-                            isDirtyData = true;
-                        } else if (lastUpdateTime < myTaskStartTime) {
-                            // 【关键】：变量最后更新时间 早于 我的任务开始时间
-                            // 说明这是“上一轮循环”留下的数据，与本轮无关
-                            isDirtyData = true;
-                        } else {
-                            // 变量更新时间 晚于 我的任务开始时间
-                            // 说明这是“本轮并发的兄弟节点”刚刚修改过的
-                            isDirtyData = false;
-                        }
-                        if (isDirtyData) {
-                            // 场景：我是本轮第一个提交的人 (或者上一轮数据残留)
-                            // 动作：清除旧历史，只保留我选的
-                            // 注意：不要管 existingAssignees 里有什么，直接丢弃
-                            if (CollUtil.isNotEmpty(newAssignees)) {
-
-                                targetSet.addAll(newAssignees);
-                            }
-                            // 如果为空保留旧数据
-                            else{
-                                targetSet.addAll(existingAssignees);
-                            }
-                        } else {
-                            // 场景：已经有兄弟节点提交过了 (Map 是新的)
-                            // 动作：合并 (保留兄弟选的 + 我选的)
-                            if (CollUtil.isNotEmpty(existingAssignees)) {
-                                targetSet.addAll(existingAssignees);
-                            }
-                            if (CollUtil.isNotEmpty(newAssignees)) {
-                                targetSet.addAll(newAssignees);
-                            }
-                        }
-                        finalAssigneeMap.put(nodeId, new ArrayList<>(targetSet));
-                        updateDateMap.put(nodeId, System.currentTimeMillis());
-                        variables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_UPDATE_TIME, updateDateMap);
-
-//                        Map<String, List<ExtensionElement>> extensions = nextFlowNode.getExtensionElements();
-//                        if(hasBack( extensions.get("property"))){
-//                            Task currentTask = taskService.createTaskQuery().taskId(taskId).singleResult();
-//                            long myTaskStartTime = currentTask.getCreateTime().getTime();
-//                            String updateTimeKey = "LAST_UPDATE_TIME_" + nodeId;
-//
-//                            List<Long> existingAssignees = finalAssigneeMap.get(nodeId);
-//                            // 2. 使用 Set 进行合并去重
-//                            Set<Long> targetSet = new LinkedHashSet<>();
-//                            if (CollUtil.isNotEmpty(existingAssignees)) {
-//                                targetSet.addAll(existingAssignees);
-//                            }
-//                            if (CollUtil.isNotEmpty(newAssignees)) {
-//                                targetSet.addAll(newAssignees);
-//                            }
-//                            // 3. 将合并后的完整名单存回
-//                            finalAssigneeMap.put(nodeId, new ArrayList<>(targetSet));
-//                            variables.put(updateTimeKey, System.currentTimeMillis());
-//
-//                        }
-//                        else{
-//                            // 逻辑：覆盖 (Overwrite)。切断与历史名单的联系，开启新的一轮。
-//                            finalAssigneeMap.put(nodeId, new ArrayList<>(newAssignees));
-//                        }
-
-                    } else {
-                        // ==========================================
-                        // 场景 C：第一次进入该节点 -> 【初始化模式】
-                        // ==========================================
-                        // 逻辑：直接存入。为了代码健壮性，用 Set 处理一下也没问题。
-                        Set<Long> uniqueSet = new LinkedHashSet<>();
-                        if (CollUtil.isNotEmpty(currentAssignees)) {
-                            uniqueSet.addAll(currentAssignees);
-                        }
-                        uniqueSet.addAll(newAssignees);
-                        finalAssigneeMap.put(nodeId, new ArrayList<>(uniqueSet));
+                    if (CollUtil.isEmpty(tasksToCreate)) {
+                        throw exception(PROCESS_INSTANCE_APPROVE_USER_SELECT_ASSIGNEES_IS_HAVE, nextFlowNode.getName());
+//                        variables.put("KILL_CURRENT_TOKEN_FLAG", true);
+//                        continue;
                     }
+                    finalAssigneeMap.put(nodeId, new ArrayList<>(tasksToCreate));
+
+                } else {
+                    // ==========================================
+                    // 场景 B：节点未运行 -> 走常规预埋变量模式
+                    // ==========================================
+                    // 节点还没走到，直接对传入的数组做个基础去重（防止前端传 [张三, 张三]），然后埋入变量即可
+//                    variables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, finalAssigneeMap);
+                    finalAssigneeMap.put(nodeId, new ArrayList<>(mergedSet));
                 }
+
+                // 统一存回变量池
                 variables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, finalAssigneeMap);
             }
         }
@@ -1280,6 +1369,54 @@ public class BpmTaskServiceImpl implements BpmTaskService {
 
         // 4. 递归处理父任务
         handleParentTaskIfSign(parentTask.getParentTaskId());
+    }
+
+
+    /**
+     * 自动合并（秒批）同节点下分配给同一个人的重复任务
+     * * @param currentTask      当前刚刚办理完成的主任务
+     * @param processVariables 流程变量（原样传递给重复任务，保证路线不出错）
+     * @param commentType      审批意见的类型字典值（例如："2"代表同意，"3"代表拒绝/退回等）
+     * @param actionName       动作名称（用于拼接审批意见，如："同意"、"拒绝"）
+     */
+    private void autoMergeDuplicateTasks(org.flowable.task.api.Task currentTask,
+                                         Map<String, Object> processVariables,
+                                         String commentType,
+                                         String actionName) {
+        // 安全校验：如果任务为空或没有分配人，直接跳过
+        if (currentTask == null || cn.hutool.core.util.StrUtil.isBlank(currentTask.getAssignee())) {
+            return;
+        }
+
+        try {
+            // 1. 查找同流程实例、同节点、同办理人的其他【未办】活跃任务
+            List<org.flowable.task.api.Task> duplicateTasks = taskService.createTaskQuery()
+                    .processInstanceId(currentTask.getProcessInstanceId())
+                    .taskDefinitionKey(currentTask.getTaskDefinitionKey())
+                    .taskAssignee(currentTask.getAssignee())
+                    .active()
+                    .list();
+
+            // 2. 遍历并执行静默合并
+            for (org.flowable.task.api.Task duplicateTask : duplicateTasks) {
+                // 排除刚刚已经办完的主任务自身
+                if (!duplicateTask.getId().equals(currentTask.getId())) {
+
+                    // 3. 构造系统代办的流转意见，留下完美的审计记录
+                    String mergeComment = String.format("系统识别到多路流转重复派发，已自动跟随主任务 [%s] 合并%s",
+                            currentTask.getId(), actionName);
+
+                    // 写入流转意见
+                    taskService.addComment(duplicateTask.getId(), currentTask.getProcessInstanceId(), commentType, mergeComment);
+
+                    // 4. 连带完成这个重复任务
+                    taskService.complete(duplicateTask.getId(), processVariables);
+                }
+            }
+        } catch (Exception e) {
+            // 兜底保护：防止 Flowable 引擎底层会签机制自动销毁任务导致的报错
+            log.warn("尝试合并重复任务时发生异常（任务可能已被引擎自动回收）: {}", e.getMessage());
+        }
     }
 
     /**
@@ -2658,9 +2795,19 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         if (!(source instanceof FlowNode)) {
             return false;
         }
+        // 3. 通过递归向下寻找，判断是否能直接/经过网关到达主流程的结束节点
+        return checkPathToEnd((FlowNode) source, new HashSet<>());
+    }
 
-        // 3. 遍历流出线，查找目标节点
-        List<SequenceFlow> outgoingFlows = ((FlowNode) source).getOutgoingFlows();
+    private boolean checkPathToEnd(FlowNode node, Set<String> visited) {
+        // 防止流程设计中存在环形路由导致死循环
+        if (node == null || visited.contains(node.getId())) {
+            return false;
+        }
+        visited.add(node.getId());
+
+        // 获取当前节点的所有流出线
+        List<SequenceFlow> outgoingFlows = node.getOutgoingFlows();
         if (CollUtil.isEmpty(outgoingFlows)) {
             return false;
         }
@@ -2668,16 +2815,24 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         for (SequenceFlow flow : outgoingFlows) {
             FlowElement target = flow.getTargetFlowElement();
 
-            // 4. 判断目标是否为结束节点 (EndEvent)
+            // 情况 1：直接遇到了结束节点 (EndEvent)
             if (target instanceof EndEvent) {
-                // 5. 【关键】判断该结束节点的父容器是否为 Process
-                // 如果是在子流程中，target.getParentContainer() 会是 SubProcess 类型，这里就会返回 false
-                if (target.getParentContainer() instanceof Process) {
+                // 判断该结束节点的父容器是否为 Process (即排除子流程里的结束节点)
+                if (target.getParentContainer() instanceof org.flowable.bpmn.model.Process) {
                     return true;
                 }
             }
+            // 情况 2：遇到了网关 (Gateway)，继续穿透往下找
+            else if (target instanceof Gateway) {
+                if (checkPathToEnd((FlowNode) target, visited)) {
+                    return true;
+                }
+            }
+            // 如果遇到了 UserTask(用户任务) 或者 SubProcess(子流程)，说明这条路没直接走到大结局，直接跳过看下一条连线
         }
+
         return false;
     }
+
 
 }
