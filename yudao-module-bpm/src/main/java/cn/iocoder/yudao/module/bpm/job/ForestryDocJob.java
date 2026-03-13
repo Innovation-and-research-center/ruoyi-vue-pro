@@ -85,7 +85,8 @@ public class ForestryDocJob implements JobHandler {
 
             // 1. 准备请求参数
             String md5Pwd = SecureUtil.md5(password); // 对应 C# GetMD5Encrypt32
-            String today = DateUtil.today(); // yyyy-MM-dd
+//            String today = DateUtil.today(); // yyyy-MM-dd
+            String today = "2025-08-07";
 
             String listUrl = domain + "/push/docsReader.do?sysCmd=getReader&dataTime=" + today
                     + "&loginName=" + loginName + "&passWord=" + md5Pwd;
@@ -220,7 +221,7 @@ public class ForestryDocJob implements JobHandler {
         fileExchangeService.createFileExchange(exchangeVO);
 
         // 8. 更新远程状态 (对应 C# getReaderStatus)
-        updateRemoteStatus(domain, loginName, md5Pwd, doc.getId());
+//        updateRemoteStatus(domain, loginName, md5Pwd, doc.getId());
 
         return true;
     }

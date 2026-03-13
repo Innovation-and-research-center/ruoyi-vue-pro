@@ -28,7 +28,7 @@ public class ZhenShanSmsClient extends AbstractSmsClient {
     private static final String S_KEY = "b32d21ca6fbe4b31a3872b36ab3fbdda";
     private static final String SIGN = "wJcInYaXr";
     private static final String SECRET_KEY = "Ziguiju2@1234";
-    private static final String SUBMIT_URL = "http://10.130.146.149:28082/sms/submit";
+    private static final String SUBMIT_URL = "http://10.130.146.149:28082/sms";
 
     public ZhenShanSmsClient(SmsChannelProperties properties){
         super(properties);

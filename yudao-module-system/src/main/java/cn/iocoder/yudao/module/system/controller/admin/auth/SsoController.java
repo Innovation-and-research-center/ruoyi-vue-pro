@@ -24,6 +24,7 @@ import javax.annotation.security.PermitAll;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
@@ -57,7 +58,14 @@ public class SsoController {
     @GetMapping("/sso-login")
     @PermitAll
     @Operation(summary = "单点登录换区票据")
-    public  void ssoLogin(@RequestParam("Token") String token, HttpServletResponse response)throws IOException {
+    public  void ssoLogin(@RequestParam Map<String, String> params, HttpServletResponse response)throws IOException {
+        String token = null;
+        for (Map.Entry<String, String> entry : params.entrySet()) {
+            if ("token".equalsIgnoreCase(entry.getKey())) {
+                token = entry.getValue();
+                break;
+            }
+        }
         log.info("SSO接收到回调Token: {}", token);
 
         if (StrUtil.isBlank(token)) {

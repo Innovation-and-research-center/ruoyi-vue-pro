@@ -6,6 +6,7 @@ import cn.hutool.crypto.SecureUtil;
 import cn.hutool.core.date.DateUtil;
 import cn.hutool.http.HttpUtil;
 import cn.hutool.json.JSONUtil;
+import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.framework.quartz.core.handler.JobHandler;
 import cn.iocoder.yudao.framework.tenant.core.context.TenantContextHolder;
 import cn.iocoder.yudao.framework.tenant.core.job.TenantJob;
@@ -14,13 +15,13 @@ import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.ReceiveDocSave
 import cn.iocoder.yudao.module.bpm.dal.dataobject.fileexchange.FileExchangeDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocAttachDO;
 import cn.iocoder.yudao.module.bpm.dal.mysql.fileexchange.FileExchangeMapper;
+import cn.iocoder.yudao.module.bpm.dal.mysql.receivedoc.ReceiveDocAttachMapper;
 import cn.iocoder.yudao.module.bpm.service.fileexchange.FileExchangeService;
 import cn.iocoder.yudao.module.bpm.service.receivedoc.ReceiveDocService;
 import cn.iocoder.yudao.module.infra.api.config.ConfigApi;
 import cn.iocoder.yudao.module.infra.dal.dataobject.file.FileDO;
 import cn.iocoder.yudao.module.infra.service.file.FileService;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,12 +34,12 @@ import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-
+import java.util.stream.Collectors;
 
 
 @Slf4j
 @Component
-public class STDocJob implements JobHandler {
+public class StDocJob implements JobHandler {
 
     static final String ST_SERVICE_IP_KEY = "url.st.service";
     static final String ST_UNIT_ID_KEY = "key.st.unit.id";
@@ -54,6 +55,8 @@ public class STDocJob implements JobHandler {
     private FileExchangeMapper fileExchangeMapper;
     @Resource
     private FileService fileService;
+    @Resource
+    private ReceiveDocAttachMapper receiveDocAttachMapper;
 
     @TenantJob
     @Override
@@ -72,10 +75,16 @@ public class STDocJob implements JobHandler {
             // 对应 C# 中的 MD5Encrypt(_sign)
             String sign = SecureUtil.md5(stUnitId+"zrzytoa");
 
+            String url = stServiceIp + "/api6/infoexchange-table/DQSList";
+
             // 构造请求参数获取待签收列表
             String paramStr = String.format("{\"id\":\"%s\",\"sign\":\"%s\",\"page\":1,\"limit\":10000}", stUnitId, sign);
-            String result = HttpUtil.post(stServiceIp+"/api6/infoexchange-table/DQSList", paramStr);
 
+            // 👇 --- 新增：打印 CURL 命令到日志 --- 👇
+            log.info("====== [DQSList 接口 CURL] ======\ncurl -X POST \"{}\" \\\n     -H \"Content-Type: application/json\" \\\n     -d '{}'", url, paramStr);
+            // 👆 ----------------------------------- 👆
+            String result = HttpUtil.post(url, paramStr);
+//            String result = ResourceUtil.readUtf8Str("mock/st_list.json");;
             // 解析 JSON
             STResult<DQSList> stRes = JSONUtil.toBean(result, new cn.hutool.core.lang.TypeReference<STResult<DQSList>>() {}, false);
 
@@ -120,9 +129,12 @@ public class STDocJob implements JobHandler {
                 .eq(FileExchangeDO::getDocunique, rec.getInfoexchangeid()));
 
         if (existExchange != null) {
-            // 如果已存在，C# 的逻辑是已签收的办件补充附件完整性
-            // 若您的业务不需要补全附件，这里可以直接 return false; (参考 CityNoticeJob)
+            Long receiveDocId = existExchange.getDocId();
+            if (receiveDocId != null) {
+                supplementAttachments(receiveDocId, rec, stServiceIp, stUnitId, sign);
+            }
             return false;
+
         }
 
         // 2. 创建收文信息
@@ -148,7 +160,19 @@ public class STDocJob implements JobHandler {
         String sequenceStr = String.format("%04d", Integer.parseInt(String.valueOf(numberReceiveNumber)));
         receiveDocDO.setReceiveDocNumber(receiveDocDO.getYear() + "-41-" + sequenceStr);
 
-        receiveDocDO.setUrgencyDegree(rec.getJjcd()); // 紧急程度
+        // 紧急程度
+        String urgencyLabel = rec.getJjcd();
+        if (StrUtil.isNotEmpty(urgencyLabel)) {
+            // 注意：请将 "receive_urgency_degree" 替换为你系统字典管理中实际的字典类型编码 (dict_type)
+            String  dictValue = DictFrameworkUtils.parseDictDataValue("emergency_degree", urgencyLabel);
+            if (dictValue != null) {
+                receiveDocDO.setUrgencyDegree(dictValue);
+            } else {
+                receiveDocDO.setUrgencyDegree(""); // 字典中未找到则置空
+            }
+        } else {
+            receiveDocDO.setUrgencyDegree("");
+        }
         receiveDocDO.setSendDocNumber(rec.getFwzh()); // 发文字号
         receiveDocDO.setSendDept(rec.getFwdw());      // 发文单位
 
@@ -216,7 +240,14 @@ public class STDocJob implements JobHandler {
             // 获取附件列表请求
             String paramStr = String.format("{\"id\":\"%s\",\"sign\":\"%s\",\"infoexchangeid\":\"%s\"}",
                     stUnitId, sign, rec.getInfoexchangeid());
-            String result = HttpUtil.post(stServiceIp+"/api6/infoexchange-table/HQFJ", paramStr);
+            String url = stServiceIp + "/api6/infoexchange-table/HQFJ";
+
+            // 👇 --- 新增：打印 CURL 命令到日志 --- 👇
+            log.info("====== [HQFJ 获取附件列表 CURL] ======\ncurl -X POST \"{}\" \\\n     -H \"Content-Type: application/json\" \\\n     -d '{}'", url, paramStr);
+            // 👆 ----------------------------------- 👆
+            String result = HttpUtil.post(url, paramStr);
+//            String mockFileName = "mock/st_detail/" + rec.getInfoexchangeid() + ".json";
+//            String result = ResourceUtil.readUtf8Str(mockFileName);
 
             STResult<List<RecordFileDTO>> stRes = JSONUtil.toBean(result,
                     new cn.hutool.core.lang.TypeReference<STResult<List<RecordFileDTO>>>() {}, false);
@@ -244,7 +275,12 @@ public class STDocJob implements JobHandler {
     private ReceiveDocAttachDO downloadAndUploadFile(RecordFileDTO rFile, String stServiceIp) {
         try {
             String downloadUrl = stServiceIp + "/api1/download?folder=INPUT_FOLDER&attachment_id=" + rFile.getFjid();
+            // 👇 --- 新增：打印 CURL 命令到日志 --- 👇
+            // 这里加了 -o 参数，方便你在 Linux 测试时直接保存为文件
+            log.info("====== [Download 下载附件 CURL] ======\ncurl -X GET \"{}\" -o \"{}\"", downloadUrl, rFile.getRname());
+            // 👆 ----------------------------------- 👆
             byte[] fileBytes = HttpUtil.downloadBytes(downloadUrl);
+//            byte[] fileBytes = ResourceUtil.readBytes("mock/test.pdf");
 
             if (fileBytes != null && fileBytes.length > 0) {
                 // 过滤不合法的文件名字符
@@ -266,5 +302,53 @@ public class STDocJob implements JobHandler {
         return null;
     }
 
+    /**
+     * 已存在办件的附件完整性补充
+     */
+    private void supplementAttachments(Long receiveDocId, RecordDTO rec, String stServiceIp, String stUnitId, String sign) {
+        try {
+            // 1. 获取省厅接口的附件列表
+            String paramStr = String.format("{\"id\":\"%s\",\"sign\":\"%s\",\"infoexchangeid\":\"%s\"}",
+                    stUnitId, sign, rec.getInfoexchangeid());
+            String result = HttpUtil.post(stServiceIp + "/api6/infoexchange-table/HQFJ", paramStr);
+//            String mockFileName = "mock/st_detail/" + rec.getInfoexchangeid() + ".json";
+//            String result = ResourceUtil.readUtf8Str(mockFileName);
+
+            STResult<List<RecordFileDTO>> stRes = JSONUtil.toBean(result,
+                    new cn.hutool.core.lang.TypeReference<STResult<List<RecordFileDTO>>>() {}, false);
+
+            if (stRes != null && stRes.getCode() == 200 && CollUtil.isNotEmpty(stRes.getData())) {
+
+                // 2. 查询本地数据库已存在的附件
+                List<ReceiveDocAttachDO> existAttaches = receiveDocAttachMapper.selectList(
+                        Wrappers.<ReceiveDocAttachDO>lambdaQuery()
+                                .eq(ReceiveDocAttachDO::getReceiveDocId, receiveDocId) // 假设实体类字段为 receiveDocId
+                );
+
+                List<String> existFileNames = existAttaches.stream()
+                        .map(ReceiveDocAttachDO::getAttachFileName)
+                        .collect(Collectors.toList());
+
+                // 3. 遍历接口附件比对
+                for (RecordFileDTO rFile : stRes.getData()) {
+                    String safeFileName = rFile.getRname().replaceAll("[\\\\/:*?\"<>|]", "");
+
+                    // 若本地不存在该文件名，则下载并插入记录
+                    if (!existFileNames.contains(safeFileName)) {
+                        ReceiveDocAttachDO attach = downloadAndUploadFile(rFile, stServiceIp);
+                        if (attach != null) {
+                            attach.setReceiveDocId(receiveDocId);
+                            receiveDocAttachMapper.insert(attach);
+                            log.info("办件：{} 成功补充缺失附件：{}", rec.getBt(), safeFileName);
+                        }
+                    }
+                }
+            } else {
+                log.warn("办件：{}，获取补充附件失败：{}", rec.getBt(), stRes != null ? stRes.getMsg() : "Empty Response");
+            }
+        } catch (Exception e) {
+            log.error("办件：{}，补充附件异常：{}", rec.getBt(), e.getMessage(), e);
+        }
+    }
 
 }
