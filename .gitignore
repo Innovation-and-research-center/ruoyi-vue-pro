@@ -52,3 +52,6 @@ application-my.yaml
 
 /yudao-ui-app/unpackage/
 **/.DS_Store
+yudao-module-bpm/src/main/resources/mock/
+yudao-module-bpm/src/main/resources/templates/
+

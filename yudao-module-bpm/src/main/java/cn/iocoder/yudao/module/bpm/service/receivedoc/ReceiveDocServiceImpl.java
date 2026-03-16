@@ -4,7 +4,6 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.NumberUtil;
 import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
-import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.util.collection.CollectionUtils;
 import cn.iocoder.yudao.framework.common.util.date.DateUtils;
 import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
@@ -13,22 +12,34 @@ import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocAttachDO;
 import cn.iocoder.yudao.module.bpm.dal.mysql.receivedoc.ReceiveDocAttachMapper;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
+import cn.iocoder.yudao.module.bpm.service.task.BpmTaskService;
 import cn.iocoder.yudao.module.infra.api.file.FileApi;
 import cn.iocoder.yudao.module.infra.dal.dataobject.file.FileDO;
 import cn.iocoder.yudao.module.infra.dal.mysql.file.FileMapper;
+import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
+import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
+import com.aspose.words.*;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import jodd.util.StringUtil;
+import org.flowable.task.api.history.HistoricTaskInstance;
+import org.flowable.task.service.TaskService;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
 
 import org.springframework.util.StringUtils;
 import org.springframework.validation.annotation.Validated;
 
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.List;
 import java.util.stream.Collectors;
 
 import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.*;
@@ -70,6 +81,12 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
 
     @Resource
     private FileMapper fileMapper;
+
+    @Resource
+    private BpmTaskService taskService;
+
+    @Resource
+    private AdminUserApi adminUserApi;
 
     @Override
     public Long createReceiveDoc(Long userId,ReceiveDocSaveReqVO createReqVO) {
@@ -426,15 +443,292 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         if (CollUtil.isNotEmpty(fileIds)) {
             List<FileDO> files = fileMapper.selectBatchIds(fileIds);
             // 提取 ID -> URL 的映射
-            fileUrlMap = CollectionUtils.convertMap(files, FileDO::getId, FileDO::getUrl);
+            Map<Long, FileDO> fileMap = CollectionUtils.convertMap(files, FileDO::getId);
+
+            // 7. 回填 URL 和 Path
+            voList.forEach(vo -> {
+                FileDO file = fileMap.get(vo.getAttachFileId());
+                if (file != null) {
+                    vo.setFileUrl(file.getUrl());
+                    vo.setPath(file.getPath()); // 塞入 path
+                }
+            });
         }
 
         // 5. 回填 URL
-        Map<Long, String> finalFileUrlMap = fileUrlMap; // lambda需要final变量
-        voList.forEach(vo -> vo.setFileUrl(finalFileUrlMap.get(vo.getAttachFileId())));
+//        Map<Long, String> finalFileUrlMap = fileUrlMap; // lambda需要final变量
+//        voList.forEach(vo -> vo.setFileUrl(finalFileUrlMap.get(vo.getAttachFileId())));
 
         return voList;
     }
+
+    public byte[] generatePdf(Long receiveDocId) throws Exception {
+        // 1. 获取主表数据
+        ReceiveDocDO docData = receiveDocMapper.selectById(receiveDocId);
+        if (docData == null) {
+            throw new RuntimeException("未能找到对应的收文记录数据");
+        }
+        // 2. 加载 Word 模板
+        try (InputStream templateStream = this.getClass().getClassLoader().getResourceAsStream("templates/YW收文.docx")) {
+            if (templateStream == null) {
+                throw new RuntimeException("模板文件 YW收文.docx 不存在");
+            }
+
+            Document doc = new Document(templateStream);
+            DocumentBuilder builder = new DocumentBuilder(doc);
+            BookmarkCollection bookmarks = doc.getRange().getBookmarks();
+
+            // 3. 替换单行文本书签
+            replaceBookmarkText(bookmarks, "Swh", docData.getReceiveDocNumber());
+            String dictUrgencyLabel = DictFrameworkUtils.parseDictDataLabel("emergency_degree", docData.getUrgencyDegree());
+            replaceBookmarkText(bookmarks, "cd", StrUtil.isNotBlank(dictUrgencyLabel) ? dictUrgencyLabel : "平急");
+            replaceBookmarkText(bookmarks, "bh", docData.getSendDept());
+            replaceBookmarkText(bookmarks, "zh", docData.getSendDocNumber());
+            replaceBookmarkText(bookmarks, "bt", docData.getSubject());
+
+            if (docData.getReceiveTime() != null) {
+                String dateStr = cn.hutool.core.date.DateUtil.format(docData.getReceiveTime(), "yyyy年M月d日");
+                replaceBookmarkText(bookmarks, "Rq", dateStr);
+            }
+
+            // 4. 获取流程的审批意见
+            String processInstanceId = docData.getProcessInstanceId();
+            if (StrUtil.isNotBlank(processInstanceId)) {
+                fillProcessComments(builder, doc,bookmarks, processInstanceId);
+            }
+
+            // 5. 转换为 PDF 字节流输出
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            PdfSaveOptions saveOptions = new PdfSaveOptions();
+            // 确保字体完整嵌入
+            saveOptions.setEmbedFullFonts(true);
+            doc.save(out, saveOptions);
+
+            return out.toByteArray();
+        }
+    }
+
+
+    /**
+     * 从流程历史提取意见，并根据 taskName 分发到不同的书签
+     */
+    private void fillProcessComments(DocumentBuilder builder,Document doc, BookmarkCollection bookmarks,
+                                     String processInstanceId) throws Exception {
+
+        // 1. 获取该流程实例下的所有历史任务 (true 表示包括全局任务)
+        List<HistoricTaskInstance> historyTasks = taskService.getTaskListByProcessInstanceId(processInstanceId, true);
+        if (CollUtil.isEmpty(historyTasks)) {
+            return;
+        }
+
+        // 【优化点 1：批量获取用户信息】提取所有 assignee，批量查 userMap，消除 for 循环查库带来的 N+1 性能瓶颈
+        Set<Long> userIds = historyTasks.stream()
+                .map(HistoricTaskInstance::getAssignee)
+                .filter(StrUtil::isNotBlank)
+                .map(Long::valueOf)
+                .collect(Collectors.toSet());
+        Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(userIds);
+
+        // 2. 准备各类意见的归集列表
+        List<PdfCommentInfo> fgldComments = new ArrayList<>(); // 分管领导意见
+        List<PdfCommentInfo> ybzComments = new ArrayList<>();  // 阅办者意见
+        List<PdfCommentInfo> ldyjComments = new ArrayList<>(); // 局长/主要领导意见
+        PdfCommentInfo lastNbComment = null; // 主任拟办
+        PdfCommentInfo lastPsComment = null; // 局长批示
+
+        for (HistoricTaskInstance task : historyTasks) {
+            // 跳过未完成的任务 (还在待办中)
+//            if (task.getEndTime() == null) {
+//                continue;
+//            }
+
+            String taskName = task.getName();
+            Date endTime = task.getEndTime();
+
+            // 从 userMap 中匹配真实的中文姓名
+            String userName = task.getAssignee();
+            if (StrUtil.isNotBlank(task.getAssignee())) {
+                AdminUserRespDTO user = userMap.get(Long.valueOf(task.getAssignee()));
+                if (user != null) {
+                    userName = user.getNickname();
+                }
+            }
+
+            // 【优化点 2：使用框架底层的工具类提取意见】
+            String commentText = FlowableUtils.getTaskReason(task);
+            if (StrUtil.isBlank(commentText)) {
+                commentText = "已阅"; // 默认兜底意见
+            }
+            PdfCommentInfo commentInfo = new PdfCommentInfo(commentText, userName, endTime);
+            // 根据节点名称进行路由分发 (注意判空)
+            if (StrUtil.isNotBlank(taskName)) {
+                if (taskName.contains("主任") || taskName.contains("拟办")) {
+                    lastNbComment = commentInfo;
+                }else if (taskName.contains("局长") || taskName.contains("批示")) {
+                    lastPsComment = commentInfo;
+                }else if (taskName.contains("局领导") || taskName.contains("副局长")) {
+                    fgldComments.add(commentInfo);
+                } else if (taskName.contains("领导意见")) {
+                    ldyjComments.add(commentInfo);
+                } else if (taskName.contains("全局阅") || taskName.contains("主办") || taskName.contains("协办")|| taskName.contains("办公室")) {
+                    ybzComments.add(commentInfo);
+                }
+            }
+        }
+
+        // 3. 将归集好的意见写入对应书签
+        fillDynamicTableRows(builder, doc, "分管领导意见","分管领导","分管领日期", fgldComments);
+        fillDynamicTableRows(builder, doc, "ybzyj","ybz","ybzrq", ybzComments);
+        fillDynamicTableRows(builder, doc, "ldzyj","ldyj","ldrq", ldyjComments);
+        writeSingleComment(bookmarks, "拟办意见", "Nbr", "nbrq", lastNbComment);
+        writeSingleComment(bookmarks, "批示意见", "blr", "blrq", lastPsComment);
+    }
+
+
+    private void writeSingleComment(BookmarkCollection bookmarks,
+                                    String opinionBm, String nameBm, String dateBm,
+                                    PdfCommentInfo comment) throws Exception {
+        // 如果没有找到对应的审批记录，直接清空这三个书签的占位符
+        if (comment == null) {
+            replaceBookmarkText(bookmarks, opinionBm, "");
+            replaceBookmarkText(bookmarks, nameBm, "");
+            replaceBookmarkText(bookmarks, dateBm, "");
+            return;
+        }
+
+        // 格式化日期
+        String dateStr = "";
+        if (comment.getCommentDate() != null) {
+            dateStr = cn.hutool.core.date.DateUtil.format(comment.getCommentDate(), "yyyy年M月d日");
+        }
+
+        // 依次替换三个书签的内容
+        replaceBookmarkText(bookmarks, opinionBm, comment.getCommentDetail());
+        replaceBookmarkText(bookmarks, nameBm, comment.getUserName());
+        replaceBookmarkText(bookmarks, dateBm, dateStr);
+    }
+
+    /**
+     * 动态克隆表格行，并填入多条意见
+     * * @param builder DocumentBuilder对象
+     * @param doc 当前Word文档对象
+     * @param opinionBmName 意见对应的书签名称（如："阅办者意见"）
+     * @param nameBmName 姓名对应的书签名称（如："阅办者姓名"）
+     * @param dateBmName 日期对应的书签名称（如："阅办者日期"）
+     * @param comments 流程意见集合
+     */
+    private void fillDynamicTableRows(DocumentBuilder builder, Document doc,
+                                      String opinionBmName, String nameBmName, String dateBmName,
+                                      List<PdfCommentInfo> comments) throws Exception {
+
+        Bookmark opinionBookmark = doc.getRange().getBookmarks().get(opinionBmName);
+        if (opinionBookmark == null) {
+            return; // 模板里没有这个书签，直接跳过
+        }
+
+        // 1. 获取基础书签所在的 单元格(Cell) 和 行(Row)
+        Cell opinionCell = (Cell) opinionBookmark.getBookmarkStart().getAncestor(NodeType.CELL);
+        if (opinionCell == null) return;
+        Row baseRow = opinionCell.getParentRow();
+        Table table = baseRow.getParentTable();
+
+        // 2. 获取这三个数据项分别在第几列 (利用辅助方法)
+        int opinionIdx = getCellIndexByBookmark(doc, opinionBmName);
+        int nameIdx = getCellIndexByBookmark(doc, nameBmName);
+        int dateIdx = getCellIndexByBookmark(doc, dateBmName);
+
+        // 3. 如果没有任何意见，清空这些单元格的内容即可
+        if (CollUtil.isEmpty(comments)) {
+            clearCellContent(baseRow, opinionIdx);
+            clearCellContent(baseRow, nameIdx);
+            clearCellContent(baseRow, dateIdx);
+            return;
+        }
+
+        // 4. 开始遍历意见，动态生成表格行
+        Row currentRow = baseRow;
+        for (int i = 0; i < comments.size(); i++) {
+            PdfCommentInfo comment = comments.get(i);
+            String dateStr = comment.getCommentDate() != null ?
+                    cn.hutool.core.date.DateUtil.format(comment.getCommentDate(), "yyyy年M月d日") : "";
+
+            // 如果不是第一条意见，则需要克隆基础行并插入到表格中
+            if (i > 0) {
+                // deepClone(true) 表示连带单元格里的格式、字体一起克隆
+                Row clonedRow = (Row) baseRow.deepClone(true);
+                table.insertAfter(clonedRow, currentRow);
+                currentRow = clonedRow;
+            }
+
+            // 5. 往当前行的指定列中填入文字
+            setCellValue(builder, currentRow, opinionIdx, comment.getCommentDetail(),false);
+            setCellValue(builder, currentRow, nameIdx, comment.getUserName(),true);
+            setCellValue(builder, dateIdx != -1 ? currentRow : null, dateIdx, dateStr,true);
+        }
+    }
+
+    /**
+     * 辅助方法：通过书签名称，寻找它在表格行中的列索引 (Cell Index)
+     */
+    private int getCellIndexByBookmark(Document doc, String bookmarkName) throws Exception {
+        Bookmark bookmark = doc.getRange().getBookmarks().get(bookmarkName);
+        if (bookmark != null) {
+            Cell cell = (Cell) bookmark.getBookmarkStart().getAncestor(NodeType.CELL);
+            if (cell != null) {
+                return cell.getParentRow().indexOf(cell);
+            }
+        }
+        return -1; // 找不到返回-1
+    }
+
+    /**
+     * 辅助方法：清空某个单元格的内容，同时保留单元格结构
+     */
+    private void clearCellContent(Row row, int cellIndex) {
+        if (cellIndex >= 0 && cellIndex < row.getCells().getCount()) {
+            Cell cell = row.getCells().get(cellIndex);
+            cell.removeAllChildren();
+            cell.ensureMinimum(); // 确保单元格内至少有一个空段落，防止Word结构损坏
+        }
+    }
+
+    /**
+     * 辅助方法：利用 DocumentBuilder 向指定单元格安全地写入文字
+     */
+    private void setCellValue(DocumentBuilder builder, Row row, int cellIndex, String text,boolean isCenter) {
+        if (row != null && cellIndex >= 0 && cellIndex < row.getCells().getCount()) {
+            Cell cell = row.getCells().get(cellIndex);
+            // 写入前先清空单元格里的原内容（比如原来的书签或者占位字）
+            cell.removeAllChildren();
+            cell.ensureMinimum();
+            if (isCenter) {
+                // 水平居中
+                cell.getFirstParagraph().getParagraphFormat().setAlignment(ParagraphAlignment.CENTER);
+                // 垂直居中（让表格看起来更整齐，推荐保留）
+                cell.getCellFormat().setVerticalAlignment(CellVerticalAlignment.CENTER);
+            } else {
+                // 默认左对齐（或根据你模板原本的设置）
+                cell.getFirstParagraph().getParagraphFormat().setAlignment(ParagraphAlignment.LEFT);
+                cell.getCellFormat().setVerticalAlignment(CellVerticalAlignment.CENTER);
+            }
+
+            // 将光标移动到该单元格并写入文本，这样能继承模板原有的字体和字号
+            builder.moveTo(cell.getFirstParagraph());
+            builder.write(StrUtil.blankToDefault(text, ""));
+        }
+    }
+
+
+    /**
+     * 辅助方法：安全替换单行书签文本
+     */
+    private void replaceBookmarkText(BookmarkCollection bookmarks, String bookmarkName, String text) throws Exception {
+        Bookmark bookmark = bookmarks.get(bookmarkName);
+        if (bookmark != null) {
+            bookmark.setText(text == null ? "" : text.trim());
+        }
+    }
+
 
 
 }

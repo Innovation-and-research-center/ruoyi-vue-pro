@@ -72,4 +72,6 @@ public interface ReceiveDocService {
 
     List<ReceiveFileRespVO> getReceiveDocAttachListByReceiveDocId(Long receiveDocId);
 
+    byte[] generatePdf(Long receiveDocId) throws Exception;
+
 }

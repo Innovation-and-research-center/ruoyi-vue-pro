@@ -15,4 +15,6 @@ public interface ConfigApi {
      */
     String getConfigValueByKey(String key);
 
+    void getConfigValueByKey(String key,String value);
+
 }
