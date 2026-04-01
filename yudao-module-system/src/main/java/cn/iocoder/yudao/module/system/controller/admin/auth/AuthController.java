@@ -188,6 +188,13 @@ public class AuthController {
         return success(authService.loginByTicket(ticket));
     }
 
+    @PostMapping("/login-by-host")
+    @PermitAll
+    @Operation(summary = "使用宿主Token进行无感登录")
+    public CommonResult<AuthLoginRespVO> loginByHostToken(@RequestBody @Valid AuthHostLoginReqVO reqVO) {
+        return success(authService.loginByHostToken(reqVO));
+    }
+
 
 
 

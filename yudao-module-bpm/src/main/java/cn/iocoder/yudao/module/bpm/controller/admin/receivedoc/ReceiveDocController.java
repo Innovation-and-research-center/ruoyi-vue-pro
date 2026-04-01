@@ -107,7 +107,7 @@ public class ReceiveDocController {
     @GetMapping("/get")
     @Operation(summary = "获得收文")
     @Parameter(name = "id", description = "编号", required = true, example = "1024")
-    @PreAuthorize("@ss.hasPermission('bpm:receive-doc:query')")
+//    @PreAuthorize("@ss.hasPermission('bpm:receive-doc:query')")
     public CommonResult<ReceiveDocRespVO> getReceiveDoc(@RequestParam("id") Long id) {
         ReceiveDocDO receiveDoc = receiveDocService.getReceiveDoc(id);
         return success(BeanUtils.toBean(receiveDoc, ReceiveDocRespVO.class));
@@ -115,7 +115,7 @@ public class ReceiveDocController {
 
     @GetMapping("/page")
     @Operation(summary = "获得收文分页")
-    @PreAuthorize("@ss.hasPermission('bpm:receive-doc:query')")
+//    @PreAuthorize("@ss.hasPermission('bpm:receive-doc:query')")
     public CommonResult<PageResult<ReceiveDocRespVO>> getReceiveDocPage(@Valid ReceiveDocPageReqVO pageReqVO) {
         PageResult<ReceiveDocDO> pageResult = receiveDocService.getReceiveDocPage(pageReqVO);
         return success(BeanUtils.toBean(pageResult, ReceiveDocRespVO.class));
@@ -138,7 +138,7 @@ public class ReceiveDocController {
     @GetMapping("/receive-doc-attach/list-by-receive-doc-id")
     @Operation(summary = "获得收文附件列表")
     @Parameter(name = "receiveDocId", description = "收文编号(外键T_RECEIVE_DOC.RECEIVE_DOC_ID)")
-    @PreAuthorize("@ss.hasPermission('bpm:receive-doc:query')")
+//    @PreAuthorize("@ss.hasPermission('bpm:receive-doc:query')")
     public CommonResult<List<ReceiveFileRespVO>> getReceiveDocAttachListByReceiveDocId(@RequestParam("receiveDocId") Long receiveDocId) {
         return success(receiveDocService.getReceiveDocAttachListByReceiveDocId(receiveDocId));
     }

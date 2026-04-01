@@ -107,4 +107,12 @@ public interface RedisKeyConstants {
      */
     String WXA_SUBSCRIBE_TEMPLATE = "wxa_subscribe_template";
 
+    /**
+     * BPM 流程定义扩展信息的缓存
+     *
+     * KEY 格式：bpm_process_def_info:{processDefinitionId}
+     * VALUE 数据类型：String (JSON 格式的 BpmProcessDefinitionInfoDO)
+     */
+    String PROCESS_DEFINITION_INFO = "bpm_process_def_info";
+
 }

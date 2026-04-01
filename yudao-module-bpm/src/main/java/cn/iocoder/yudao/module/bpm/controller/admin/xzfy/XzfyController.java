@@ -82,7 +82,7 @@ public class XzfyController {
     @GetMapping("/get")
     @Operation(summary = "获得行政复议")
     @Parameter(name = "id", description = "编号", required = true, example = "1024")
-    @PreAuthorize("@ss.hasPermission('bpm:xzfy:query')")
+//    @PreAuthorize("@ss.hasPermission('bpm:xzfy:query')")
     public CommonResult<XzfyRespVO> getXzfy(@RequestParam("id") Long id) {
         XzfyDO xzfy = xzfyService.getXzfy(id);
         if (xzfy == null) {
@@ -131,7 +131,6 @@ public class XzfyController {
     @GetMapping("/xzfy-kz/get-by-xm-guid")
     @Operation(summary = "获得行政复议扩展")
     @Parameter(name = "xmGuid", description = "备用主键")
-    @PreAuthorize("@ss.hasPermission('bpm:xzfy:query')")
     public CommonResult<XzfyKzDO> getXzfyKzByXmGuid(@RequestParam("xmGuid") String xmGuid) {
         return success(xzfyService.getXzfyKzByXmGuid(xmGuid));
     }
@@ -144,6 +143,9 @@ public class XzfyController {
         PageResult<XzfyDO> pageResult = xzfyService.getUnlinkedXzfyPage(pageReqVO);
         return success(BeanUtils.toBean(pageResult, XzfyRespVO.class));
     }
+
+
+
 
 
 

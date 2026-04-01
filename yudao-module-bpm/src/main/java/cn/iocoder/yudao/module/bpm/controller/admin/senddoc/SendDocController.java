@@ -80,7 +80,7 @@ public class SendDocController {
     @GetMapping("/get")
     @Operation(summary = "获得发文")
     @Parameter(name = "id", description = "编号", required = true, example = "1024")
-    @PreAuthorize("@ss.hasPermission('bpm:send-doc:query')")
+//    @PreAuthorize("@ss.hasPermission('bpm:send-doc:query')")
     public CommonResult<SendDocRespVO> getSendDoc(@RequestParam("id") Long id) {
         SendDocDO sendDoc = sendDocService.getSendDoc(id);
         return success(BeanUtils.toBean(sendDoc, SendDocRespVO.class));

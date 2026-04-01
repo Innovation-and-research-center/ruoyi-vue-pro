@@ -1,19 +1,25 @@
 package cn.iocoder.yudao.module.system.framework.sms.core.client.impl;
 
 import cn.hutool.core.codec.Base64;
+import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.lang.Assert;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
+import cn.hutool.extra.spring.SpringUtil;
 import cn.hutool.http.HttpRequest;
 import cn.hutool.http.HttpUtil;
 import cn.iocoder.yudao.framework.common.core.KeyValue;
 import cn.iocoder.yudao.framework.common.util.collection.MapUtils;
 import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
+import cn.iocoder.yudao.module.system.dal.dataobject.sms.SmsTemplateDO;
+import cn.iocoder.yudao.module.system.dal.mysql.sms.SmsTemplateMapper;
 import cn.iocoder.yudao.module.system.framework.sms.core.client.dto.SmsReceiveRespDTO;
 import cn.iocoder.yudao.module.system.framework.sms.core.client.dto.SmsSendRespDTO;
 import cn.iocoder.yudao.module.system.framework.sms.core.client.dto.SmsTemplateRespDTO;
 import cn.iocoder.yudao.module.system.framework.sms.core.enums.SmsTemplateAuditStatusEnum;
 import cn.iocoder.yudao.module.system.framework.sms.core.property.SmsChannelProperties;
+import com.alibaba.fastjson.JSON;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -37,8 +43,20 @@ public class ZhenShanSmsClient extends AbstractSmsClient {
     @Override
     public SmsSendRespDTO sendSms(Long sendLogId, String mobile, String apiTemplateId, List<KeyValue<String, Object>> templateParams) throws Throwable {
 
-        String content = String.format("【模拟短信】\n手机号：%s\n短信日志编号：%d\n模板参数：%s",
-                mobile, sendLogId, MapUtils.convertMap(templateParams));
+
+        SmsTemplateMapper smsTemplateMapper = SpringUtil.getBean(SmsTemplateMapper.class);
+
+        SmsTemplateDO templateDO = smsTemplateMapper.selectOne(
+                new LambdaQueryWrapper<SmsTemplateDO>().eq(SmsTemplateDO::getApiTemplateId, apiTemplateId)
+        );
+        String content = templateDO != null ? templateDO.getContent() : "";
+        if (CollUtil.isNotEmpty(templateParams) && StrUtil.isNotBlank(content)) {
+            for (KeyValue<String, Object> param : templateParams) {
+                String placeholder = "{" + param.getKey() + "}";
+                String value = param.getValue() != null ? String.valueOf(param.getValue()) : "";
+                content = StrUtil.replace(content, placeholder, value);
+            }
+        }
         String addSerial = ""; // 扩展码，按样例为空字符串 [cite: 9]
         StringBuilder stringBuilder = new StringBuilder();
         stringBuilder.append(EC_NAME)
@@ -73,24 +91,14 @@ public class ZhenShanSmsClient extends AbstractSmsClient {
                 url, encodeParam
         );
 
-        // 如果你使用了 @Slf4j 注解，推荐使用 log.info。这里同时保留 System.out 确保你能最直观地看到。
-        System.out.println("================= Linux 终端 curl 测试指令 =================");
-        System.out.println("【1】请求地址 (URL): " + url);
-        System.out.println("【2】签名明文 (MAC 前): " + stringBuilder.toString());
-        System.out.println("【3】签名结果 (MAC): " + mac);
-        System.out.println("【4】原始 JSON: " + paramJson);
-        System.out.println("【5】Base64 请求体: " + encodeParam);
-        System.out.println("【6】请复制以下 curl 指令到终端执行：");
-        System.out.println(curlCommand);
-        System.out.println("==========================================================");
-        // ================= 结束：打印测试日志与 curl 指令 =================
-
         // 样例中 HttpClient.doPost 将 encode 后的字符串直接作为 body 发送，并指定 utf-8
         String responseText = HttpRequest.post(url)
                 .body(encodeParam)
                 .charset(StandardCharsets.UTF_8)
                 .execute()
                 .body();
+
+        System.out.println("臻善接口返回详情: " + JSON.toJSONString(responseText));
 
         // 6. 解析结果判定
         Map<?, ?> responseObj = JsonUtils.parseObject(responseText, Map.class);

@@ -4,6 +4,7 @@ import lombok.Data;
 
 import javax.validation.constraints.NotEmpty;
 import javax.validation.constraints.NotNull;
+import java.util.Date;
 
 /**
  * BPM 发送任务被分配 Request DTO
@@ -42,5 +43,7 @@ public class BpmMessageSendWhenTaskCreatedReqDTO {
      */
     @NotNull(message = "审批人的用户编号不能为空")
     private Long assigneeUserId;
+
+    private Date dueDate;
 
 }

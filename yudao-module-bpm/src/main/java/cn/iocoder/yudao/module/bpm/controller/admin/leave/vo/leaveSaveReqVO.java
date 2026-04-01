@@ -53,4 +53,7 @@ public class LeaveSaveReqVO {
     @Schema(description = "文件地址")
     private String filepath;
 
+    @Schema(description = "下一节点审批人", example = "assist")
+    private Map<String, List<Long>> nextNodeAssignees;
+
 }

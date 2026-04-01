@@ -1,7 +1,10 @@
 package cn.iocoder.yudao.module.system.service.auth;
 
+import cn.hutool.core.codec.Base64;
 import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
 import cn.iocoder.yudao.framework.common.enums.UserTypeEnum;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
@@ -9,6 +12,7 @@ import cn.iocoder.yudao.framework.common.util.monitor.TracerUtils;
 import cn.iocoder.yudao.framework.common.util.servlet.ServletUtils;
 import cn.iocoder.yudao.framework.common.util.validation.ValidationUtils;
 import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
+import cn.iocoder.yudao.framework.tenant.core.context.TenantContextHolder;
 import cn.iocoder.yudao.module.system.api.logger.dto.LoginLogCreateReqDTO;
 import cn.iocoder.yudao.module.system.api.sms.SmsCodeApi;
 import cn.iocoder.yudao.module.system.api.sms.dto.code.SmsCodeUseReqDTO;
@@ -27,6 +31,7 @@ import cn.iocoder.yudao.module.system.service.member.MemberService;
 import cn.iocoder.yudao.module.system.service.oauth2.OAuth2TokenService;
 import cn.iocoder.yudao.module.system.service.social.SocialUserService;
 import cn.iocoder.yudao.module.system.service.user.AdminUserService;
+import cn.iocoder.yudao.module.system.util.AESUtils;
 import com.anji.captcha.model.common.ResponseModel;
 import com.anji.captcha.model.vo.CaptchaVO;
 import com.anji.captcha.service.CaptchaService;
@@ -40,6 +45,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import javax.validation.Validator;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
@@ -324,7 +330,79 @@ public class AdminAuthServiceImpl implements AdminAuthService {
         if (user == null) {
             throw exception(USER_NOT_EXISTS);
         }
+        TenantContextHolder.setTenantId(user.getTenantId());
         // 创建 Token 令牌，记录登录日志
         return createTokenAfterLoginSuccess(user.getId(), user.getUsername(), LoginLogTypeEnum.LOGIN_SSO);
+    }
+
+    @Override
+    public AuthLoginRespVO loginByHostToken(AuthHostLoginReqVO reqVO) {
+        // 1. 解析和验证宿主的 Token，获取唯一标识（例如：手机号、用户名或工号）
+        // TODO: 核心逻辑 - 这里需要根据 浙政钉/IRS 的对接文档，验证 Token 并换取用户信息。
+        // 可以是解密 Jwt Token，或者是拿着这个 Token 去调用 IRS 提供的后台验证接口。
+        String mobile = extractMobileFromHostToken(reqVO.getToken());
+
+        // 2. 根据获取到的标识，在本地数据库匹配对应的用户
+        AdminUserDO user = userService.getUserByMobile(mobile);
+        if (user == null) {
+            // 注意：如果IRS的用户在你这里没建账号，你可以抛异常拦截，也可以在这里写逻辑自动注册一个 user
+            throw exception(USER_NOT_EXISTS);
+        }
+
+        // 3. 校验用户是否被禁用
+        if (CommonStatusEnum.isDisable(user.getStatus())) {
+            createLoginLog(user.getId(), user.getUsername(), LoginLogTypeEnum.LOGIN_SSO, LoginResultEnum.USER_DISABLED);
+            throw exception(AUTH_LOGIN_USER_DISABLED);
+        }
+        TenantContextHolder.setTenantId(user.getTenantId());
+
+        // 4. 验证通过，创建本地的 Token 令牌并记录登录日志
+        // 这里借用 LOGIN_SSO (单点登录) 日志类型，比较符合宿主免登的语义
+        return createTokenAfterLoginSuccess(user.getId(), user.getUsername(), LoginLogTypeEnum.LOGIN_SSO);
+    }
+
+    /**
+     * 模拟解析宿主 Token 的私有方法
+     * @param hostToken 前端传来的浙政钉 Token
+     * @return 映射的手机号
+     */
+    private String extractMobileFromHostToken(String hostToken) {
+        try {
+            // 1. JWT 切割，取 Payload 部分
+            String[] tokenParts = hostToken.split("\\.");
+            if (tokenParts.length < 2) {
+                throw new IllegalArgumentException("Token格式错误");
+            }
+            String payload = tokenParts[1];
+
+            // 2. Base64 解码 Payload 得到 JSON 字符串
+            String jsonStr = Base64.decodeStr(payload, StandardCharsets.UTF_8);
+            JSONObject userInfoJson = JSONUtil.parseObj(jsonStr);
+
+            // 3. 提取加密字符串
+            String encryptStr = userInfoJson.getStr("encrypt_str");
+            if (StrUtil.isBlank(encryptStr)) {
+                throw new IllegalArgumentException("用户信息缺失 encrypt_str");
+            }
+
+            // 4. AES 解密
+            String DECRYPT_KEY = "gisq39561c9fe068";
+            String decryptStr = AESUtils.decrypt(encryptStr, DECRYPT_KEY); // 解密结果格式: 手机号_身份证号
+
+            // 5. 提取手机号
+            String[] telAndIdNum = decryptStr.split("_");
+            String userPhone = telAndIdNum.length > 0 ? telAndIdNum[0] : "";
+
+            if (StrUtil.isBlank(userPhone)) {
+                throw new SecurityException("解密后手机号为空");
+            }
+
+            return userPhone;
+
+        } catch (Exception e) {
+            log.error("解析宿主Token异常, token: {}", hostToken, e);
+            // 抛出认证失败异常，前端会被拦截器捕获并踢回首页重新登录
+            throw exception(AUTH_THIRD_LOGIN_NOT_BIND);
+        }
     }
 }

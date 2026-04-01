@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.xzfy.vo;
 
+import cn.iocoder.yudao.module.bpm.dal.dataobject.commentattach.CommentAttachDO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.*;
 import java.util.*;
@@ -92,5 +93,10 @@ public class XzfySaveReqVO {
 
     @Schema(description = "下一节点审批人", example = "assist")
     private Map<String, List<Long>> nextNodeAssignees;
+
+    @Schema(description = "附件列表")
+    private List<CommentAttachDO> fileList;
+
+
 
 }

@@ -10,6 +10,7 @@ import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.system.dal.dataobject.permission.RoleDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.service.permission.PermissionService;
@@ -111,7 +112,7 @@ public class TimeExplainServiceImpl implements TimeExplainService {
                 }
             }
         }
-        String customName = user.getNickname() + "的因公外出申请";
+        String customName = user.getNickname() + "因公外出"+createReqVO.getEndPeriod();
         Map<String, Object> processInstanceVariables = new HashMap<>();
         processInstanceVariables.put("role_condition", roleCondition);
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
@@ -124,6 +125,8 @@ public class TimeExplainServiceImpl implements TimeExplainService {
             processInstanceVariables.put(PROCESS_FINISH_TIME, timeoutLabel);
             processInstanceVariables.put(PROCESS_DEADLINE_DATE, DateUtils.of(deadline));
         }
+        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
+
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
                         .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(out.getId()))

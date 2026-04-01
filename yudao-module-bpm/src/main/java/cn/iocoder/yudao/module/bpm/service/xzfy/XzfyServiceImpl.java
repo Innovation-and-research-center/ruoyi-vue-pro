@@ -9,6 +9,7 @@ import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
 import cn.iocoder.yudao.module.bpm.dal.mysql.xzss.XzssMapper;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
+import cn.iocoder.yudao.module.bpm.service.commentattach.CommentAttachService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
 import jodd.util.StringUtil;
@@ -48,6 +49,8 @@ public class XzfyServiceImpl implements XzfyService {
 
     public static final String PROCESS_KEY = XZFY;
 
+    public static final String DOC_TYPE_XZFY = "XZFY";
+
     @Resource
     private XzfyMapper xzfyMapper;
     @Resource
@@ -58,6 +61,9 @@ public class XzfyServiceImpl implements XzfyService {
 
     @Resource
     private BpmProcessInstanceApi processInstanceApi;
+
+    @Resource
+    private CommentAttachService commentAttachService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -74,8 +80,10 @@ public class XzfyServiceImpl implements XzfyService {
         // 插入子表
         createXzfyKz(guidString, createReqVO.getXzfyKz());
 
+        commentAttachService.saveCommentAttachList(guidString, DOC_TYPE_XZFY, createReqVO.getFileList());
+
         Map<String, Object> processInstanceVariables = new HashMap<>();
-        String customName = StringUtil.isEmpty(createReqVO.getSqr()) ? "行政复议":createReqVO.getSqr()+"的行政复议";
+        String customName = StringUtil.isEmpty(createReqVO.getSqr()) ? "行政复议":createReqVO.getSqr();
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
         String timeKey = "common";
@@ -107,6 +115,8 @@ public class XzfyServiceImpl implements XzfyService {
 
         // 更新子表
         updateXzfyKz(updateReqVO.getXmGuid(), updateReqVO.getXzfyKz());
+
+        commentAttachService.saveCommentAttachList(updateReqVO.getXmGuid(), DOC_TYPE_XZFY, updateReqVO.getFileList());
     }
 
     @Override
@@ -121,6 +131,8 @@ public class XzfyServiceImpl implements XzfyService {
 
         // 删除子表
         deleteXzfyKzByXmGuid(xzfy.getXmGuid());
+
+        commentAttachService.deleteCommentAttach(xzfy.getXmGuid(), DOC_TYPE_XZFY);
     }
 
     @Override

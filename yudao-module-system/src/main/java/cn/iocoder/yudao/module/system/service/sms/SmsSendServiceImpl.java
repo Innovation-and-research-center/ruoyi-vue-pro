@@ -86,12 +86,17 @@ public class SmsSendServiceImpl implements SmsSendService {
         SmsChannelDO smsChannel = validateSmsChannel(template.getChannelId());
 
         // 校验手机号码是否存在
-        mobile = validateMobile(mobile);
+        if (StrUtil.isEmpty(mobile)) {
+            mobile = "";
+        } else {
+            mobile = validateMobile(mobile);
+        }
         // 构建有序的模板参数。为什么放在这个位置，是提前保证模板参数的正确性，而不是到了插入发送日志
         List<KeyValue<String, Object>> newTemplateParams = buildTemplateParams(template, templateParams);
 
         // 创建发送日志。如果模板被禁用，则不发送短信，只记录日志
-        Boolean isSend = CommonStatusEnum.ENABLE.getStatus().equals(template.getStatus())
+        Boolean isSend =StrUtil.isNotEmpty(mobile)
+                && CommonStatusEnum.ENABLE.getStatus().equals(template.getStatus())
                 && CommonStatusEnum.ENABLE.getStatus().equals(smsChannel.getStatus());
         String content = smsTemplateService.formatSmsTemplateContent(template.getContent(), templateParams);
         Long sendLogId = smsLogService.createSmsLog(mobile, userId, userType, isSend, template, content, templateParams);
@@ -149,7 +154,7 @@ public class SmsSendServiceImpl implements SmsSendService {
     @VisibleForTesting
     public String validateMobile(String mobile) {
         if (StrUtil.isEmpty(mobile)) {
-            throw exception(SMS_SEND_MOBILE_NOT_EXISTS);
+            return "";
         }
         return mobile;
     }

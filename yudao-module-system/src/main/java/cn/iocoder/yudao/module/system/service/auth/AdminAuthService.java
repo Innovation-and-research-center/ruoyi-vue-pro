@@ -87,4 +87,6 @@ public interface AdminAuthService {
 
     AuthLoginRespVO loginByTicket(String ticket);
 
+    AuthLoginRespVO loginByHostToken(AuthHostLoginReqVO reqVO);
+
 }

@@ -61,12 +61,13 @@ public class BpmFlowableConfiguration {
     public AsyncListenableTaskExecutor taskExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(8);
-        executor.setMaxPoolSize(8);
-        executor.setQueueCapacity(100);
+        executor.setMaxPoolSize(16);
+        executor.setQueueCapacity(1000);
         executor.setThreadNamePrefix("flowable-task-Executor-");
         executor.setAwaitTerminationSeconds(30);
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAllowCoreThreadTimeOut(true);
+        executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
         executor.initialize();
         return executor;
     }

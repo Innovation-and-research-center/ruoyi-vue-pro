@@ -12,6 +12,7 @@ import cn.iocoder.yudao.framework.common.util.number.NumberUtils;
 import cn.iocoder.yudao.framework.common.util.object.ObjectUtils;
 import cn.iocoder.yudao.framework.common.util.object.PageUtils;
 import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
+import cn.iocoder.yudao.framework.tenant.core.util.TenantUtils;
 import cn.iocoder.yudao.framework.web.core.util.WebFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.controller.admin.definition.vo.model.BpmModelMetaInfoVO;
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.*;
@@ -32,6 +33,7 @@ import cn.iocoder.yudao.module.bpm.service.definition.BpmFormService;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmModelService;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmProcessDefinitionService;
 import cn.iocoder.yudao.module.bpm.service.message.BpmMessageService;
+import cn.iocoder.yudao.module.bpm.service.message.dto.BpmMessageSendWhenTaskCreatedReqDTO;
 import cn.iocoder.yudao.module.bpm.service.message.dto.BpmMessageSendWhenTaskTimeoutReqDTO;
 import cn.iocoder.yudao.module.system.api.dept.DeptApi;
 import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
@@ -2381,6 +2383,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         FlowElement userTaskElement = BpmnModelUtils.getFlowElementById(bpmnModel, task.getTaskDefinitionKey());
         Integer approveType = BpmnModelUtils.parseApproveType(userTaskElement);
         Integer assignEmptyHandlerType = BpmnModelUtils.parseAssignEmptyHandlerType(userTaskElement);
+        final Long tenantId = cn.hutool.core.util.NumberUtil.parseLong(task.getTenantId(), 1L);
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
 
             /**
@@ -2394,34 +2397,37 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 if (ObjectUtil.equal(transactionStatus, TransactionSynchronization.STATUS_ROLLED_BACK)) {
                     return;
                 }
-                // 特殊情况：第一个 task 【自动通过】时，第二个任务设置审批人时 transactionStatus 会为 STATUS_UNKNOWN，不知道啥原因
-                if (ObjectUtil.equal(transactionStatus, TransactionSynchronization.STATUS_UNKNOWN)
-                        && getTask(task.getId()) == null) {
-                    return;
-                }
-                // 特殊情况一：【人工审核】审批人为空，根据配置是否要自动通过、自动拒绝
-                if (ObjectUtil.equal(approveType, BpmUserTaskApproveTypeEnum.USER.getType())) {
-                    // 如果有审批人、或者拥有人，则说明不满足情况一，不自动通过、不自动拒绝
-                    if (!ObjectUtil.isAllEmpty(task.getAssignee(), task.getOwner())) {
+                cn.iocoder.yudao.framework.tenant.core.util.TenantUtils.execute(tenantId, () -> {
+                    // 特殊情况：第一个 task 【自动通过】时，第二个任务设置审批人时 transactionStatus 会为 STATUS_UNKNOWN，不知道啥原因
+                    if (ObjectUtil.equal(transactionStatus, TransactionSynchronization.STATUS_UNKNOWN)
+                            && getTask(task.getId()) == null) {
                         return;
                     }
-                    if (ObjectUtil.equal(assignEmptyHandlerType, BpmUserTaskAssignEmptyHandlerTypeEnum.APPROVE.getType())) {
-                        getSelf().approveTask(null, new BpmTaskApproveReqVO()
-                                .setId(task.getId()).setReason(BpmReasonEnum.ASSIGN_EMPTY_APPROVE.getReason()));
-                    } else if (ObjectUtil.equal(assignEmptyHandlerType, BpmUserTaskAssignEmptyHandlerTypeEnum.REJECT.getType())) {
-                        getSelf().rejectTask(null, new BpmTaskRejectReqVO()
-                                .setId(task.getId()).setReason(BpmReasonEnum.ASSIGN_EMPTY_REJECT.getReason()));
+                    // 特殊情况一：【人工审核】审批人为空，根据配置是否要自动通过、自动拒绝
+                    if (ObjectUtil.equal(approveType, BpmUserTaskApproveTypeEnum.USER.getType())) {
+                        // 如果有审批人、或者拥有人，则说明不满足情况一，不自动通过、不自动拒绝
+                        if (!ObjectUtil.isAllEmpty(task.getAssignee(), task.getOwner())) {
+                            return;
+                        }
+                        if (ObjectUtil.equal(assignEmptyHandlerType, BpmUserTaskAssignEmptyHandlerTypeEnum.APPROVE.getType())) {
+                            getSelf().approveTask(null, new BpmTaskApproveReqVO()
+                                    .setId(task.getId()).setReason(BpmReasonEnum.ASSIGN_EMPTY_APPROVE.getReason()));
+                        } else if (ObjectUtil.equal(assignEmptyHandlerType, BpmUserTaskAssignEmptyHandlerTypeEnum.REJECT.getType())) {
+                            getSelf().rejectTask(null, new BpmTaskRejectReqVO()
+                                    .setId(task.getId()).setReason(BpmReasonEnum.ASSIGN_EMPTY_REJECT.getReason()));
+                        }
+                        // 特殊情况二：【自动审核】审批类型为自动通过、不通过
+                    } else {
+                        if (ObjectUtil.equal(approveType, BpmUserTaskApproveTypeEnum.AUTO_APPROVE.getType())) {
+                            getSelf().approveTask(null, new BpmTaskApproveReqVO()
+                                    .setId(task.getId()).setReason(BpmReasonEnum.APPROVE_TYPE_AUTO_APPROVE.getReason()));
+                        } else if (ObjectUtil.equal(approveType, BpmUserTaskApproveTypeEnum.AUTO_REJECT.getType())) {
+                            getSelf().rejectTask(null, new BpmTaskRejectReqVO()
+                                    .setId(task.getId()).setReason(BpmReasonEnum.APPROVE_TYPE_AUTO_REJECT.getReason()));
+                        }
                     }
-                    // 特殊情况二：【自动审核】审批类型为自动通过、不通过
-                } else {
-                    if (ObjectUtil.equal(approveType, BpmUserTaskApproveTypeEnum.AUTO_APPROVE.getType())) {
-                        getSelf().approveTask(null, new BpmTaskApproveReqVO()
-                                .setId(task.getId()).setReason(BpmReasonEnum.APPROVE_TYPE_AUTO_APPROVE.getReason()));
-                    } else if (ObjectUtil.equal(approveType, BpmUserTaskApproveTypeEnum.AUTO_REJECT.getType())) {
-                        getSelf().rejectTask(null, new BpmTaskRejectReqVO()
-                                .setId(task.getId()).setReason(BpmReasonEnum.APPROVE_TYPE_AUTO_REJECT.getReason()));
-                    }
-                }
+                });
+
             }
 
         });
@@ -2456,148 +2462,160 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     @DataPermission(enable = false) // 忽略数据权限，避免因为过滤，导致找不到候选人
     public void processTaskAssigned(Task task) {
         String taskId = task.getId();
-        String executionId = task.getExecutionId(); // 关键：提前提取 executionId
+        String executionId = task.getExecutionId();
         String processInstanceId = task.getProcessInstanceId();
         String processDefinitionId = task.getProcessDefinitionId();
         String taskDefinitionKey = task.getTaskDefinitionKey();
         String assignee = task.getAssignee();
+
+        // 1. 【核心防御】：提取当前任务自带的租户 ID，防止后台线程执行时丢失上下文
+        final Long tenantId = cn.hutool.core.util.NumberUtil.parseLong(task.getTenantId(), 1L);
+
         // 发送通知。在事务提交时，批量执行操作，所以直接查询会无法查询到 ProcessInstance，所以这里是通过监听事务的提交来实现。
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
 
-            /**
-             * 特殊情况：部分情况下，TransactionSynchronizationManager 注册 afterCommit 监听时，不会被调用，但是 afterCompletion 可以
-             * 例如说：第一个 task 就是配置【自动通过】或者【自动拒绝】时
-             * 参见 <a href="https://gitee.com/zhijiantianya/yudao-cloud/issues/IB7V7Q">issue</a> 反馈
-             */
             @Override
             public void afterCompletion(int transactionStatus) {
                 // 回滚情况，直接返回
-                if (ObjectUtil.equal(transactionStatus, TransactionSynchronization.STATUS_ROLLED_BACK)) {
-                    return;
-                }
-                // 特殊情况：第一个 task 【自动通过】时，第二个任务设置审批人时 transactionStatus 会为 STATUS_UNKNOWN，不知道啥原因
-                if (ObjectUtil.equal(transactionStatus, TransactionSynchronization.STATUS_UNKNOWN)
-                        && getTask(taskId) == null) {
-                    return;
-                }
-                if (StrUtil.isEmpty(assignee)) {
-                    log.error("[processTaskAssigned][taskId({}) 没有分配到负责人]", task.getId());
-                    return;
-                }
-                ProcessInstance processInstance = processInstanceService.getProcessInstance(processInstanceId);
-                if (processInstance == null) {
-                    log.error("[processTaskAssigned][taskId({}) 没有找到流程实例]", task.getId());
+                if (cn.hutool.core.util.ObjectUtil.equal(transactionStatus, TransactionSynchronization.STATUS_ROLLED_BACK)) {
                     return;
                 }
 
-                // 自动去重，通过自动审批的方式 TODO @芋艿 驳回的情况得考虑一下；@lesan：驳回后，又自动审批么？
-                BpmProcessDefinitionInfoDO processDefinitionInfo = bpmProcessDefinitionService.getProcessDefinitionInfo(processDefinitionId);
-                if (processDefinitionInfo == null) {
-                    log.error("[processTaskAssigned][taskId({}) 没有找到流程定义({})]", task.getId(), task.getProcessDefinitionId());
-                    return;
-                }
-                if (processDefinitionInfo.getAutoApprovalType() != null) {
-                    HistoricTaskInstanceQuery sameAssigneeQuery = historyService.createHistoricTaskInstanceQuery()
-                            .processInstanceId(processInstanceId)
-                            .taskAssignee(assignee) // 相同审批人
-                            .taskVariableValueEquals(BpmnVariableConstants.TASK_VARIABLE_STATUS, BpmTaskStatusEnum.APPROVE.getStatus())
-                            .finished();
-                    if (BpmAutoApproveTypeEnum.APPROVE_ALL.getType().equals(processDefinitionInfo.getAutoApprovalType())
-                            && sameAssigneeQuery.count() > 0) {
-                        getSelf().approveTask(Long.valueOf(assignee), new BpmTaskApproveReqVO().setId(taskId)
-                                .setReason(BpmAutoApproveTypeEnum.APPROVE_ALL.getName()));
+                // =========================================================================
+                // 2. 【终极绝杀】：使用 TenantUtils 包裹整个 afterCompletion 的逻辑！
+                // 这样无论是 Web 线程还是 Flowable 后台异步线程，查库时都绝对带有租户钢印！
+                // =========================================================================
+                TenantUtils.execute(tenantId, () -> {
+
+                    // 特殊情况：第一个 task 【自动通过】时，第二个任务设置审批人时 transactionStatus 会为 STATUS_UNKNOWN
+                    if (cn.hutool.core.util.ObjectUtil.equal(transactionStatus, TransactionSynchronization.STATUS_UNKNOWN)
+                            && getTask(taskId) == null) {
                         return;
                     }
-                    if (BpmAutoApproveTypeEnum.APPROVE_SEQUENT.getType().equals(processDefinitionInfo.getAutoApprovalType())) {
-                        BpmnModel bpmnModel = modelService.getBpmnModelByDefinitionId(processInstance.getProcessDefinitionId());
-                        if (bpmnModel == null) {
-                            log.error("[processTaskAssigned][taskId({}) 没有找到流程模型({})]", task.getId(), task.getProcessDefinitionId());
-                            return;
-                        }
-                        List<String> sourceTaskIds = convertList(BpmnModelUtils.getElementIncomingFlows( // 获取所有上一个节点
-                                        BpmnModelUtils.getFlowElementById(bpmnModel, taskDefinitionKey)),
-                                SequenceFlow::getSourceRef);
-                        if (sameAssigneeQuery.taskDefinitionKeys(sourceTaskIds).count() > 0) {
-                            getSelf().approveTask(Long.valueOf(assignee), new BpmTaskApproveReqVO().setId(taskId)
-                                    .setReason(BpmAutoApproveTypeEnum.APPROVE_SEQUENT.getName()));
-                            return;
-                        }
+                    if (cn.hutool.core.util.StrUtil.isEmpty(assignee)) {
+                        log.error("[processTaskAssigned][taskId({}) 没有分配到负责人]", task.getId());
+                        return;
                     }
-                }
+                    ProcessInstance processInstance = processInstanceService.getProcessInstance(processInstanceId);
+                    if (processInstance == null) {
+                        log.error("[processTaskAssigned][taskId({}) 没有找到流程实例]", task.getId());
+                        return;
+                    }
 
-                // 获取发起人节点
-                BpmnModel bpmnModel = modelService.getBpmnModelByDefinitionId(processInstance.getProcessDefinitionId());
-                if (bpmnModel == null) {
-                    log.error("[processTaskAssigned][taskId({}) 没有找到流程模型]", task.getId());
-                    return;
-                }
-                FlowElement userTaskElement = BpmnModelUtils.getFlowElementById(bpmnModel, taskDefinitionKey);
-                // 判断是否为退回或者驳回：如果是退回或者驳回不走这个策略（使用 local variable）
-//                Boolean returnTaskFlag = runtimeService.getVariableLocal(executionId,
-//                        String.format(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_RETURN_FLAG, taskDefinitionKey), Boolean.class);
-                Boolean returnTaskFlag = null;
-                if (StrUtil.isNotEmpty(executionId)) {
-                    // 修改：使用 executionId 和 taskDefinitionKey 变量
-                    returnTaskFlag = runtimeService.getVariableLocal(executionId,
-                            String.format(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_RETURN_FLAG, taskDefinitionKey), Boolean.class);
-                }
-                Boolean skipStartUserNodeFlag = Convert.toBool(runtimeService.getVariable(processInstance.getProcessInstanceId(),
-                        BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_SKIP_START_USER_NODE, String.class));
-                if (userTaskElement.getId().equals(START_USER_NODE_ID)
-                        && (skipStartUserNodeFlag == null // 目的：一般是“主流程”，发起人节点，自动通过审核
-                        || BooleanUtil.isTrue(skipStartUserNodeFlag)) // 目的：一般是“子流程”，发起人节点，按配置自动通过审核
-                        && ObjUtil.notEqual(returnTaskFlag, Boolean.TRUE)) {
-                    getSelf().approveTask(Long.valueOf(assignee), new BpmTaskApproveReqVO().setId(taskId)
-                            .setReason(BpmReasonEnum.ASSIGN_START_USER_APPROVE_WHEN_SKIP_START_USER_NODE.getReason()));
-                    return;
-                }
-                // 当不为发起人节点时，审批人与提交人为同一人时，根据 BpmUserTaskAssignStartUserHandlerTypeEnum 策略进行处理
-                if (ObjectUtil.notEqual(userTaskElement.getId(), START_USER_NODE_ID)
-                        && StrUtil.equals(assignee, processInstance.getStartUserId())) {
-                    if (ObjUtil.notEqual(returnTaskFlag, Boolean.TRUE)) {
-                        Integer assignStartUserHandlerType = BpmnModelUtils.parseAssignStartUserHandlerType(userTaskElement);
+                    // 自动去重，通过自动审批的方式
+                    BpmProcessDefinitionInfoDO processDefinitionInfo = bpmProcessDefinitionService.getProcessDefinitionInfo(processDefinitionId);
+                    if (processDefinitionInfo == null) {
+                        log.error("[processTaskAssigned][taskId({}) 没有找到流程定义({})]", task.getId(), task.getProcessDefinitionId());
+                        return;
+                    }
 
-                        // 情况一：自动跳过
-                        if (ObjectUtils.equalsAny(assignStartUserHandlerType,
-                                BpmUserTaskAssignStartUserHandlerTypeEnum.SKIP.getType())) {
+                    if (processDefinitionInfo.getAutoApprovalType() != null) {
+                        HistoricTaskInstanceQuery sameAssigneeQuery = historyService.createHistoricTaskInstanceQuery()
+                                .processInstanceId(processInstanceId)
+                                .taskAssignee(assignee) // 相同审批人
+                                .taskVariableValueEquals(BpmnVariableConstants.TASK_VARIABLE_STATUS, BpmTaskStatusEnum.APPROVE.getStatus())
+                                .finished();
+                        if (BpmAutoApproveTypeEnum.APPROVE_ALL.getType().equals(processDefinitionInfo.getAutoApprovalType())
+                                && sameAssigneeQuery.count() > 0) {
                             getSelf().approveTask(Long.valueOf(assignee), new BpmTaskApproveReqVO().setId(taskId)
-                                    .setReason(BpmReasonEnum.ASSIGN_START_USER_APPROVE_WHEN_SKIP.getReason()));
+                                    .setReason(BpmAutoApproveTypeEnum.APPROVE_ALL.getName()));
                             return;
                         }
-                        // 情况二：转交给部门负责人审批
-                        if (ObjectUtils.equalsAny(assignStartUserHandlerType,
-                                BpmUserTaskAssignStartUserHandlerTypeEnum.TRANSFER_DEPT_LEADER.getType())) {
-                            AdminUserRespDTO startUser = adminUserApi.getUser(Long.valueOf(processInstance.getStartUserId()));
-                            Assert.notNull(startUser, "提交人({})信息为空", processInstance.getStartUserId());
-                            DeptRespDTO dept = startUser.getDeptId() != null ? deptApi.getDept(startUser.getDeptId()) : null;
-                            Assert.notNull(dept, "提交人({})部门({})信息为空", processInstance.getStartUserId(), startUser.getDeptId());
-                            // 找不到部门负责人的情况下，自动审批通过
-                            // noinspection DataFlowIssue
-                            if (dept.getLeaderUserId() == null) {
+                        if (BpmAutoApproveTypeEnum.APPROVE_SEQUENT.getType().equals(processDefinitionInfo.getAutoApprovalType())) {
+                            BpmnModel bpmnModel = modelService.getBpmnModelByDefinitionId(processInstance.getProcessDefinitionId());
+                            if (bpmnModel == null) {
+                                log.error("[processTaskAssigned][taskId({}) 没有找到流程模型({})]", task.getId(), task.getProcessDefinitionId());
+                                return;
+                            }
+                            List<String> sourceTaskIds = cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList(
+                                    BpmnModelUtils.getElementIncomingFlows(BpmnModelUtils.getFlowElementById(bpmnModel, taskDefinitionKey)),
+                                    org.flowable.bpmn.model.SequenceFlow::getSourceRef);
+                            if (sameAssigneeQuery.taskDefinitionKeys(sourceTaskIds).count() > 0) {
                                 getSelf().approveTask(Long.valueOf(assignee), new BpmTaskApproveReqVO().setId(taskId)
-                                        .setReason(BpmReasonEnum.ASSIGN_START_USER_APPROVE_WHEN_DEPT_LEADER_NOT_FOUND.getReason()));
+                                        .setReason(BpmAutoApproveTypeEnum.APPROVE_SEQUENT.getName()));
                                 return;
                             }
-                            // 找得到部门负责人的情况下，修改负责人
-                            if (ObjectUtil.notEqual(dept.getLeaderUserId(), startUser.getId())) {
-                                getSelf().transferTask(Long.valueOf(assignee), new BpmTaskTransferReqVO()
-                                        .setId(task.getId()).setAssigneeUserId(dept.getLeaderUserId())
-                                        .setReason(BpmReasonEnum.ASSIGN_START_USER_TRANSFER_DEPT_LEADER.getReason()));
-                                return;
-                            }
-                            // 如果部门负责人是自己，还是自己审批吧~
                         }
                     }
-                }
-                // 注意：需要基于 instance 设置租户编号，避免 Flowable 内部异步时，丢失租户编号
-                FlowableUtils.execute(processInstance.getTenantId(), () -> {
-                    AdminUserRespDTO startUser = adminUserApi.getUser(Long.valueOf(processInstance.getStartUserId()));
-                    messageService.sendMessageWhenTaskAssigned(BpmTaskConvert.INSTANCE.convert(processInstance, startUser, task));
-                });
-            }
 
+                    // 获取发起人节点
+                    BpmnModel bpmnModel = modelService.getBpmnModelByDefinitionId(processInstance.getProcessDefinitionId());
+                    if (bpmnModel == null) {
+                        log.error("[processTaskAssigned][taskId({}) 没有找到流程模型]", task.getId());
+                        return;
+                    }
+                    FlowElement userTaskElement = BpmnModelUtils.getFlowElementById(bpmnModel, taskDefinitionKey);
+
+                    Boolean returnTaskFlag = null;
+                    if (cn.hutool.core.util.StrUtil.isNotEmpty(executionId)) {
+                        returnTaskFlag = runtimeService.getVariableLocal(executionId,
+                                String.format(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_RETURN_FLAG, taskDefinitionKey), Boolean.class);
+                    }
+                    Boolean skipStartUserNodeFlag = cn.hutool.core.convert.Convert.toBool(runtimeService.getVariable(processInstance.getProcessInstanceId(),
+                            BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_SKIP_START_USER_NODE, String.class));
+
+                    if (userTaskElement.getId().equals(START_USER_NODE_ID)
+                            && (skipStartUserNodeFlag == null || cn.hutool.core.util.BooleanUtil.isTrue(skipStartUserNodeFlag))
+                            && cn.hutool.core.util.ObjectUtil.notEqual(returnTaskFlag, Boolean.TRUE)) {
+                        getSelf().approveTask(Long.valueOf(assignee), new BpmTaskApproveReqVO().setId(taskId)
+                                .setReason(BpmReasonEnum.ASSIGN_START_USER_APPROVE_WHEN_SKIP_START_USER_NODE.getReason()));
+                        return;
+                    }
+
+                    if (cn.hutool.core.util.ObjectUtil.notEqual(userTaskElement.getId(), START_USER_NODE_ID)
+                            && cn.hutool.core.util.StrUtil.equals(assignee, processInstance.getStartUserId())) {
+                        if (cn.hutool.core.util.ObjectUtil.notEqual(returnTaskFlag, Boolean.TRUE)) {
+                            Integer assignStartUserHandlerType = BpmnModelUtils.parseAssignStartUserHandlerType(userTaskElement);
+
+                            if (cn.iocoder.yudao.framework.common.util.object.ObjectUtils.equalsAny(assignStartUserHandlerType,
+                                    BpmUserTaskAssignStartUserHandlerTypeEnum.SKIP.getType())) {
+                                getSelf().approveTask(Long.valueOf(assignee), new BpmTaskApproveReqVO().setId(taskId)
+                                        .setReason(BpmReasonEnum.ASSIGN_START_USER_APPROVE_WHEN_SKIP.getReason()));
+                                return;
+                            }
+                            if (cn.iocoder.yudao.framework.common.util.object.ObjectUtils.equalsAny(assignStartUserHandlerType,
+                                    BpmUserTaskAssignStartUserHandlerTypeEnum.TRANSFER_DEPT_LEADER.getType())) {
+                                AdminUserRespDTO startUser = adminUserApi.getUser(Long.valueOf(processInstance.getStartUserId()));
+                                cn.hutool.core.lang.Assert.notNull(startUser, "提交人({})信息为空", processInstance.getStartUserId());
+                                DeptRespDTO dept = startUser.getDeptId() != null ? deptApi.getDept(startUser.getDeptId()) : null;
+                                cn.hutool.core.lang.Assert.notNull(dept, "提交人({})部门({})信息为空", processInstance.getStartUserId(), startUser.getDeptId());
+
+                                if (dept.getLeaderUserId() == null) {
+                                    getSelf().approveTask(Long.valueOf(assignee), new BpmTaskApproveReqVO().setId(taskId)
+                                            .setReason(BpmReasonEnum.ASSIGN_START_USER_APPROVE_WHEN_DEPT_LEADER_NOT_FOUND.getReason()));
+                                    return;
+                                }
+                                if (cn.hutool.core.util.ObjectUtil.notEqual(dept.getLeaderUserId(), startUser.getId())) {
+                                    getSelf().transferTask(Long.valueOf(assignee), new BpmTaskTransferReqVO()
+                                            .setId(task.getId()).setAssigneeUserId(dept.getLeaderUserId())
+                                            .setReason(BpmReasonEnum.ASSIGN_START_USER_TRANSFER_DEPT_LEADER.getReason()));
+                                    return;
+                                }
+                            }
+                        }
+                    }
+
+                    // 3. 【极速异步发短信】：剥离组装数据逻辑，只把网络请求扔到异步线程池！
+                    AdminUserRespDTO startUser = adminUserApi.getUser(Long.valueOf(processInstance.getStartUserId()));
+                    BpmMessageSendWhenTaskCreatedReqDTO messageDTO = BpmTaskConvert.INSTANCE.convert(processInstance, startUser, task);
+
+                    java.util.concurrent.CompletableFuture.runAsync(() -> {
+                        TenantUtils.execute(tenantId, () -> {
+                            try {
+                                // 此时子线程已经有了租户 ID，MyBatis-Plus 再也不会报 NullPointerException 了！
+                                messageService.sendMessageWhenTaskAssigned(messageDTO);
+                            } catch (Exception e) {
+                                // 异步线程中的异常必须手动 catch 打印，否则会被吞掉
+                                log.error("[processTaskAssigned][taskId({}) 异步发送分配通知失败]", messageDTO.getTaskId(), e);
+                            }
+                        });
+                    });
+
+                }); // ================ TenantUtils.execute 结束 ================
+            }
         });
     }
+
 
     @Override
     public void processTaskCompleted(Task task) {
@@ -2641,6 +2659,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             if (Objects.equals(handlerType, BpmUserTaskTimeoutHandlerTypeEnum.REMINDER.getType())) {
                 messageService.sendMessageWhenTaskTimeout(new BpmMessageSendWhenTaskTimeoutReqDTO()
                         .setProcessInstanceId(processInstanceId).setProcessInstanceName(processInstance.getName())
+                                .setDueDate(task.getDueDate())
                         .setTaskId(task.getId()).setTaskName(task.getName()).setAssigneeUserId(Long.parseLong(task.getAssignee())));
                 return;
             }

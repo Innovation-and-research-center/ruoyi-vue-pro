@@ -179,7 +179,8 @@ public interface BpmTaskConvert {
         reqDTO.setProcessInstanceId(processInstance.getProcessInstanceId())
                 .setProcessInstanceName(processInstance.getName()).setStartUserId(startUser.getId())
                 .setStartUserNickname(startUser.getNickname()).setTaskId(task.getId()).setTaskName(task.getName())
-                .setAssigneeUserId(NumberUtils.parseLong(task.getAssignee()));
+                .setAssigneeUserId(NumberUtils.parseLong(task.getAssignee())).setDueDate(task.getDueDate());;
+
         return reqDTO;
     }
 

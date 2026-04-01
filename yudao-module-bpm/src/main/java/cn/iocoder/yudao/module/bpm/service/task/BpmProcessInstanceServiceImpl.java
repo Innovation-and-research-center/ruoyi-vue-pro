@@ -76,6 +76,11 @@ import org.flowable.engine.runtime.ProcessInstanceBuilder;
 import org.flowable.task.api.Task;
 import org.flowable.task.api.history.HistoricTaskInstance;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.context.expression.MapAccessor;
+import org.springframework.expression.EvaluationContext;
+import org.springframework.expression.ExpressionParser;
+import org.springframework.expression.spel.standard.SpelExpressionParser;
+import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -417,7 +422,14 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         }
 
         if (sourceElement instanceof FlowNode) {
-            analyzeOutgoingFlows((FlowNode) sourceElement, result, null);
+            analyzeOutgoingFlows((FlowNode) sourceElement, result,null, processVariables);
+//            if(reqVO.getTaskId() == null){
+//                analyzeOutgoingFlows((FlowNode) sourceElement, result,null, processVariables);
+//            }
+//            else{
+//                analyzeOutgoingFlows((FlowNode) sourceElement, result, null,null);
+//            }
+
         }
 
         AdminUserDO loginUser = userService.getUser(loginUserId);
@@ -783,10 +795,75 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         return false;
     }
 
-    private void analyzeOutgoingFlows(FlowNode source, List<BpmNextTaskRespVO> result, String incomingCondition) {
+    private void analyzeOutgoingFlows(FlowNode source, List<BpmNextTaskRespVO> result, String incomingCondition, Map<String, Object> processVariables) {
         List<SequenceFlow> outgoingFlows = source.getOutgoingFlows();
 
+        // ====================================================================
+        // 第一步：寻找并筛选真正需要走的分支
+        // ====================================================================
+        List<SequenceFlow> flowsToTake = new ArrayList<>();
+        SequenceFlow defaultFlow = null;
+        String defaultFlowId = null;
+
+        if (source instanceof ExclusiveGateway) {
+            defaultFlowId = ((ExclusiveGateway) source).getDefaultFlow();
+        } else if (source instanceof InclusiveGateway) {
+            defaultFlowId = ((InclusiveGateway) source).getDefaultFlow();
+        } else if (source instanceof Activity) {
+            defaultFlowId = ((Activity) source).getDefaultFlow();
+        }
+
+        // 【修改点 1】：将 matchedAnyCondition 改为 matchedStrictCondition
+        // 用来记录是否找到了“实打实满足条件”的连线
+        boolean matchedStrictCondition = false;
+
         for (SequenceFlow flow : outgoingFlows) {
+            if (defaultFlowId != null && defaultFlowId.equals(flow.getId())) {
+                defaultFlow = flow;
+                continue;
+            }
+
+            String conditionExpression = flow.getConditionExpression();
+            boolean isStrictTrue = false;
+
+            if (StringUtil.isNotEmpty(conditionExpression)) {
+                Boolean evalResult = evaluateExpression(conditionExpression, processVariables);
+
+                if (Boolean.FALSE.equals(evalResult)) {
+                    // 只有明确算出 false 才拦截，跳过
+                    continue;
+                }
+
+                if (Boolean.TRUE.equals(evalResult)) {
+                    // 明确算出了 true
+                    isStrictTrue = true;
+                    matchedStrictCondition = true; // 【修改点 2】：标记找到了严格满足的条件
+                }
+            } else {
+                // 连线上压根没配条件，视为严格满足
+                isStrictTrue = true;
+                matchedStrictCondition = true; // 【修改点 3】：无条件的线也算严格满足
+            }
+
+            // 宽容放行的线，或者是严格满足的线，都加进来
+            flowsToTake.add(flow);
+
+            // 如果是排他网关，并且是“严格满足条件”时，才立马终止筛选
+            if (source instanceof ExclusiveGateway && isStrictTrue) {
+                break;
+            }
+        }
+
+        // 【修改点 4】：兜底逻辑判定更改
+        // 如果没有找到任何【严格满足】的条件线（要么全 false，要么是因为缺变量全宽容放行了），且配置了默认线
+        if (!matchedStrictCondition && defaultFlow != null) {
+            flowsToTake.add(defaultFlow);
+        }
+
+        // ====================================================================
+        // 第二步：对筛选出来的连线，执行你原有的节点解析逻辑
+        // ====================================================================
+        for (SequenceFlow flow : flowsToTake) {
             FlowElement target = flow.getTargetFlowElement();
 
             String currentCondition = StringUtil.isNotEmpty(flow.getConditionExpression())
@@ -795,12 +872,11 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
             if (target instanceof UserTask) {
                 // 找到目标任务
-                result.add(buildTaskOption((UserTask) target, currentCondition,flow));
+                result.add(buildTaskOption((UserTask) target, currentCondition, flow));
             } else if (target instanceof Gateway) {
-                // 遇到网关，递归穿透
-                analyzeOutgoingFlows((FlowNode) target, result,currentCondition);
-            }else if (target instanceof SubProcess) {
-                // ================== 新增逻辑开始 ==================
+                // 遇到网关，递归穿透 (记得把 processVariables 传下去)
+                analyzeOutgoingFlows((FlowNode) target, result, currentCondition, processVariables);
+            } else if (target instanceof SubProcess) {
                 // 3. 遇到子流程 (嵌入式子流程)
                 SubProcess subProcess = (SubProcess) target;
 
@@ -815,7 +891,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                     if (subElement instanceof StartEvent) {
                         // 找到 StartEvent 后，将其视为普通的 FlowNode，递归调用本方法
                         // 这样就能顺着 StartEvent -> 线 -> 内部的 UserTask 找到了
-                        analyzeOutgoingFlows((FlowNode) subElement, result,currentCondition);
+                        analyzeOutgoingFlows((FlowNode) subElement, result, currentCondition, processVariables);
                     }
                 }
 
@@ -827,38 +903,31 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                     for (int i = beforeSize; i < result.size(); i++) {
                         BpmNextTaskRespVO childTaskVO = result.get(i);
 
-                        // 【关键点】这里有两种处理策略，根据你的业务复杂度选择：
-
                         // 策略 A：直接覆盖（适用于内部 Start -> Task 之间通常没有连线条件的场景）
                         if (childTaskVO.getConditionExpression() == null) {
                             childTaskVO.setConditionExpression(parentCondition);
                         }
                         // 策略 B：合并条件（如果内部也有条件，则是 "外部条件 && 内部条件"）
                         else {
-                            // 这里需要你实现一个合并逻辑，比如将两个条件对象合并
-                            // mergeConditions(childTaskVO.getConditionExpression(), parentCondition);
-                            // 简单示例：如果只是字符串，可以做拼接，如果是对象，需自行扩展
+                            // ... 合并逻辑 ...
                         }
                     }
                 }
-            }else if (target instanceof EndEvent) {
+            } else if (target instanceof EndEvent) {
                 // 3. 找到结束事件：处理流程终点
-                // 这里可以根据业务需求决定是否加入 result，或者打上一个“流程结束”的标记
                 String targetName = StringUtil.isNotEmpty(target.getName()) ? target.getName() : "结束";
                 BpmNextTaskRespVO endNodeVO = new BpmNextTaskRespVO()
                         .setTaskName(targetName)
                         .setTaskDefKey("end");
 
-                // 【关键新增】提取指向结束节点的连线条件
+                // 提取指向结束节点的连线条件
                 ConditionResult extractedValue = extractConditionValue(currentCondition);
                 endNodeVO.setConditionExpression(extractedValue);
 
                 result.add(endNodeVO);
             }
-
         }
     }
-
     private ConditionResult extractConditionValue(String conditionExpression) {
 //        if (conditionExpression == null) return "default";
 //        Matcher matcher = Pattern.compile("==\\s*[\"'](.*?)[\"']").matcher(conditionExpression);
@@ -1196,6 +1265,44 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         return null;
     }
 
+    // 注意：返回值改成了大写的 Boolean
+    private Boolean evaluateExpression(String expression, Map<String, Object> variables) {
+        if (StringUtil.isEmpty(expression)) {
+            return true;
+        }
+
+        try {
+            // 1. 去除 Flowable 的包装
+            String el = expression.replaceAll("^\\s*[\\$#]\\{(.*)\\}\\s*$", "$1");
+            // 2. 擦除特殊函数
+            el = el.replaceAll("variables:get\\(\\s*['\"]?([a-zA-Z0-9_]+)['\"]?\\s*\\)", "$1");
+            el = el.replaceAll("execution\\.getVariable\\(\\s*['\"]?([a-zA-Z0-9_]+)['\"]?\\s*\\)", "$1");
+
+            // 3. 变量为空时宽容放行 -> 返回 null
+            if (variables == null || variables.isEmpty()) {
+                return null; // 【修改点】代表未知/无法计算
+            }
+
+            ExpressionParser parser = new SpelExpressionParser();
+            StandardEvaluationContext context = new StandardEvaluationContext(variables);
+
+            // 使用自定义的 MapAccessor 防止缺 key 报错
+            context.addPropertyAccessor(new MapAccessor() {
+                @Override
+                public boolean canRead(EvaluationContext context, Object target, String name) {
+                    return true;
+                }
+            });
+            variables.forEach(context::setVariable);
+
+            Boolean result = parser.parseExpression(el).getValue(context, Boolean.class);
+            return result;
+
+        } catch (Exception e) {
+            // 运算报错（如 null > 1000）导致异常时，宽容放行 -> 返回 null
+            return null; // 【修改点】代表未知/无法计算
+        }
+    }
     private ActivityNode buildNotRunApproveNodeForBpmn(Long startUserId, BpmnModel bpmnModel, List<FlowElement> flowElements,
                                                        BpmProcessDefinitionInfoDO processDefinitionInfo,
                                                        Map<String, Object> processVariables,

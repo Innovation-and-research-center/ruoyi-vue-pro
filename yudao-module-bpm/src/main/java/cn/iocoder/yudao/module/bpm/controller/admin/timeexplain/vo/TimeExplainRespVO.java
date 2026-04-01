@@ -61,4 +61,14 @@ public class TimeExplainRespVO {
     @Schema(description = "文件路径")
     private String filepath;
 
+    /**
+     * 出发地
+     */
+    private String startPlace;
+    /**
+     * 目的地
+     */
+    private String endPlace;
+
+
 }

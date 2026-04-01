@@ -18,8 +18,38 @@ import java.util.List;
 @Component
 public class TimeoutSyncListener implements TaskListener{
 
+
     @Resource
     private ConfigApi configApi;
+
+
+    private volatile String cachedTimeout = null;
+    private volatile long lastFetchTime = 0L;
+    private static final long CACHE_DURATION_MS = 5 * 60 * 1000L;
+
+    private String getDefaultTimeout() {
+        long currentTime = System.currentTimeMillis();
+        // 双重检查锁（DCL），保证在多线程高并发下的高性能和线程安全
+        if (cachedTimeout == null || (currentTime - lastFetchTime) > CACHE_DURATION_MS) {
+            synchronized (this) {
+                if (cachedTimeout == null || (currentTime - lastFetchTime) > CACHE_DURATION_MS) {
+                    try {
+                        cachedTimeout = configApi.getConfigValueByKey("bpm_task_timeout");
+                        lastFetchTime = System.currentTimeMillis();
+                        log.debug("已刷新 BPM 任务默认超时时间缓存: {}", cachedTimeout);
+                    } catch (Exception e) {
+                        log.error("获取 BPM 任务超时配置失败", e);
+                        // 兜底策略：如果查询失败，且之前没缓存，默认给 24 小时防止流程卡死
+                        if (cachedTimeout == null) {
+                            cachedTimeout = "24";
+                        }
+                    }
+                }
+            }
+        }
+        return cachedTimeout;
+    }
+
     @Override
     public void notify(DelegateTask delegateTask) {
         BpmnModel bpmnModel = CommandContextUtil.getProcessEngineConfiguration()
@@ -74,10 +104,15 @@ public class TimeoutSyncListener implements TaskListener{
         }
 
         if (!isCustomDateSet) {
-            String timeout = configApi.getConfigValueByKey("bpm_task_timeout");
-            Date defaultDueDate = new Date(System.currentTimeMillis() + (Duration.ofHours(Long.parseLong(timeout)).getSeconds() * 1000));
-            delegateTask.setDueDate(defaultDueDate);
-            log.info("任务[{}] 未配置有效定时器，已设置默认超时时间: {} 小时", delegateTask.getName(), timeout);
+            String timeoutStr = getDefaultTimeout();
+            try {
+                long timeoutHours = Long.parseLong(timeoutStr);
+                Date defaultDueDate = new Date(System.currentTimeMillis() + (Duration.ofHours(timeoutHours).getSeconds() * 1000));
+                delegateTask.setDueDate(defaultDueDate);
+                log.info("任务[{}] 未配置有效定时器，已设置默认超时时间: {} 小时", delegateTask.getName(), timeoutStr);
+            } catch (NumberFormatException e) {
+                log.error("解析 BPM 任务超时配置失败，配置值不是有效的数字: {}", timeoutStr, e);
+            }
         }
     }
 }

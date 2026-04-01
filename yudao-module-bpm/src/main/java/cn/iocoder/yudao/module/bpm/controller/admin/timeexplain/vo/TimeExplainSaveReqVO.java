@@ -58,6 +58,8 @@ public class TimeExplainSaveReqVO {
     @Schema(description = "目的地")
     private String endPlace;
 
+    @Schema(description = "下一节点审批人", example = "assist")
+    private Map<String, List<Long>> nextNodeAssignees;
 
 
 

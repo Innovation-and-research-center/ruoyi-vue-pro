@@ -1,21 +1,27 @@
 package cn.iocoder.yudao.module.system.framework.sms.core.client.impl;
 
 
+import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.lang.Assert;
 import cn.hutool.core.map.MapUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.extra.spring.SpringUtil;
 import cn.iocoder.yudao.framework.common.core.KeyValue;
 import cn.iocoder.yudao.framework.common.util.collection.MapUtils;
 import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
+import cn.iocoder.yudao.module.system.dal.dataobject.sms.SmsTemplateDO;
+import cn.iocoder.yudao.module.system.dal.mysql.sms.SmsTemplateMapper;
 import cn.iocoder.yudao.module.system.framework.sms.core.client.dto.SmsReceiveRespDTO;
 import cn.iocoder.yudao.module.system.framework.sms.core.client.dto.SmsSendRespDTO;
 import cn.iocoder.yudao.module.system.framework.sms.core.client.dto.SmsTemplateRespDTO;
 import cn.iocoder.yudao.module.system.framework.sms.core.enums.SmsTemplateAuditStatusEnum;
 import cn.iocoder.yudao.module.system.framework.sms.core.property.SmsChannelProperties;
+import com.alibaba.fastjson.JSON;
 import com.alibaba.xxpt.gateway.shared.api.request.OapiMessageWorkNotificationRequest;
 import com.alibaba.xxpt.gateway.shared.api.response.OapiMessageWorkNotificationResponse;
 import com.alibaba.xxpt.gateway.shared.client.http.ExecutableClient;
 import com.alibaba.xxpt.gateway.shared.client.http.IntelligentGetClient;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.HashMap;
@@ -35,8 +41,8 @@ public class DGWORKSmsClient extends  AbstractSmsClient {
     }
     private void initDingClient() {
         executableClient = ExecutableClient.getInstance();
-        executableClient.setDomainName("openplatform.dg-work.cn");
-        executableClient.setProtocal("https");
+        executableClient.setDomainName("10.130.146.149:28082");
+        executableClient.setProtocal("http");
         // 复用系统后台配置的 apiKey 和 apiSecret
         executableClient.setAccessKey(properties.getApiKey());
         executableClient.setSecretKey(properties.getApiSecret());
@@ -44,33 +50,34 @@ public class DGWORKSmsClient extends  AbstractSmsClient {
     }
     @Override
     public SmsSendRespDTO sendSms(Long logId, String mobile, String apiTemplateId, List<KeyValue<String, Object>> templateParams) throws Throwable {
+        SmsTemplateMapper smsTemplateMapper = SpringUtil.getBean(SmsTemplateMapper.class);
+
+        SmsTemplateDO templateDO = smsTemplateMapper.selectOne(
+                new LambdaQueryWrapper<SmsTemplateDO>().eq(SmsTemplateDO::getApiTemplateId, apiTemplateId)
+        );
+
+        String content = templateDO != null ? templateDO.getContent() : "";
+        if (CollUtil.isNotEmpty(templateParams) && StrUtil.isNotBlank(content)) {
+            for (KeyValue<String, Object> param : templateParams) {
+                String placeholder = "{" + param.getKey() + "}";
+                String value = param.getValue() != null ? String.valueOf(param.getValue()) : "";
+                content = StrUtil.replace(content, placeholder, value);
+            }
+        }
+
         IntelligentGetClient intelligentGetClient = executableClient.newIntelligentGetClient("/message/workNotification");
         OapiMessageWorkNotificationRequest request = new OapiMessageWorkNotificationRequest();
-
-        // 1. 接收人：在政务钉钉中通常是手机号或者专有的 accountId
         request.setReceiverIds(mobile);
-
-        // 2. 租户ID：巧妙地复用后台短信渠道配置里的“短信签名(Signature)”字段
-        // 这样就可以在前端页面配置，不用把租户ID写死在代码里
         request.setTenantId(properties.getSignature());
-
-        // 3. 业务消息id：使用系统生成的发送日志ID，方便后续在 OA 系统中排查
         request.setBizMsgId(String.valueOf(logId));
-
-        // 4. 构造消息内容 Msg (组装为钉钉要求的 JSON 格式)
-        // 这里以 text 文本消息为例。你也可以根据前端传来的模板参数，组装 OABody 或 Markdown
-        String textContent = String.format("【OA系统通知】\n消息类型：%s\n详细内容：%s",
-                apiTemplateId, MapUtils.convertMap(templateParams));
-
+//        String textContent = String.format("【OA系统通知】\n消息类型：%s\n详细内容：%s",
+//                apiTemplateId, MapUtils.convertMap(templateParams));
         Map<String, Object> msgMap = new HashMap<>();
         msgMap.put("msgtype", "text");
-        msgMap.put("text", MapUtil.builder().put("content", textContent).build());
+        msgMap.put("text", MapUtil.builder().put("content", content).build());
         request.setMsg(JsonUtils.toJsonString(msgMap));
-
-        // 5. 执行发送
         OapiMessageWorkNotificationResponse response = intelligentGetClient.get(request);
-
-        // 6. 解析结果并返回给 ruoyi-vue-pro 框架
+        System.out.println("钉钉接口返回详情: " + JSON.toJSONString(response));
         boolean success = response != null && response.getSuccess();
         String errCode = response != null ? String.valueOf(response.getCode()) : "500";
         String errMsg = response != null ? response.getMessage() : "请求政务钉钉无响应";

@@ -8,6 +8,7 @@ import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
+import cn.iocoder.yudao.module.bpm.service.commentattach.CommentAttachService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
 import jodd.util.StringUtil;
@@ -48,12 +49,17 @@ public class XzssServiceImpl implements XzssService {
 
     public static final String PROCESS_KEY = XZSS;
 
+    public static final String DOC_TYPE_XZSS = "XZSS";
+
     @Resource
     private XzssMapper xzssMapper;
     @Resource
     private XzssKzMapper xzssKzMapper;
     @Resource
     private BpmProcessInstanceApi processInstanceApi;
+
+    @Resource
+    private CommentAttachService commentAttachService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -68,8 +74,9 @@ public class XzssServiceImpl implements XzssService {
         xzssMapper.insert(xzss);
         // 插入子表
         createXzssKz(xzss.getXmGuid(), createReqVO.getXzssKz());
+        commentAttachService.saveCommentAttachList(guidString, DOC_TYPE_XZSS, createReqVO.getFileList());
         Map<String, Object> processInstanceVariables = new HashMap<>();
-        String customName = StringUtil.isEmpty(createReqVO.getSqr()) ? "行政诉讼":createReqVO.getSqr()+"的行政诉讼";
+        String customName = StringUtil.isEmpty(createReqVO.getSqr()) ? "行政诉讼":createReqVO.getSqr();
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
         String timeKey = "xzss";
@@ -101,6 +108,8 @@ public class XzssServiceImpl implements XzssService {
 
         // 更新子表
         updateXzssKz(updateReqVO.getXmGuid(), updateReqVO.getXzssKz());
+
+        commentAttachService.saveCommentAttachList(updateReqVO.getXmGuid(), DOC_TYPE_XZSS, updateReqVO.getFileList());
     }
 
     @Override

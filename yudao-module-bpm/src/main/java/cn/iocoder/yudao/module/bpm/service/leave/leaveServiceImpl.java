@@ -6,6 +6,7 @@ import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.system.dal.dataobject.permission.RoleDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.service.permission.PermissionService;
@@ -20,6 +21,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.TemporalAdjusters;
 import java.util.*;
 import cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.*;
@@ -59,6 +61,7 @@ public class LeaveServiceImpl implements LeaveService {
 
     @Resource
     private PermissionService permissionService;
+
 
     @Override
     public Long createLeave(Long userId,LeaveSaveReqVO createReqVO) {
@@ -123,9 +126,22 @@ public class LeaveServiceImpl implements LeaveService {
         {
             days_condition3 = "3_5";
         }
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy年MM月dd日");
+        String timeStr = "";
+        if (createReqVO.getQxjStartDate() != null) {
+            timeStr += "(" + createReqVO.getQxjStartDate().format(formatter) + "-";
+        } else {
+            timeStr += "无";
+        }
 
+        if (createReqVO.getQxjEndDate() != null) {
+            timeStr += createReqVO.getQxjEndDate().format(formatter) + ")";
+        } else {
+            timeStr += "无";
+        }
+        String dictLabel = DictFrameworkUtils.parseDictDataLabel("leave_type",createReqVO.getQxjType());
         //自定义标题
-        String customName = user.getNickname() + "的请假申请";
+        String customName = user.getNickname() + dictLabel+timeStr;
 
         // 发起 BPM 流程
         Map<String, Object> processInstanceVariables = new HashMap<>();
@@ -136,6 +152,7 @@ public class LeaveServiceImpl implements LeaveService {
         String timeoutLabel = DictFrameworkUtils.parseDictDataLabel("bpm_process_timeout_config", timeKey);
         processInstanceVariables.put(PROCESS_FINISH_TIME, timeoutLabel);
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
+        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
 
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)

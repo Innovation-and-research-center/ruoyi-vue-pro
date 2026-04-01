@@ -82,7 +82,7 @@ public class XzssController {
     @GetMapping("/get")
     @Operation(summary = "获得行政诉讼")
     @Parameter(name = "id", description = "编号", required = true, example = "1024")
-    @PreAuthorize("@ss.hasPermission('bpm:xzss:query')")
+//    @PreAuthorize("@ss.hasPermission('bpm:xzss:query')")
     public CommonResult<XzssRespVO> getXzss(@RequestParam("id") Long id) {
         XzssDO xzss = xzssService.getXzss(id);
         if (xzss == null) {
@@ -134,7 +134,6 @@ public class XzssController {
     @GetMapping("/xzss-kz/get-by-xm-guid")
     @Operation(summary = "获得行政诉讼拓展")
     @Parameter(name = "xmGuid", description = "备用主键")
-    @PreAuthorize("@ss.hasPermission('bpm:xzss:query')")
     public CommonResult<XzssKzDO> getXzssKzByXmGuid(@RequestParam("xmGuid") String xmGuid) {
         return success(xzssService.getXzssKzByXmGuid(xmGuid));
     }
