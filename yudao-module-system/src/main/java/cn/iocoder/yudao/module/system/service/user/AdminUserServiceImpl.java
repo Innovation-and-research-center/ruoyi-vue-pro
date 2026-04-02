@@ -564,4 +564,57 @@ public class AdminUserServiceImpl implements AdminUserService {
         return passwordEncoder.encode(password);
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    @LogRecord(type = SYSTEM_USER_TYPE, subType = SYSTEM_USER_CREATE_SUB_TYPE, bizNo = "{{#user.id}}",
+            success = SYSTEM_USER_CREATE_SUCCESS)
+    public Long createSsoUser(String username, String mobile, String nickname, String dingId) {
+        // 1.1 校验账户配额
+//        tenantService.handleTenantInfo(tenant -> {
+//            long count = userMapper.selectCount();
+//            if (count >= tenant.getAccountCount()) {
+//                throw exception(USER_COUNT_MAX, tenant.getAccountCount());
+//            }
+//        });
+
+        // 1.2 校验正确性 (仅校验账号和手机号的唯一性)
+//        validateUserForCreateOrUpdate(null, username, mobile, null, null, null);
+
+        // 2.1 构建并插入新用户
+        AdminUserDO user = new AdminUserDO();
+        user.setUsername(username);
+        user.setMobile(mobile);
+        user.setNickname(StrUtil.isNotBlank(nickname) ? nickname : username);
+        user.setDingId(dingId);
+        user.setStatus(CommonStatusEnum.ENABLE.getStatus());
+
+        // 2.2 获取系统初始密码
+        String initPassword = configApi.getConfigValueByKey(USER_INIT_PASSWORD_KEY);
+        if (StrUtil.isEmpty(initPassword)) {
+            initPassword = "123456";
+        }
+        user.setPassword(encodePassword(initPassword));
+
+        // 2.3 插入数据库
+        userMapper.insert(user);
+
+        // 2.4 分配“普通角色” (假设 ID 为 2L)
+        Set<Long> defaultRoleIds = new HashSet<>(Collections.singletonList(2L));
+        permissionService.assignUserRole(user.getId(), defaultRoleIds);
+
+        LogRecordContext.putVariable("user", user);
+        return user.getId();
+    }
+
+    @Override
+    public void updateUserDingId(Long id, String dingId) {
+        if (id == null || StrUtil.isBlank(dingId)) {
+            return;
+        }
+        AdminUserDO updateObj = new AdminUserDO();
+        updateObj.setId(id);
+        updateObj.setDingId(dingId);
+        userMapper.updateById(updateObj);
+    }
+
 }

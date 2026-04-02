@@ -1189,6 +1189,11 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 if (finalAssigneeMap == null) {
                     finalAssigneeMap = new HashMap<>();
                 }
+                Map<String, Long> updateDateMap = (Map<String, Long>) variables.get(
+                        BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_UPDATE_TIME);
+                if (updateDateMap == null) {
+                    updateDateMap = new HashMap<>();
+                }
 
                 // newAssignees: 前端本次提交新选择的人员名单 (例如：[张三, 李四])
                 List<Long> newAssignees = nextAssignees != null ? nextAssignees.get(nodeId) : null;
@@ -1196,9 +1201,48 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                     continue;
                 }
 
-                List<Long> historyAssignees = finalAssigneeMap.getOrDefault(nodeId, new ArrayList<>());
-                Set<Long> mergedSet = new LinkedHashSet<>(historyAssignees);
-                mergedSet.addAll(newAssignees);
+                Long lastUpdateTime = updateDateMap.get(nodeId);
+                boolean isDirtyData = false;
+                if (lastUpdateTime == null) {
+                    isDirtyData = true;
+                } else {
+                    Task currentTask = taskService.createTaskQuery().taskId(taskId).singleResult();
+                    Execution taskExecution = runtimeService.createExecutionQuery()
+                            .executionId(currentTask.getExecutionId())
+                            .singleResult();
+                    String currentExecutionId = taskExecution.getId();
+                    String parentExecutionId = taskExecution.getParentId();
+                    // 【关键改动】：获取当前节点（审批环节）在本次循环中的最早进入时间，而不是当前子任务的创建时间！
+                    List<HistoricActivityInstance> activeActivities = historyService.createHistoricActivityInstanceQuery()
+                            .processInstanceId(processInstanceId)
+                            .activityId(taskDefinitionKey) // 当前操作人所在的节点ID (例如：Activity_1bm8630)
+                            .unfinished()
+                            .orderByHistoricActivityInstanceStartTime().asc() // 取最早启动的那一条
+                            .list();
+
+                    long nodeEntryTime = System.currentTimeMillis(); // 兜底时间
+                    for (HistoricActivityInstance activity : activeActivities) {
+                        String actExecId = activity.getExecutionId();
+                        // 判定条件：只要这个活动的执行流等于“当前任务执行流”或“当前父级(会签根)执行流”，它就属于本支线！
+                        if (currentExecutionId.equals(actExecId) ||
+                                (parentExecutionId != null && parentExecutionId.equals(actExecId))) {
+                            nodeEntryTime = activity.getStartTime().getTime();
+                            break; // 因为前面查库已经 asc 排序了，命中的第一个必然是本支线最早进入的时间
+                        }
+                    }
+
+                    if (lastUpdateTime < nodeEntryTime) {
+                        isDirtyData = true;
+                    }
+                }
+                Set<Long> branchWantedSet = new LinkedHashSet<>();
+                if (isDirtyData) {
+                    branchWantedSet.addAll(newAssignees); // 脏数据，直接覆盖
+                } else {
+                    List<Long> existingAssignees = finalAssigneeMap.getOrDefault(nodeId, new ArrayList<>());
+                    branchWantedSet.addAll(existingAssignees);
+                    branchWantedSet.addAll(newAssignees); // 并发合并
+                }
 
                 List<Task> runningTasks = taskService.createTaskQuery()
                         .processInstanceId(processInstanceId)
@@ -1219,7 +1263,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                     // 2. 找出需要真正创建新任务的人员（前端传来的名单 - 正在运行的名单）
                     // 重点：这里不去重历史已完成的人员！只要不在运行中，就重新生成！
                     Set<Long> tasksToCreate = new LinkedHashSet<>();
-                    for (Long userId : mergedSet) {
+                    for (Long userId : branchWantedSet) {
                         if (!runningUserIds.contains(String.valueOf(userId))) {
                             tasksToCreate.add(userId);
                         }
@@ -1237,11 +1281,14 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                     // ==========================================
                     // 节点还没走到，直接对传入的数组做个基础去重（防止前端传 [张三, 张三]），然后埋入变量即可
 //                    variables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, finalAssigneeMap);
-                    finalAssigneeMap.put(nodeId, new ArrayList<>(mergedSet));
+//                    finalAssigneeMap.put(nodeId, new ArrayList<>(mergedSet));
+                    finalAssigneeMap.put(nodeId, new ArrayList<>(branchWantedSet));
                 }
 
+                updateDateMap.put(nodeId, System.currentTimeMillis());
                 // 统一存回变量池
                 variables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, finalAssigneeMap);
+                variables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_UPDATE_TIME, updateDateMap);
             }
         }
         return variables;

@@ -96,4 +96,6 @@ public class AdminUserDO extends TenantBaseDO {
     @TableField(exist = false)
     private String deptName;
 
+    private String dingId;
+
 }

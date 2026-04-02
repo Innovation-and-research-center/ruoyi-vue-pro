@@ -223,4 +223,15 @@ public interface AdminUserService {
      */
     boolean isPasswordMatch(String rawPassword, String encodedPassword);
 
+
+    /**
+     * 单点登录自动创建用户
+     */
+    Long createSsoUser(String username, String mobile, String nickname, String dingId);
+
+    /**
+     * 更新用户的钉钉 ID
+     */
+    void updateUserDingId(Long id, String dingId);
+
 }
