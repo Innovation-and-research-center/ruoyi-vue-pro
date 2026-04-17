@@ -18,6 +18,10 @@ public class BpmProcessInstanceUnifiedRespVO {
     private String sourceUnit;
     private String urgencyDegree;
     private String deadlineDate;
+    private Integer processResult;
+    private Integer processStatus;
+
+    private String processReason;
 
     // --- 运行时信息 (仅进行中流程有) ---
     private String currTaskName;       // 在办环节 (当前任务节点名称)

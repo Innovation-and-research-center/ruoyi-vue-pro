@@ -34,14 +34,14 @@ public interface ConfflowService {
      *
      * @param id 编号
      */
-    void deleteConfflow(Long id);
+    void deleteConfflow(Long id,String reason);
 
     /**
     * 批量删除会议报告单
     *
     * @param ids 编号
     */
-    void deleteConfflowListByIds(List<Long> ids);
+    void deleteConfflowListByIds(List<Long> ids,String reason);
 
     /**
      * 获得会议报告单
@@ -58,5 +58,7 @@ public interface ConfflowService {
      * @return 会议报告单分页
      */
     PageResult<ConfflowDO> getConfflowPage(ConfflowPageReqVO pageReqVO);
+
+    void updateConfflowStatus(Long id, Integer status);
 
 }

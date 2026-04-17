@@ -7,7 +7,10 @@ import cn.iocoder.yudao.framework.common.util.date.DateUtils;
 import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocDO;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
+import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import jodd.util.StringUtil;
 import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
@@ -26,6 +29,7 @@ import cn.iocoder.yudao.module.bpm.dal.mysql.confflow.ConfflowMapper;
 
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
 
+import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.CONFLOW_REPORT;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
 import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.*;
@@ -46,6 +50,9 @@ public class ConfflowServiceImpl implements ConfflowService {
 
     @Resource
     private BpmProcessInstanceApi processInstanceApi;
+
+    @Resource
+    private BpmInvalidateHelper bpmInvalidateHelper;
 
     @Override
     public Long createConfflow(Long userId,ConfflowSaveReqVO createReqVO) {
@@ -90,18 +97,48 @@ public class ConfflowServiceImpl implements ConfflowService {
     }
 
     @Override
-    public void deleteConfflow(Long id) {
+    public void deleteConfflow(Long id,String reason) {
         // 校验存在
-        validateConfflowExists(id);
-        // 删除
-        confflowMapper.deleteById(id);
+        ConfflowDO confflow = confflowMapper.selectById(id);
+        if(confflow == null){
+            throw exception(CONFFLOW_NOT_EXISTS);
+        }
+        if(StringUtil.isBlank(confflow.getProcessInstanceId())){
+            ConfflowDO updateObj = new ConfflowDO()
+                    .setId(id)
+                    .setStatus(BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue())
+                    .setCancelReason(reason);
+            confflowMapper.updateById(updateObj);
+        }
+        else {
+            Integer currentStatus = confflow.getStatus() != null ? Integer.valueOf(confflow.getStatus()) : null;
+            Long userId = getLoginUserId();
+            bpmInvalidateHelper.executeInvalidate(
+                    userId,
+                    confflow.getProcessInstanceId(),
+                    currentStatus,
+                    reason,
+                    () -> {
+                        ConfflowDO updateObj = new ConfflowDO()
+                                .setId(id)
+                                .setStatus(BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue()) // 设置为 5(已作废)
+                                .setCancelReason(reason); // 写入作废原因
+                        confflowMapper.updateById(updateObj);
+                    }
+            );
+
+
+        }
+
     }
 
     @Override
-        public void deleteConfflowListByIds(List<Long> ids) {
+    public void deleteConfflowListByIds(List<Long> ids,String reason) {
         // 删除
-        confflowMapper.deleteByIds(ids);
+        for (Long id : ids) {
+            deleteConfflow( id, reason);
         }
+    }
 
 
     private void validateConfflowExists(Long id) {
@@ -119,5 +156,20 @@ public class ConfflowServiceImpl implements ConfflowService {
     public PageResult<ConfflowDO> getConfflowPage(ConfflowPageReqVO pageReqVO) {
         return confflowMapper.selectPage(pageReqVO);
     }
+
+    @Override
+    public void updateConfflowStatus(Long id, Integer status) {
+        ConfflowDO confflow = confflowMapper.selectById(id);
+        if (confflow == null) {
+            return;
+        }
+        if (BpmProcessInstanceStatusEnum.INVALID.getStatus().equals(Integer.valueOf(confflow.getStatus()))) {
+            return;
+        }
+        // 正常更新状态
+        confflowMapper.updateById(new ConfflowDO().setId(id).setStatus(status.shortValue()));
+    }
+
+
 
 }

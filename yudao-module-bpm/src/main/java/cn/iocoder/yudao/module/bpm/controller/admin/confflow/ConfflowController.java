@@ -7,6 +7,7 @@ import cn.iocoder.yudao.module.system.api.dept.DeptApi;
 import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
+import io.swagger.v3.oas.annotations.Parameters;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -74,18 +75,26 @@ public class ConfflowController {
     @DeleteMapping("/delete")
     @Operation(summary = "删除会议报告单")
     @Parameter(name = "id", description = "编号", required = true)
-//    @PreAuthorize("@ss.hasPermission('bpm:confflow:delete')")
-    public CommonResult<Boolean> deleteConfflow(@RequestParam("id") Long id) {
-        confflowService.deleteConfflow(id);
+    @PreAuthorize("@ss.hasPermission('bpm:confflow:delete')")
+    @Parameters({
+            @Parameter(name = "id", description = "编号", required = true),
+            @Parameter(name = "reason", description = "作废原因", required = true)
+    })
+    public CommonResult<Boolean> deleteConfflow(@RequestParam("id") Long id,@RequestParam("reason") String reason) {
+        confflowService.deleteConfflow(id,reason);
         return success(true);
     }
 
     @DeleteMapping("/delete-list")
     @Parameter(name = "ids", description = "编号", required = true)
     @Operation(summary = "批量删除会议报告单")
-//                @PreAuthorize("@ss.hasPermission('bpm:confflow:delete')")
-    public CommonResult<Boolean> deleteConfflowList(@RequestParam("ids") List<Long> ids) {
-        confflowService.deleteConfflowListByIds(ids);
+    @Parameters({
+            @Parameter(name = "ids", description = "编号列表", required = true),
+            @Parameter(name = "reason", description = "作废原因", required = true)
+    })
+    @PreAuthorize("@ss.hasPermission('bpm:confflow:delete')")
+    public CommonResult<Boolean> deleteConfflowList(@RequestParam("ids") List<Long> ids,@RequestParam("reason") String reason) {
+        confflowService.deleteConfflowListByIds(ids,reason);
         return success(true);
     }
 

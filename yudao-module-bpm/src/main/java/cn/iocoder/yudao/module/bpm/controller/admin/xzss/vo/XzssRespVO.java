@@ -137,4 +137,8 @@ public class XzssRespVO {
     @Schema(description = "历史诉讼列表")
     private List<XzssRespVO> historyXzssList;
 
+    private Short status;
+
+    private String cancelReason;
+
 }

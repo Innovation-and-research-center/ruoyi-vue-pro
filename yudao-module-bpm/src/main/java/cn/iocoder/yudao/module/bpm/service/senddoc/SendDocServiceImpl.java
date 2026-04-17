@@ -1,10 +1,14 @@
 package cn.iocoder.yudao.module.bpm.service.senddoc;
 
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocDO;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
+import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import jodd.util.StringUtil;
@@ -25,6 +29,7 @@ import cn.iocoder.yudao.module.bpm.dal.mysql.senddoc.SendDocMapper;
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList;
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.diffList;
+import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.SEND;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
 import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_CUSTOM_NAME;
@@ -44,6 +49,9 @@ public class SendDocServiceImpl implements SendDocService {
 
     @Resource
     private BpmProcessInstanceApi processInstanceApi;
+
+    @Resource
+    private BpmInvalidateHelper bpmInvalidateHelper;
 
     @Override
     public Long createSendDoc(Long userId,SendDocSaveReqVO createReqVO) {
@@ -76,18 +84,44 @@ public class SendDocServiceImpl implements SendDocService {
     }
 
     @Override
-    public void deleteSendDoc(Long id) {
+    public void deleteSendDoc(Long id,String reason) {
         // 校验存在
-        validateSendDocExists(id);
-        // 删除
-        sendDocMapper.deleteById(id);
+        SendDocDO sendDoc = sendDocMapper.selectById(id);
+        if (sendDoc == null) {
+            throw exception(SEND_DOC_NOT_EXISTS);
+        }
+        if (StrUtil.isEmpty(sendDoc.getProcessInstanceId())) {
+            SendDocDO updateObj = new SendDocDO()
+                    .setId(id)
+                    .setStatus(BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue()) // 设置为 5(已作废)
+                    .setCancelReason(reason);
+            sendDocMapper.updateById(updateObj);
+            return;
+        }
+        Long userId = getLoginUserId();
+        Integer currentStatus = sendDoc.getStatus() != null ? Integer.valueOf(sendDoc.getStatus()) : null;
+
+        bpmInvalidateHelper.executeInvalidate(
+                userId,
+                sendDoc.getProcessInstanceId(),
+                currentStatus,
+                reason,
+                () -> {
+                    SendDocDO updateObj = new SendDocDO()
+                            .setId(id)
+                            .setStatus(BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue()) // 设置为 5(已作废)
+                            .setCancelReason(reason); // 写入作废原因
+                    sendDocMapper.updateById(updateObj);
+                }
+        );
     }
 
     @Override
-        public void deleteSendDocListByIds(List<Long> ids) {
-        // 删除
-        sendDocMapper.deleteByIds(ids);
+    public void deleteSendDocListByIds(List<Long> ids,String reason) {
+        for (Long id : ids) {
+            deleteSendDoc( id, reason);
         }
+    }
 
 
     private void validateSendDocExists(Long id) {
@@ -112,6 +146,19 @@ public class SendDocServiceImpl implements SendDocService {
     @Override
     public PageResult<SendDocDO> getSendDocPage(SendDocPageReqVO pageReqVO) {
         return sendDocMapper.selectPage(pageReqVO);
+    }
+
+    @Override
+    public void updateSendDocStatus(Long id, Integer status) {
+        SendDocDO send = sendDocMapper.selectById(id);
+        if (send == null) {
+            return;
+        }
+        if (BpmProcessInstanceStatusEnum.INVALID.getStatus().equals(Integer.valueOf(send.getStatus()))) {
+            return;
+        }
+        // 正常更新状态
+        sendDocMapper.updateById(new SendDocDO().setId(id).setStatus(status.shortValue()));
     }
 
 }

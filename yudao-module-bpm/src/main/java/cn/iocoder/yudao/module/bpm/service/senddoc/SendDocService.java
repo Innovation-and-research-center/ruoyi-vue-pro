@@ -34,14 +34,14 @@ public interface SendDocService {
      *
      * @param id 编号
      */
-    void deleteSendDoc(Long id);
+    void deleteSendDoc(Long id,String reason);
 
     /**
     * 批量删除发文
     *
     * @param ids 编号
     */
-    void deleteSendDocListByIds(List<Long> ids);
+    void deleteSendDocListByIds(List<Long> ids,String reason);
 
     /**
      * 获得发文
@@ -58,5 +58,7 @@ public interface SendDocService {
      * @return 发文分页
      */
     PageResult<SendDocDO> getSendDocPage(SendDocPageReqVO pageReqVO);
+
+    void updateSendDocStatus(Long id, Integer status);
 
 }

@@ -3,6 +3,7 @@ package cn.iocoder.yudao.module.bpm.controller.admin.receivedoc;
 import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocAttachDO;
+import io.swagger.v3.oas.annotations.Parameters;
 import jodd.util.StringUtil;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
@@ -90,17 +91,25 @@ public class ReceiveDocController {
     @Operation(summary = "删除收文")
     @Parameter(name = "id", description = "编号", required = true)
     @PreAuthorize("@ss.hasPermission('bpm:receive-doc:delete')")
-    public CommonResult<Boolean> deleteReceiveDoc(@RequestParam("id") Long id) {
-        receiveDocService.deleteReceiveDoc(id);
+    @Parameters({
+            @Parameter(name = "id", description = "编号", required = true),
+            @Parameter(name = "reason", description = "作废原因", required = true)
+    })
+    public CommonResult<Boolean> deleteReceiveDoc(@RequestParam("id") Long id,@RequestParam("reason") String reason) {
+        receiveDocService.deleteReceiveDoc(id,reason);
         return success(true);
     }
 
     @DeleteMapping("/delete-list")
     @Parameter(name = "ids", description = "编号", required = true)
     @Operation(summary = "批量删除收文")
-                @PreAuthorize("@ss.hasPermission('bpm:receive-doc:delete')")
-    public CommonResult<Boolean> deleteReceiveDocList(@RequestParam("ids") List<Long> ids) {
-        receiveDocService.deleteReceiveDocListByIds(ids);
+    @PreAuthorize("@ss.hasPermission('bpm:receive-doc:delete')")
+    @Parameters({
+            @Parameter(name = "ids", description = "编号列表", required = true),
+            @Parameter(name = "reason", description = "作废原因", required = true)
+    })
+    public CommonResult<Boolean> deleteReceiveDocList(@RequestParam("ids") List<Long> ids,@RequestParam("reason") String reason) {
+        receiveDocService.deleteReceiveDocListByIds(ids,reason);
         return success(true);
     }
 

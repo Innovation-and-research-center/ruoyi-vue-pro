@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.system.service.holiday;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import javax.validation.*;
 
@@ -66,5 +67,7 @@ public interface HolidayService {
     HolidayImportRespVO importHolidayList(List<HolidayImportExcelVO> importHolidays, boolean isUpdateSupport);
 
     List<Map<String, String>> getAllHolidaySummary();
+
+    LocalDateTime addWorkingDays(LocalDateTime startDate, int workDays);
 
 }

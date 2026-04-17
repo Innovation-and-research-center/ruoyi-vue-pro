@@ -1,17 +1,26 @@
 package cn.iocoder.yudao.module.bpm.service.leave;
 
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
 import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
+import cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
+import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
+import cn.iocoder.yudao.module.bpm.service.task.BpmProcessInstanceService;
+import cn.iocoder.yudao.module.bpm.service.task.BpmTaskService;
+import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
+import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
 import cn.iocoder.yudao.module.system.dal.dataobject.permission.RoleDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.service.permission.PermissionService;
 import cn.iocoder.yudao.module.system.service.permission.RoleService;
 import cn.iocoder.yudao.module.system.service.user.AdminUserService;
+import org.flowable.task.api.Task;
 import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -24,6 +33,8 @@ import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.TemporalAdjusters;
 import java.util.*;
+import java.util.stream.Collectors;
+
 import cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
@@ -62,6 +73,17 @@ public class LeaveServiceImpl implements LeaveService {
     @Resource
     private PermissionService permissionService;
 
+    @Resource
+    private BpmTaskService taskService;
+
+    @Resource
+    private AdminUserApi adminUserApi;
+
+    @Resource
+    private BpmProcessInstanceService processInstanceService;
+
+    @Resource
+    private BpmInvalidateHelper bpmInvalidateHelper;
 
     @Override
     public Long createLeave(Long userId,LeaveSaveReqVO createReqVO) {
@@ -174,15 +196,31 @@ public class LeaveServiceImpl implements LeaveService {
     }
 
     @Override
-    public void deleteLeave(Long id) {
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteLeave(Long id,String reason) {
         // 校验存在
-        validateLeaveExists(id);
-        // 删除
-        leaveMapper.deleteById(id);
+        LeaveDO leave = leaveMapper.selectById(id);
+        if (leave == null) {
+            throw exception(LEAVE_NOT_EXISTS);
+        }
+        Long userId = getLoginUserId();
+        bpmInvalidateHelper.executeInvalidate(
+                userId,
+                leave.getProcessInstanceId(),
+                Integer.valueOf(leave.getSpzt()),
+                reason,
+                () -> {
+                    // 使用你的新枚举：INVALID (5, 已作废)
+                    leaveMapper.updateById(new LeaveDO()
+                            .setId(id)
+                            .setSpzt(BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue())
+                            .setReason(reason));
+                }
+        );
     }
 
     @Override
-        public void deleteLeaveListByIds(List<Long> ids) {
+        public void deleteLeaveListByIds(List<Long> ids,String reason) {
         // 删除
         leaveMapper.deleteByIds(ids);
         }
@@ -207,7 +245,14 @@ public class LeaveServiceImpl implements LeaveService {
 
     @Override
     public void updateLeaveStatus(Long id, Integer status) {
-        validateLeaveExists(id);
+        LeaveDO leave = leaveMapper.selectById(id);
+        if (leave == null) {
+            return;
+        }
+        if (BpmProcessInstanceStatusEnum.INVALID.getStatus().equals(Integer.valueOf(leave.getSpzt()))) {
+            return;
+        }
+        // 正常更新状态
         leaveMapper.updateById(new LeaveDO().setId(id).setSpzt(status.shortValue()));
     }
 
@@ -246,7 +291,7 @@ public class LeaveServiceImpl implements LeaveService {
 
 
     @Override
-    public List<LeaveDO> getLeaveDetailList(LeaveSummaryReqVO reqVO) {
+    public List<LeaveHistoryRespVO> getLeaveDetailList(LeaveSummaryReqVO reqVO) {
         // 复用之前的年月转时间范围逻辑
         if (reqVO.getYear() != null) {
             int year = reqVO.getYear();
@@ -272,7 +317,152 @@ public class LeaveServiceImpl implements LeaveService {
             reqVO.setBeginTime(beginTime);
             reqVO.setEndTime(endTime);
         }
-        return leaveMapper.selectDetailList(reqVO);
+        List<LeaveDO> detailList = leaveMapper.selectDetailList(reqVO);
+        if (CollUtil.isEmpty(detailList)) {
+            return Collections.emptyList();
+        }
+
+        // 2. 转换并填充 BPM 流程信息（复用历史记录的逻辑）
+        List<LeaveHistoryRespVO> list = BeanUtils.toBean(detailList, LeaveHistoryRespVO.class);
+        fillBpmInfoBatch(list);
+
+        return list;
+//        return leaveMapper.selectDetailList(reqVO);
+    }
+
+    @Override
+    public PageResult<LeaveHistoryRespVO> getLeaveHistoryPage(LeavePageReqVO pageReqVO) {
+        // 1. 强制过滤当前用户
+        pageReqVO.setUserId(String.valueOf(SecurityFrameworkUtils.getLoginUserId()));
+
+        // 2. 查询数据库分页
+        PageResult<LeaveDO> pageResult = leaveMapper.selectPage(pageReqVO);
+        if (CollUtil.isEmpty(pageResult.getList())) {
+            return PageResult.empty();
+        }
+
+        // 3. 转换并填充 BPM 信息
+        List<LeaveHistoryRespVO> list = BeanUtils.toBean(pageResult.getList(), LeaveHistoryRespVO.class);
+
+        fillBpmInfoBatch(list);
+
+        return new PageResult<>(list, pageResult.getTotal());
+    }
+
+    private void cancelBpmProcessInstance(String processInstanceId, String reason) {
+        try {
+            // 【方式一】使用芋道源码封装的 Service (推荐)
+            // 传入登录用户的 ID 和 作废请求参数
+            processInstanceService.cancelProcessInstanceByAdmin(SecurityFrameworkUtils.getLoginUserId(),
+                    new cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmProcessInstanceCancelReqVO()
+                            .setId(processInstanceId).setReason(reason));
+
+            // 【方式二】如果方式一的方法签名在你的版本中不同，或者引入包报错，直接使用 Flowable 原生 API (无视权限直接强制作废)
+            // runtimeService.deleteProcessInstance(processInstanceId, reason);
+        } catch (Exception e) {
+            // 如果流程已经结束（如已通过、已拒绝），调用作废可能会抛出异常。
+            // 这里可以根据实际业务需求决定是吃掉异常还是抛出阻断删除
+//            log.warn("作废流程实例失败, 流程可能已结束. processInstanceId: {}", processInstanceId, e);
+        }
+    }
+
+    private void fillBpmInfoBatch(List<LeaveHistoryRespVO> list) {
+        if (CollUtil.isEmpty(list)) {
+            return;
+        }
+
+        // 1. 优先从业务状态判断，收集真正处于“审批中”(状态为 1) 的流程实例 ID
+        List<String> runningProcessInstanceIds = new ArrayList<>();
+
+        for (LeaveHistoryRespVO vo : list) {
+            // 获取实际的业务状态
+            Integer status = Integer.valueOf(vo.getSpzt());
+
+            // 根据你提供的枚举进行精准拦截
+            if (status == null || status == -1) {
+                vo.setCurrentNodeName("未开始");
+                vo.setCurrentAssigneeNames("-");
+            } else if (status == 2) {
+                vo.setCurrentNodeName("审批通过");
+                vo.setCurrentAssigneeNames("-");
+            } else if (status == 3) {
+                vo.setCurrentNodeName("审批不通过");
+                vo.setCurrentAssigneeNames("-");
+            } else if (status == 4) {
+                vo.setCurrentNodeName("已取消");
+                vo.setCurrentAssigneeNames("-");
+            } else if (status == 1) {
+                // 【核心】只有处于“审批中”的状态，才去收集 ProcessInstanceId
+                if (StrUtil.isNotBlank(vo.getProcessInstanceId())) {
+                    runningProcessInstanceIds.add(vo.getProcessInstanceId());
+                } else {
+                    vo.setCurrentNodeName("数据异常(无流程ID)");
+                    vo.setCurrentAssigneeNames("-");
+                }
+            }
+        }
+
+        // 2. 如果当前页没有任何处于“审批中”的请假单，直接结束方法！(0 次查询 BPM 引擎)
+        if (CollUtil.isEmpty(runningProcessInstanceIds)) {
+            return;
+        }
+
+        // 去重，防止有脏数据重复查询
+        runningProcessInstanceIds = runningProcessInstanceIds.stream().distinct().collect(Collectors.toList());
+
+        // 3. 批量获取运行中的 Task (底层原生支持只查 active 的任务)
+        Map<String, List<Task>> taskMap = taskService.getTaskMapByProcessInstanceIds(runningProcessInstanceIds);
+
+        // 4. 提取所有任务的办理人 ID，准备批量获取用户昵称
+        Set<Long> assigneeUserIds = new HashSet<>();
+        taskMap.values().forEach(tasks -> {
+            tasks.forEach(task -> {
+                if (StrUtil.isNotBlank(task.getAssignee())) {
+                    assigneeUserIds.add(Long.valueOf(task.getAssignee()));
+                }
+            });
+        });
+
+        // 5. 批量获取办理人的用户信息 (只查一次系统用户表)
+        Map<Long, AdminUserRespDTO> userMap = CollUtil.isEmpty(assigneeUserIds) ?
+                Collections.emptyMap() : adminUserApi.getUserMap(assigneeUserIds);
+
+        // 6. 将查询到的 BPM 数据组装回处于“审批中”的 VO
+        list.forEach(vo -> {
+            // 仅处理状态为 1 (审批中) 的数据
+            if (vo.getSpzt() != null && vo.getSpzt() == 1) {
+                String processInstanceId = vo.getProcessInstanceId();
+                if (StrUtil.isBlank(processInstanceId)) {
+                    return;
+                }
+
+                // O(1) 复杂度取出该实例的所有运行中任务
+                List<Task> activeTasks = taskMap.get(processInstanceId);
+
+                if (CollUtil.isNotEmpty(activeTasks)) {
+                    // 取第一个任务的节点名作为当前环节名称
+                    vo.setCurrentNodeName(activeTasks.get(0).getName());
+
+                    // 提取办理人名称并拼接
+                    StringJoiner joiner = new StringJoiner(",");
+                    activeTasks.forEach(task -> {
+                        if (StrUtil.isNotBlank(task.getAssignee())) {
+                            AdminUserRespDTO user = userMap.get(Long.valueOf(task.getAssignee()));
+                            joiner.add(user != null ? user.getNickname() : task.getAssignee());
+                        } else {
+                            joiner.add("等待拾取/未分配");
+                        }
+                    });
+                    vo.setCurrentAssigneeNames(joiner.toString());
+
+                } else {
+                    // 容错兜底：业务状态是“审批中”，但在流程引擎中查不到处于 active 的任务
+                    // （可能是流程卡死、遇到异常导致任务挂起、或者是异步操作导致的短暂延迟）
+                    vo.setCurrentNodeName("系统流转中");
+                    vo.setCurrentAssigneeNames("-");
+                }
+            }
+        });
     }
 
 }

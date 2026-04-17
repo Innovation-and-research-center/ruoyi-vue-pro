@@ -11,7 +11,12 @@
         <result property="startDeptName" column="startDeptName" />
         <result property="createTime" column="createTime" />
         <result property="endTime" column="endTime" />
+
         <result property="status" column="status" />
+        <result property="processResult" column="processResult" />
+        <result property="processStatus" column="processStatus" />
+        <result property="processReason" column="processReason" />
+
         <result property="currTaskName" column="currTaskName" />
         <result property="currTaskAssignee" column="currTaskAssignee" />
         <result property="sourceUnit" column="sourceUnit" />
@@ -23,8 +28,11 @@
         <bind name="VAR_SOURCE_UNIT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_SOURCE_UNIT" />
         <bind name="VAR_URGENCY" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_URGENCY_DEGREE" />
         <bind name="VAR_DEADLINE" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_DEADLINE_DATE" />
+        <bind name="VAR_PROCESS_RESULT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_INSTANCE_VARIABLE_RESULT" />
+        <bind name="VAR_PROCESS_STATUS" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_INSTANCE_VARIABLE_STATUS" />
+        <bind name="VAR_PROCESS_REASON" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_INSTANCE_VARIABLE_REASON" />
 
-        SELECT DISTINCT
+        SELECT
         res.ID_ AS id,
         res.NAME_ AS name,
         def.NAME_ AS category,
@@ -33,88 +41,57 @@
         res.END_TIME_ AS endTime,
         u.nickname AS startUserNickname,
 
-        /* 1. 获取来文单位 */
-        (SELECT var.TEXT_ FROM ACT_HI_VARINST var
-        WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_SOURCE_UNIT} LIMIT 1) AS sourceUnit,
+        /* 1. 来文单位、紧急程度、办结时限 */
+        (SELECT var.TEXT_ FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_SOURCE_UNIT} LIMIT 1) AS sourceUnit,
+        (SELECT var.TEXT_ FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_URGENCY} LIMIT 1) AS urgencyDegree,
+        (SELECT CASE WHEN var.LONG_ IS NOT NULL THEN to_char(to_timestamp(var.LONG_ / 1000), 'YYYY-MM-DD HH24:MI:SS') ELSE var.TEXT_ END
+        FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_DEADLINE} LIMIT 1) AS deadlineDate,
 
-        /* 2. 获取紧急程度 */
-        (SELECT var.TEXT_ FROM ACT_HI_VARINST var
-        WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_URGENCY} LIMIT 1) AS urgencyDegree,
+        /* 2. 引擎运行状态 (1:运行中, 2:正常完成, 3:异常结束/取消) */
+        (CASE
+        WHEN res.END_TIME_ IS NULL THEN 1
+        WHEN res.END_TIME_ IS NOT NULL AND res.DELETE_REASON_ IS NULL THEN 2
+        WHEN res.END_TIME_ IS NOT NULL AND (res.DELETE_REASON_ = 'MI_END' OR LOWER(res.DELETE_REASON_) = 'completed') THEN 2
+        ELSE 3
+        END) AS status,
 
-        /* 3. 获取办结时限 (兼容 时间戳LONG_ 和 字符串TEXT_) */
-        (SELECT
-        CASE
-        /* 优先判断 LONG_ 是否有值 (时间戳存储) */
-        /* Kingbase: 毫秒转秒 -> 转timestamp -> 转字符串 */
-        WHEN var.LONG_ IS NOT NULL
-        THEN to_char(to_timestamp(var.LONG_ / 1000), 'YYYY-MM-DD HH24:MI:SS')
-        /* 否则取 TEXT_ (字符串存储) */
-        ELSE var.TEXT_
-        END
-        FROM ACT_HI_VARINST var
-        WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_DEADLINE}
-        LIMIT 1
-        ) AS deadlineDate,
+        /* 3. 真实业务结果 (通过、驳回、撤回等) */
+        (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_) FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_PROCESS_RESULT} LIMIT 1) AS processResult,
+        (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_) FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_PROCESS_STATUS} LIMIT 1) AS processStatus,
+        (SELECT var.TEXT_ FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_PROCESS_REASON} LIMIT 1) AS processReason,
 
-        /* 状态判断 */
-        (CASE WHEN res.END_TIME_ IS NOT NULL THEN 2 ELSE 1 END) AS status,
-
-        /* 当前环节 */
-        (SELECT string_agg(t.NAME_, ', ') FROM ACT_RU_TASK t
-        WHERE t.PROC_INST_ID_ = res.ID_) AS currTaskName,
-
-        /* 当前办理人 */
-        (SELECT string_agg(tu.nickname, ', ') FROM ACT_RU_TASK t
-        LEFT JOIN system_users tu ON t.ASSIGNEE_ = CAST(tu.id AS VARCHAR)
-        WHERE t.PROC_INST_ID_ = res.ID_) AS currTaskAssignee
+        /* 4. 环节与办理人 */
+        (SELECT string_agg(t.NAME_, ', ') FROM ACT_RU_TASK t WHERE t.PROC_INST_ID_ = res.ID_) AS currTaskName,
+        (SELECT string_agg(tu.nickname, ', ') FROM ACT_RU_TASK t LEFT JOIN system_users tu ON t.ASSIGNEE_ = CAST(tu.id AS VARCHAR) WHERE t.PROC_INST_ID_ = res.ID_) AS currTaskAssignee
 
         FROM ACT_HI_PROCINST res
         LEFT JOIN ACT_RE_PROCDEF def ON res.PROC_DEF_ID_ = def.ID_
         LEFT JOIN system_users u ON res.START_USER_ID_ = CAST(u.id AS VARCHAR)
-        LEFT JOIN ACT_HI_TASKINST task ON res.ID_ = task.PROC_INST_ID_
 
         <where>
-            (res.START_USER_ID_ = CAST(#{userId} AS VARCHAR) OR task.ASSIGNEE_ = CAST(#{userId} AS VARCHAR))
+            (res.START_USER_ID_ = CAST(#{userId} AS VARCHAR) OR EXISTS (SELECT 1 FROM ACT_HI_TASKINST t WHERE t.PROC_INST_ID_ = res.ID_ AND t.ASSIGNEE_ = CAST(#{userId} AS VARCHAR)))
 
-            <if test="reqVO.name != null and reqVO.name != ''">
-                AND res.NAME_ LIKE CONCAT('%', #{reqVO.name}, '%')
-            </if>
-            <if test="reqVO.processInstanceId != null and reqVO.processInstanceId != ''">
-                AND res.ID_ LIKE CONCAT('%', #{reqVO.processInstanceId}, '%')
-            </if>
-            <if test="reqVO.processDefinitionKey != null and reqVO.processDefinitionKey != ''">
-                AND def.KEY_ = #{reqVO.processDefinitionKey}
-            </if>
-            <if test="reqVO.startUserNickname != null and reqVO.startUserNickname != ''">
-                AND u.nickname LIKE CONCAT('%', #{reqVO.startUserNickname}, '%')
-            </if>
+            <if test="reqVO.name != null and reqVO.name != ''"> AND res.NAME_ LIKE CONCAT('%', #{reqVO.name}, '%') </if>
+            <if test="reqVO.processInstanceId != null and reqVO.processInstanceId != ''"> AND res.ID_ LIKE CONCAT('%', #{reqVO.processInstanceId}, '%') </if>
+            <if test="reqVO.processDefinitionKey != null and reqVO.processDefinitionKey != ''"> AND def.KEY_ = #{reqVO.processDefinitionKey} </if>
+            <if test="reqVO.startUserNickname != null and reqVO.startUserNickname != ''"> AND u.nickname LIKE CONCAT('%', #{reqVO.startUserNickname}, '%') </if>
+
             <if test="reqVO.status != null">
                 <if test="reqVO.status == 1"> AND res.END_TIME_ IS NULL </if>
-                <if test="reqVO.status == 2"> AND res.END_TIME_ IS NOT NULL </if>
+                <if test="reqVO.status == 2"> AND res.END_TIME_ IS NOT NULL AND (res.DELETE_REASON_ IS NULL OR res.DELETE_REASON_ = 'MI_END' OR LOWER(res.DELETE_REASON_) = 'completed') </if>
+                <if test="reqVO.status == 3"> AND res.END_TIME_ IS NOT NULL AND res.DELETE_REASON_ IS NOT NULL AND res.DELETE_REASON_ != 'MI_END' AND LOWER(res.DELETE_REASON_) != 'completed' </if>
+            </if>
+
+            <if test="reqVO.processResult != null">
+                AND EXISTS (SELECT 1 FROM ACT_HI_VARINST vr WHERE vr.PROC_INST_ID_ = res.ID_ AND vr.NAME_ = #{VAR_PROCESS_RESULT} AND (vr.LONG_ = #{reqVO.processResult} OR vr.TEXT_ = CAST(#{reqVO.processResult} AS VARCHAR)))
             </if>
 
             <if test="reqVO.startDeptName != null and reqVO.startDeptName != ''">
-                AND EXISTS (
-                SELECT 1 FROM ACT_HI_VARINST v
-                WHERE v.PROC_INST_ID_ = res.ID_
-                AND v.NAME_ = #{VAR_SOURCE_UNIT}
-                AND v.TEXT_ LIKE CONCAT('%', #{reqVO.startDeptName}, '%')
-                )
+                AND EXISTS (SELECT 1 FROM ACT_HI_VARINST v WHERE v.PROC_INST_ID_ = res.ID_ AND v.NAME_ = #{VAR_SOURCE_UNIT} AND v.TEXT_ LIKE CONCAT('%', #{reqVO.startDeptName}, '%'))
             </if>
 
             <if test="reqVO.overdueDays != null">
-                AND EXISTS (
-                SELECT 1 FROM ACT_HI_VARINST v
-                WHERE v.PROC_INST_ID_ = res.ID_
-                AND v.NAME_ = #{VAR_DEADLINE}
-                AND (
-                /* 情况A: 时间戳 (LONG_) */
-                (v.LONG_ IS NOT NULL AND (CURRENT_DATE - DATE(to_timestamp(v.LONG_ / 1000))) >= #{reqVO.overdueDays})
-                OR
-                /* 情况B: 字符串 (TEXT_) */
-                (v.TEXT_ IS NOT NULL AND v.TEXT_ != '' AND (CURRENT_DATE - TO_DATE(v.TEXT_, 'YYYY-MM-DD')) >= #{reqVO.overdueDays})
-                )
-                )
+                AND EXISTS (SELECT 1 FROM ACT_HI_VARINST v WHERE v.PROC_INST_ID_ = res.ID_ AND v.NAME_ = #{VAR_DEADLINE} AND ((v.LONG_ IS NOT NULL AND (CURRENT_DATE - DATE(to_timestamp(v.LONG_ / 1000))) >= #{reqVO.overdueDays}) OR (v.TEXT_ IS NOT NULL AND v.TEXT_ != '' AND (CURRENT_DATE - TO_DATE(v.TEXT_, 'YYYY-MM-DD')) >= #{reqVO.overdueDays})))
             </if>
 
             <if test="reqVO.createTime != null and reqVO.createTime.length > 0">
@@ -123,61 +100,42 @@
         </where>
 
         ORDER BY res.START_TIME_ DESC
-
-        LIMIT #{reqVO.pageSize}
-        OFFSET (#{reqVO.pageNo} - 1) * #{reqVO.pageSize}
+        LIMIT #{reqVO.pageSize} OFFSET (#{reqVO.pageNo} - 1) * #{reqVO.pageSize}
     </select>
 
     <select id="selectUnifiedCount" resultType="java.lang.Long">
         <bind name="VAR_SOURCE_UNIT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_SOURCE_UNIT" />
-        <bind name="VAR_URGENCY" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_URGENCY_DEGREE" />
         <bind name="VAR_DEADLINE" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_DEADLINE_DATE" />
+        <bind name="VAR_PROCESS_RESULT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_INSTANCE_VARIABLE_RESULT" />
 
-        SELECT COUNT(DISTINCT res.ID_)
-        FROM ACT_HI_PROCINST res
+        SELECT COUNT(1) FROM ACT_HI_PROCINST res
         LEFT JOIN ACT_RE_PROCDEF def ON res.PROC_DEF_ID_ = def.ID_
         LEFT JOIN system_users u ON res.START_USER_ID_ = CAST(u.id AS VARCHAR)
-        LEFT JOIN ACT_HI_TASKINST task ON res.ID_ = task.PROC_INST_ID_
-        <where>
-            (res.START_USER_ID_ = CAST(#{userId} AS VARCHAR) OR task.ASSIGNEE_ = CAST(#{userId} AS VARCHAR))
 
-            <if test="reqVO.name != null and reqVO.name != ''">
-                AND res.NAME_ LIKE CONCAT('%', #{reqVO.name}, '%')
-            </if>
-            <if test="reqVO.processInstanceId != null and reqVO.processInstanceId != ''">
-                AND res.ID_ LIKE CONCAT('%', #{reqVO.processInstanceId}, '%')
-            </if>
-            <if test="reqVO.processDefinitionKey != null and reqVO.processDefinitionKey != ''">
-                AND def.KEY_ = #{reqVO.processDefinitionKey}
-            </if>
-            <if test="reqVO.startUserNickname != null and reqVO.startUserNickname != ''">
-                AND u.nickname LIKE CONCAT('%', #{reqVO.startUserNickname}, '%')
-            </if>
+        <where>
+            (res.START_USER_ID_ = CAST(#{userId} AS VARCHAR) OR EXISTS (SELECT 1 FROM ACT_HI_TASKINST t WHERE t.PROC_INST_ID_ = res.ID_ AND t.ASSIGNEE_ = CAST(#{userId} AS VARCHAR)))
+
+            <if test="reqVO.name != null and reqVO.name != ''"> AND res.NAME_ LIKE CONCAT('%', #{reqVO.name}, '%') </if>
+            <if test="reqVO.processInstanceId != null and reqVO.processInstanceId != ''"> AND res.ID_ LIKE CONCAT('%', #{reqVO.processInstanceId}, '%') </if>
+            <if test="reqVO.processDefinitionKey != null and reqVO.processDefinitionKey != ''"> AND def.KEY_ = #{reqVO.processDefinitionKey} </if>
+            <if test="reqVO.startUserNickname != null and reqVO.startUserNickname != ''"> AND u.nickname LIKE CONCAT('%', #{reqVO.startUserNickname}, '%') </if>
+
             <if test="reqVO.status != null">
                 <if test="reqVO.status == 1"> AND res.END_TIME_ IS NULL </if>
-                <if test="reqVO.status == 2"> AND res.END_TIME_ IS NOT NULL </if>
+                <if test="reqVO.status == 2"> AND res.END_TIME_ IS NOT NULL AND (res.DELETE_REASON_ IS NULL OR res.DELETE_REASON_ = 'MI_END' OR LOWER(res.DELETE_REASON_) = 'completed') </if>
+                <if test="reqVO.status == 3"> AND res.END_TIME_ IS NOT NULL AND res.DELETE_REASON_ IS NOT NULL AND res.DELETE_REASON_ != 'MI_END' AND LOWER(res.DELETE_REASON_) != 'completed' </if>
+            </if>
+
+            <if test="reqVO.processResult != null">
+                AND EXISTS (SELECT 1 FROM ACT_HI_VARINST vr WHERE vr.PROC_INST_ID_ = res.ID_ AND vr.NAME_ = #{VAR_PROCESS_RESULT} AND (vr.LONG_ = #{reqVO.processResult} OR vr.TEXT_ = CAST(#{reqVO.processResult} AS VARCHAR)))
             </if>
 
             <if test="reqVO.startDeptName != null and reqVO.startDeptName != ''">
-                AND EXISTS (
-                SELECT 1 FROM ACT_HI_VARINST v
-                WHERE v.PROC_INST_ID_ = res.ID_
-                AND v.NAME_ = #{VAR_SOURCE_UNIT}
-                AND v.TEXT_ LIKE CONCAT('%', #{reqVO.startDeptName}, '%')
-                )
+                AND EXISTS (SELECT 1 FROM ACT_HI_VARINST v WHERE v.PROC_INST_ID_ = res.ID_ AND v.NAME_ = #{VAR_SOURCE_UNIT} AND v.TEXT_ LIKE CONCAT('%', #{reqVO.startDeptName}, '%'))
             </if>
 
             <if test="reqVO.overdueDays != null">
-                AND EXISTS (
-                SELECT 1 FROM ACT_HI_VARINST v
-                WHERE v.PROC_INST_ID_ = res.ID_
-                AND v.NAME_ = #{VAR_DEADLINE}
-                AND (
-                (v.LONG_ IS NOT NULL AND (CURRENT_DATE - DATE(to_timestamp(v.LONG_ / 1000))) >= #{reqVO.overdueDays})
-                OR
-                (v.TEXT_ IS NOT NULL AND v.TEXT_ != '' AND (CURRENT_DATE - TO_DATE(v.TEXT_, 'YYYY-MM-DD')) >= #{reqVO.overdueDays})
-                )
-                )
+                AND EXISTS (SELECT 1 FROM ACT_HI_VARINST v WHERE v.PROC_INST_ID_ = res.ID_ AND v.NAME_ = #{VAR_DEADLINE} AND ((v.LONG_ IS NOT NULL AND (CURRENT_DATE - DATE(to_timestamp(v.LONG_ / 1000))) >= #{reqVO.overdueDays}) OR (v.TEXT_ IS NOT NULL AND v.TEXT_ != '' AND (CURRENT_DATE - TO_DATE(v.TEXT_, 'YYYY-MM-DD')) >= #{reqVO.overdueDays})))
             </if>
 
             <if test="reqVO.createTime != null and reqVO.createTime.length > 0">
@@ -185,5 +143,4 @@
             </if>
         </where>
     </select>
-
 </mapper>

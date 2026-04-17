@@ -75,6 +75,11 @@ public class ReceiveDocRespVO {
     @Schema(description = "流程示例")
     private String processInstanceId;
 
+    private Short status;
+
+    private String cancelReason;
+
+
 
 
 }

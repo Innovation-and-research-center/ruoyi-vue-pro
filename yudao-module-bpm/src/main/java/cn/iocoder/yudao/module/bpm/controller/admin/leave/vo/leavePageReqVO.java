@@ -35,4 +35,7 @@ public class LeavePageReqVO extends PageParam {
     @Schema(description = "文件地址")
     private String filepath;
 
+    @Schema(description = "用户ID")
+    private String userId;
+
 }

@@ -9,8 +9,10 @@ import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
+import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import cn.iocoder.yudao.module.system.dal.dataobject.permission.RoleDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.service.permission.PermissionService;
@@ -64,6 +66,9 @@ public class TimeExplainServiceImpl implements TimeExplainService {
 
     @Resource
     private PermissionService permissionService;
+
+    @Resource
+    private BpmInvalidateHelper bpmInvalidateHelper;
 
     @Override
     public Long createTimeExplain(TimeExplainSaveReqVO createReqVO) {
@@ -145,18 +150,38 @@ public class TimeExplainServiceImpl implements TimeExplainService {
     }
 
     @Override
-    public void deleteTimeExplain(Long id) {
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteTimeExplain(Long id,String reason) {
         // 校验存在
-        validateTimeExplainExists(id);
+        TimeExplainDO timeExplain = timeExplainMapper.selectById(id);
+        if (timeExplain == null) {
+            throw exception(TIME_EXPLAIN_NOT_EXISTS);
+        }
         // 删除
-        timeExplainMapper.deleteById(id);
+        Long userId = getLoginUserId();
+        bpmInvalidateHelper.executeInvalidate(
+                userId,
+                timeExplain.getProcessInstanceId(),
+                timeExplain.getStatus().intValue(), // TimeExplain表使用的是 status 字段
+                reason,
+                () -> {
+                    // 3. 更新业务表：标记状态为已作废(5)，并存入作废原因
+                    timeExplainMapper.updateById(new TimeExplainDO()
+                            .setId(id)
+                            .setStatus(Long.valueOf(BpmProcessInstanceStatusEnum.INVALID.getStatus()))
+                            .setCancelReason(reason));
+                }
+        );
     }
 
     @Override
-        public void deleteTimeExplainListByIds(List<Long> ids) {
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteTimeExplainListByIds(List<Long> ids,String reason) {
         // 删除
-        timeExplainMapper.deleteByIds(ids);
+        for (Long id : ids) {
+            deleteTimeExplain(id, reason);
         }
+    }
 
 
     private void validateTimeExplainExists(Long id) {
@@ -173,6 +198,21 @@ public class TimeExplainServiceImpl implements TimeExplainService {
     @Override
     public PageResult<TimeExplainDO> getTimeExplainPage(TimeExplainPageReqVO pageReqVO) {
         return timeExplainMapper.selectPage(pageReqVO);
+    }
+    @Override
+    public void updateTimeExplainStatus(Long id, Integer status) {
+        TimeExplainDO timeExplain = timeExplainMapper.selectById(id);
+        if (timeExplain == null) {
+            return;
+        }
+
+        // 核心拦截：如果当前业务状态已经是已作废(5)，则拒绝任何后续状态覆盖（例如工作流的取消事件(4)）
+        if (BpmProcessInstanceStatusEnum.INVALID.getStatus().equals(timeExplain.getStatus().intValue())) {
+            return;
+        }
+
+        // 正常更新状态
+        timeExplainMapper.updateById(new TimeExplainDO().setId(id).setStatus(Long.valueOf(status)));
     }
 
 }

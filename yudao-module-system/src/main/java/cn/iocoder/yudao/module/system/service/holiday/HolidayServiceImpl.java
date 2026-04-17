@@ -15,6 +15,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -196,6 +197,74 @@ public class HolidayServiceImpl implements HolidayService {
         return resultList;
     }
 
+    @Override
+    public LocalDateTime addWorkingDays(LocalDateTime startDate, int workDays) {
+        if (startDate == null) {
+            return null;
+        }
+        if (workDays <= 0) {
+            return startDate;
+        }
+
+        // 1. 初始化数据：第一次查询
+        // 假设初始步长为 workDays 的 2 倍，至少 30 天
+        int queryStep = Math.max(workDays * 2, 30);
+        LocalDateTime currentRangeEnd = startDate.plusDays(queryStep);
+
+        // 获取初始节假日数据
+        Map<LocalDate, Short> holidayMap = fetchHolidayMap(startDate, currentRangeEnd);
+
+        LocalDateTime result = startDate;
+        int addedDays = 0;
+
+        // 2. 逐日推算
+        while (addedDays < workDays) {
+            result = result.plusDays(1);
+            LocalDate currentDate = result.toLocalDate();
+
+            // 【兜底逻辑】：如果当前日期已经接近或超过了 Map 的最大范围
+            if (currentDate.isAfter(currentRangeEnd.toLocalDate()) || currentDate.isEqual(currentRangeEnd.toLocalDate())) {
+                // 动态向后延长范围，再次查询数据库并合并到 Map 中
+                LocalDateTime nextRangeEnd = currentRangeEnd.plusDays(queryStep);
+                Map<LocalDate, Short> nextMap = fetchHolidayMap(currentRangeEnd.plusDays(1), nextRangeEnd);
+                holidayMap.putAll(nextMap);
+                currentRangeEnd = nextRangeEnd; // 更新当前边界
+            }
+
+            // 3. 核心计算逻辑
+            if (holidayMap.containsKey(currentDate)) {
+                Short isWorkDayConfig = holidayMap.get(currentDate);
+                // 调休补班 (isworkday=1) -> 计入工作日
+                if (isWorkDayConfig != null && isWorkDayConfig == 1) {
+                    addedDays++;
+                }
+                // 法定假日 (isworkday=0) -> 跳过，不计入 addedDays
+            } else {
+                // 无配置：默认排除周六日
+                java.time.DayOfWeek dayOfWeek = result.getDayOfWeek();
+                if (dayOfWeek != java.time.DayOfWeek.SATURDAY && dayOfWeek != java.time.DayOfWeek.SUNDAY) {
+                    addedDays++;
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 提取出来的私有辅助方法：根据范围查询节假日配置
+     */
+    private Map<LocalDate, Short> fetchHolidayMap(LocalDateTime start, LocalDateTime end) {
+        List<HolidayDO> list = holidayMapper.selectList(
+                new LambdaQueryWrapper<HolidayDO>()
+                        .ge(HolidayDO::getSettingDate, start.toLocalDate().atStartOfDay())
+                        .le(HolidayDO::getSettingDate, end.toLocalDate().atTime(23, 59, 59))
+        );
+        return list.stream().collect(Collectors.toMap(
+                h -> h.getSettingDate().toLocalDate(),
+                HolidayDO::getIsworkday,
+                (v1, v2) -> v1
+        ));
+    }
 
 
 

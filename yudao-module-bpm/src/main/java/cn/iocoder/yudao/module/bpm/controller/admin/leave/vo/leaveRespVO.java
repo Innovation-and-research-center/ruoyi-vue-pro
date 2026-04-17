@@ -54,6 +54,8 @@ public class LeaveRespVO {
 
     private String processInstanceId;
 
+    private String reason;
+
 
 
 

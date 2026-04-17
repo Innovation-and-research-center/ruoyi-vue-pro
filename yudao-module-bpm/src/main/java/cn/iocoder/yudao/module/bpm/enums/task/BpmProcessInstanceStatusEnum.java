@@ -21,7 +21,9 @@ public enum BpmProcessInstanceStatusEnum implements ArrayValuable<Integer> {
     RUNNING(1, "审批中"),
     APPROVE(2, "审批通过"),
     REJECT(3, "审批不通过"),
-    CANCEL(4, "已取消");
+    CANCEL(4, "已取消"),
+    INVALID(5, "已作废");
+
 
     public static final Integer[] ARRAYS = Arrays.stream(values()).map(BpmProcessInstanceStatusEnum::getStatus).toArray(Integer[]::new);
 

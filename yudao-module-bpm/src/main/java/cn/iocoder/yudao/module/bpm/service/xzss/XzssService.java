@@ -35,14 +35,14 @@ public interface XzssService {
      *
      * @param id 编号
      */
-    void deleteXzss(Long id);
+    void deleteXzss(Long id,String reason);
 
     /**
     * 批量删除行政诉讼
     *
     * @param ids 编号
     */
-    void deleteXzssListByIds(List<Long> ids);
+    void deleteXzssListByIds(List<Long> ids,String reason);
 
     /**
      * 获得行政诉讼
@@ -73,5 +73,7 @@ public interface XzssService {
     List<XzssDO> getXzssListByFyGuid(String fyGuid);
 
     List<XzssDO> getXzssListBySsGuid(String ssGuid);
+
+    void updateXzssStatus(Long id, Integer status);
 
 }

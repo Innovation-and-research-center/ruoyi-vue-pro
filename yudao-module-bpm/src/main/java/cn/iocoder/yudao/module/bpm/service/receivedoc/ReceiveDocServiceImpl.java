@@ -9,10 +9,14 @@ import cn.iocoder.yudao.framework.common.util.date.DateUtils;
 import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
+import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmProcessInstanceCancelReqVO;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocAttachDO;
 import cn.iocoder.yudao.module.bpm.dal.mysql.receivedoc.ReceiveDocAttachMapper;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
+import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import cn.iocoder.yudao.module.bpm.service.task.BpmTaskService;
 import cn.iocoder.yudao.module.infra.api.file.FileApi;
 import cn.iocoder.yudao.module.infra.dal.dataobject.file.FileDO;
@@ -50,6 +54,7 @@ import cn.iocoder.yudao.module.bpm.dal.mysql.receivedoc.ReceiveDocMapper;
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList;
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.diffList;
+import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.*;
 import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.*;
@@ -87,6 +92,9 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
 
     @Resource
     private AdminUserApi adminUserApi;
+
+    @Resource
+    private BpmInvalidateHelper bpmInvalidateHelper;
 
     @Override
     public Long createReceiveDoc(Long userId,ReceiveDocSaveReqVO createReqVO) {
@@ -392,18 +400,48 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
 
 
     @Override
-    public void deleteReceiveDoc(Long id) {
+    public void deleteReceiveDoc(Long id, String reason) {
         // 校验存在
-        validateReceiveDocExists(id);
-        // 删除
-        receiveDocMapper.deleteById(id);
+        ReceiveDocDO receiveDoc = receiveDocMapper.selectById(id);
+        if (receiveDoc == null) {
+            throw exception(RECEIVE_DOC_NOT_EXISTS);
+        }
+        if (StrUtil.isBlank(receiveDoc.getProcessInstanceId())) {
+            ReceiveDocDO updateObj = new ReceiveDocDO()
+                    .setId(id)
+                    // 注意这里的类型转换，根据你实体类 status 的具体类型(Short/Integer)进行保留
+                    .setStatus(BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue())
+                    .setCancelReason(reason);
+            receiveDocMapper.updateById(updateObj);
+
+        }else{
+            Integer currentStatus = receiveDoc.getStatus() != null ? Integer.valueOf(receiveDoc.getStatus()) : null;
+            Long userId = getLoginUserId();
+            bpmInvalidateHelper.executeInvalidate(
+                    userId,
+                    receiveDoc.getProcessInstanceId(),
+                    currentStatus,
+                    reason,
+                    () -> {
+                        ReceiveDocDO updateObj = new ReceiveDocDO()
+                                .setId(id)
+                                .setStatus(BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue()) // 设置为 5(已作废)
+                                .setCancelReason(reason); // 写入作废原因
+                        receiveDocMapper.updateById(updateObj);
+                    }
+            );
+
+        }
+
     }
 
     @Override
-        public void deleteReceiveDocListByIds(List<Long> ids) {
+    public void deleteReceiveDocListByIds(List<Long> ids,String reason) {
         // 删除
-        receiveDocMapper.deleteByIds(ids);
+        for (Long id : ids) {
+            deleteReceiveDoc( id, reason);
         }
+    }
 
 
     private void validateReceiveDocExists(Long id) {
@@ -727,6 +765,19 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         if (bookmark != null) {
             bookmark.setText(text == null ? "" : text.trim());
         }
+    }
+
+    @Override
+    public void updateReceiveStatus(Long id, Integer status) {
+        ReceiveDocDO receive = receiveDocMapper.selectById(id);
+        if (receive == null) {
+            return;
+        }
+        if (BpmProcessInstanceStatusEnum.INVALID.getStatus().equals(Integer.valueOf(receive.getStatus()))) {
+            return;
+        }
+        // 正常更新状态
+        receiveDocMapper.updateById(new ReceiveDocDO().setId(id).setStatus(status.shortValue()));
     }
 
 

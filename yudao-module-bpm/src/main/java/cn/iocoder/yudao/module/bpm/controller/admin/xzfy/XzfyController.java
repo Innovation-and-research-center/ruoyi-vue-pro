@@ -3,6 +3,7 @@ package cn.iocoder.yudao.module.bpm.controller.admin.xzfy;
 import cn.iocoder.yudao.module.bpm.controller.admin.xzss.vo.XzssRespVO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
 import cn.iocoder.yudao.module.bpm.service.xzss.XzssService;
+import io.swagger.v3.oas.annotations.Parameters;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -65,17 +66,25 @@ public class XzfyController {
     @Operation(summary = "删除行政复议")
     @Parameter(name = "id", description = "编号", required = true)
     @PreAuthorize("@ss.hasPermission('bpm:xzfy:delete')")
-    public CommonResult<Boolean> deleteXzfy(@RequestParam("id") Long id) {
-        xzfyService.deleteXzfy(id);
+    @Parameters({
+            @Parameter(name = "id", description = "编号", required = true),
+            @Parameter(name = "reason", description = "作废原因", required = true)
+    })
+    public CommonResult<Boolean> deleteXzfy(@RequestParam("id") Long id,@RequestParam("reason") String reason) {
+        xzfyService.deleteXzfy(id,reason);
         return success(true);
     }
 
     @DeleteMapping("/delete-list")
     @Parameter(name = "ids", description = "编号", required = true)
     @Operation(summary = "批量删除行政复议")
-                @PreAuthorize("@ss.hasPermission('bpm:xzfy:delete')")
-    public CommonResult<Boolean> deleteXzfyList(@RequestParam("ids") List<Long> ids) {
-        xzfyService.deleteXzfyListByIds(ids);
+    @PreAuthorize("@ss.hasPermission('bpm:xzfy:delete')")
+    @Parameters({
+            @Parameter(name = "ids", description = "编号列表", required = true),
+            @Parameter(name = "reason", description = "作废原因", required = true)
+    })
+    public CommonResult<Boolean> deleteXzfyList(@RequestParam("ids") List<Long> ids,@RequestParam("reason") String reason) {
+        xzfyService.deleteXzfyListByIds(ids,reason);
         return success(true);
     }
 

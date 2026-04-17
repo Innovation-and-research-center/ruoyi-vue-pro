@@ -4,11 +4,15 @@ import cn.hutool.core.util.NumberUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.util.date.DateUtils;
 import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
+import cn.iocoder.yudao.framework.mybatis.core.query.LambdaQueryWrapperX;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
 import cn.iocoder.yudao.module.bpm.dal.mysql.xzss.XzssMapper;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
+import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import cn.iocoder.yudao.module.bpm.service.commentattach.CommentAttachService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
@@ -33,6 +37,7 @@ import cn.iocoder.yudao.module.bpm.dal.mysql.xzfy.XzfyKzMapper;
 
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList;
+import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.LEAVE;
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.XZFY;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.XZFY_NOT_EXISTS;
@@ -64,6 +69,9 @@ public class XzfyServiceImpl implements XzfyService {
 
     @Resource
     private CommentAttachService commentAttachService;
+
+    @Resource
+    private BpmInvalidateHelper bpmInvalidateHelper;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -121,40 +129,61 @@ public class XzfyServiceImpl implements XzfyService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void deleteXzfy(Long id) {
+    public void deleteXzfy(Long id, String reason) {
         // 校验存在
-        validateXzfyExists(id);
         XzfyDO xzfy =xzfyMapper.selectById(id);
-
-        // 删除
-        xzfyMapper.deleteById(id);
-
-        // 删除子表
-        deleteXzfyKzByXmGuid(xzfy.getXmGuid());
-
-        commentAttachService.deleteCommentAttach(xzfy.getXmGuid(), DOC_TYPE_XZFY);
+        if(xzfy == null){
+            throw exception(XZFY_NOT_EXISTS);
+        }
+        if (StrUtil.isBlank(xzfy.getProcessInstanceId())) {
+            XzfyDO updateObj = new XzfyDO()
+                    .setId(id)
+                    .setStatus(BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue()) // 设置为 5(已作废) [cite: 40]
+                    .setCancelReason(reason);
+            xzfyMapper.updateById(updateObj);
+        }
+        else{
+            Integer currentStatus = xzfy.getStatus() != null ? Integer.valueOf(xzfy.getStatus()) : null;
+            Long userId = getLoginUserId();
+            bpmInvalidateHelper.executeInvalidate(
+                    userId,
+                    xzfy.getProcessInstanceId(),
+                    currentStatus,
+                    reason,
+                    () -> {
+                        XzfyDO updateObj = new XzfyDO()
+                                .setId(id)
+                                .setStatus(BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue()) // 设置为 5(已作废) [cite: 40]
+                                .setCancelReason(reason);
+                        xzfyMapper.updateById(updateObj);
+                    }
+            );
+        }
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void deleteXzfyListByIds(List<Long> ids) {
-        List<XzfyDO> xzfyList = xzfyMapper.selectBatchIds(ids);
-        if (CollectionUtils.isNotEmpty(xzfyList)) {
-            // 3. 生成 xmGuid 列表
-            // 假设 xmGuid 是 String 类型，根据你的实际情况调整
-            List<String> xmGuids = xzfyList.stream()
-                    .map(XzfyDO::getXmGuid)           // 提取 xmGuid
-                    .filter(Objects::nonNull)       // 过滤掉可能存在的 null 值
-                    .distinct()                     // 去重 (可选，视业务逻辑而定)
-                    .collect(Collectors.toList());
-
-            // 4. 放入到 deleteXzfyKzByXmGuids 批量删除子表
-            if (CollectionUtils.isNotEmpty(xmGuids)) {
-                deleteXzfyKzByXmGuids(xmGuids);
-            }
+    public void deleteXzfyListByIds(List<Long> ids, String reason) {
+        for (Long id : ids) {
+            deleteXzfy( id, reason);
         }
-        // 删除
-        xzfyMapper.deleteByIds(ids);
+//        List<XzfyDO> xzfyList = xzfyMapper.selectBatchIds(ids);
+//        if (CollectionUtils.isNotEmpty(xzfyList)) {
+//            // 3. 生成 xmGuid 列表
+//            // 假设 xmGuid 是 String 类型，根据你的实际情况调整
+//            List<String> xmGuids = xzfyList.stream()
+//                    .map(XzfyDO::getXmGuid)           // 提取 xmGuid
+//                    .filter(Objects::nonNull)       // 过滤掉可能存在的 null 值
+//                    .distinct()                     // 去重 (可选，视业务逻辑而定)
+//                    .collect(Collectors.toList());
+//
+//            // 4. 放入到 deleteXzfyKzByXmGuids 批量删除子表
+//            if (CollectionUtils.isNotEmpty(xmGuids)) {
+//                deleteXzfyKzByXmGuids(xmGuids);
+//            }
+//        }
+//        // 删除
+//        xzfyMapper.deleteByIds(ids);
 
     }
 
@@ -202,7 +231,7 @@ public class XzfyServiceImpl implements XzfyService {
                 .collect(Collectors.toSet());
 
         // 3. 构建查询条件
-        LambdaQueryWrapper<XzfyDO> queryWrapper = new LambdaQueryWrapper<>();
+        LambdaQueryWrapperX<XzfyDO> queryWrapper = new LambdaQueryWrapperX<>();
 
         // --- 核心过滤：排除已关联的数据 ---
         if (!usedGuids.isEmpty()) {
@@ -215,6 +244,8 @@ public class XzfyServiceImpl implements XzfyService {
         // queryWrapper.likeIfPresent(XzfyDO::getSwWh, reqVO.getSwWh())
         //             .likeIfPresent(XzfyDO::getSqr, reqVO.getSqr())
         //             .eqIfPresent(XzfyDO::getLb1, reqVO.getLb1());
+        queryWrapper.likeIfPresent(XzfyDO::getSwWh, reqVO.getSwWh())
+                .likeIfPresent(XzfyDO::getSqr, reqVO.getSqr());
 
         // 排序
         queryWrapper.orderByDesc(XzfyDO::getId);
@@ -246,5 +277,19 @@ public class XzfyServiceImpl implements XzfyService {
 	private void deleteXzfyKzByXmGuids(List<String> xmGuids) {
         xzfyKzMapper.deleteByXmGuids(xmGuids);
 	}
+
+    public void updateXzfyStatus(Long id, Integer status) {
+
+        XzfyDO xzfy = xzfyMapper.selectById(id);
+        if (xzfy == null) {
+            return;
+        }
+
+        if (BpmProcessInstanceStatusEnum.INVALID.getStatus().equals(Integer.valueOf(xzfy.getStatus()))) {
+            return;
+        }
+        // 正常更新状态
+        xzfyMapper.updateById(new XzfyDO().setId(id).setStatus(status.shortValue()));
+    }
 
 }

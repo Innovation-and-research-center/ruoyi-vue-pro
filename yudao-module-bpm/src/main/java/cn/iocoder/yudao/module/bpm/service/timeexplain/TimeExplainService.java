@@ -36,14 +36,14 @@ public interface TimeExplainService {
      *
      * @param id 编号
      */
-    void deleteTimeExplain(Long id);
+    void deleteTimeExplain(Long id,String reason);
 
     /**
     * 批量删除外出请假补假
     *
     * @param ids 编号
     */
-    void deleteTimeExplainListByIds(List<Long> ids);
+    void deleteTimeExplainListByIds(List<Long> ids,String reason);
 
     /**
      * 获得外出请假补假
@@ -60,5 +60,8 @@ public interface TimeExplainService {
      * @return 外出请假补假分页
      */
     PageResult<TimeExplainDO> getTimeExplainPage(TimeExplainPageReqVO pageReqVO);
+
+    void updateTimeExplainStatus(Long id, Integer status);
+
 
 }

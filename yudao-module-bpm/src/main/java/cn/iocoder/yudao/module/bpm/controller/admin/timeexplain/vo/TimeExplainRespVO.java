@@ -70,5 +70,10 @@ public class TimeExplainRespVO {
      */
     private String endPlace;
 
+    private String cancelReason;
+
+    private String nickName;
+
+    private Long creator;
 
 }

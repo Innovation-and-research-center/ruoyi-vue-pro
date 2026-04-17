@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import javax.validation.constraints.NotEmpty;
+import java.util.List;
 
 @Schema(description = "管理后台 - 退回流程任务的 Request VO")
 @Data
@@ -21,4 +22,7 @@ public class BpmTaskReturnReqVO {
     @NotEmpty(message = "退回意见不能为空")
     private String reason;
 
+
+    @Schema(description = "退回节点指定的审批人 ID 集合")
+    private List<Long> returnAssignees;
 }

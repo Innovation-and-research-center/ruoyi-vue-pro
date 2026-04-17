@@ -156,5 +156,8 @@ public class XzssDO extends BaseDO {
      */
     private String processInstanceId;
 
+    private Short status;
+
+    private String cancelReason;
 
 }

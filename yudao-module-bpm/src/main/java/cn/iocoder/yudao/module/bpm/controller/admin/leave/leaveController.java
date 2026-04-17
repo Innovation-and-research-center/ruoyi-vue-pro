@@ -5,6 +5,7 @@ import cn.iocoder.yudao.module.system.api.dept.DeptApi;
 import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
+import io.swagger.v3.oas.annotations.Parameters;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
@@ -67,18 +68,28 @@ public class LeaveController {
     }
 
     @DeleteMapping("/delete")
-    @Operation(summary = "删除假期申请审批")
-    @Parameter(name = "id", description = "编号", required = true)
-    public CommonResult<Boolean> deleteLeave(@RequestParam("id") Long id) {
-        leaveService.deleteLeave(id);
+    @Operation(summary = "作废假期申请审批")
+    @Parameters({
+            @Parameter(name = "id", description = "编号", required = true),
+            @Parameter(name = "reason", description = "作废原因", required = true)
+    })
+    public CommonResult<Boolean> deleteLeave(@RequestParam("id") Long id,
+                                             @RequestParam("reason") String reason) {
+        // 注意：这里需要你同步修改 LeaveService 层，让它能接收并处理 reason 参数
+        leaveService.deleteLeave(id, reason);
         return success(true);
     }
 
     @DeleteMapping("/delete-list")
-    @Parameter(name = "ids", description = "编号", required = true)
-    @Operation(summary = "批量删除假期申请审批")
-    public CommonResult<Boolean> deleteLeaveList(@RequestParam("ids") List<Long> ids) {
-        leaveService.deleteLeaveListByIds(ids);
+    @Operation(summary = "批量作废假期申请审批")
+    @Parameters({
+            @Parameter(name = "ids", description = "编号列表", required = true),
+            @Parameter(name = "reason", description = "作废原因", required = true)
+    })
+    public CommonResult<Boolean> deleteLeaveList(@RequestParam("ids") List<Long> ids,
+                                                 @RequestParam("reason") String reason) {
+        // 注意：同步修改 LeaveService 层的批量删除逻辑
+        leaveService.deleteLeaveListByIds(ids, reason);
         return success(true);
     }
 
@@ -135,10 +146,15 @@ public class LeaveController {
 
     @GetMapping("/detail-list")
     @Operation(summary = "获得请假详细记录", description = "用于点击统计数字后查看详情")
-    public CommonResult<List<LeaveDO>> getLeaveDetailList(@Valid LeaveSummaryReqVO reqVO) {
+    public CommonResult<List<LeaveHistoryRespVO>> getLeaveDetailList(@Valid LeaveSummaryReqVO reqVO) {
         return success(leaveService.getLeaveDetailList(reqVO));
     }
 
-
+    @GetMapping("/history")
+    @Operation(summary = "获得请假历史记录", description = "用于获取请假历史记录")
+    public CommonResult<PageResult<LeaveHistoryRespVO>> getLeaveHistoryList(@Valid LeavePageReqVO reqVO) {
+        PageResult<LeaveHistoryRespVO> pageResult = leaveService.getLeaveHistoryPage(reqVO);
+        return success(pageResult);
+    }
 
 }

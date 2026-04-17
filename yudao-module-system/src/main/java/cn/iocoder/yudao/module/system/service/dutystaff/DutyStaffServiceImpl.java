@@ -194,7 +194,7 @@ public class DutyStaffServiceImpl implements DutyStaffService {
                     // 插入
                     DutyStaffDO newDuty = DutyStaffDO.builder()
                             .dutyDate(dutyDate.atStartOfDay())
-                            .staffName(user.getUsername())
+                            .staffName(user.getNickname())
                             .staffType(staffType)
                             .userId(user.getId())
                             .smsCount(0L)

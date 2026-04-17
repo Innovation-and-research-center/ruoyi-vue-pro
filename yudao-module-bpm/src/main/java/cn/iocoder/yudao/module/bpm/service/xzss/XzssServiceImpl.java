@@ -7,7 +7,9 @@ import cn.iocoder.yudao.framework.common.util.date.DateUtils;
 import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
+import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import cn.iocoder.yudao.module.bpm.service.commentattach.CommentAttachService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
@@ -34,6 +36,7 @@ import cn.iocoder.yudao.module.bpm.dal.mysql.xzss.XzssKzMapper;
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList;
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.diffList;
+import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.XZSS;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
 import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.*;
@@ -60,6 +63,9 @@ public class XzssServiceImpl implements XzssService {
 
     @Resource
     private CommentAttachService commentAttachService;
+
+    @Resource
+    private BpmInvalidateHelper bpmInvalidateHelper;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -114,34 +120,58 @@ public class XzssServiceImpl implements XzssService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void deleteXzss(Long id) {
+    public void deleteXzss(Long id,String reason) {
         // 校验存在
-        validateXzssExists(id);
         XzssDO xzss =xzssMapper.selectById(id);
-        // 删除
-        xzssMapper.deleteById(id);
-
-        // 删除子表
-        deleteXzssKzByXmGuid(xzss.getXmGuid());
+        if(xzss == null){
+            throw exception(XZSS_NOT_EXISTS);
+        }
+        if(StringUtil.isBlank(xzss.getProcessInstanceId())){
+            XzssDO updateObj = new XzssDO()
+                    .setId(id)
+                    .setStatus(BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue()) // 设置为 5(已作废)
+                    .setCancelReason(reason);
+            xzssMapper.updateById(updateObj);
+        }
+        else{
+            Integer currentStatus = xzss.getStatus() != null ? Integer.valueOf(xzss.getStatus()) : null;
+            Long userId = getLoginUserId();
+            bpmInvalidateHelper.executeInvalidate(
+                    userId,
+                    xzss.getProcessInstanceId(),
+                    currentStatus,
+                    reason,
+                    () -> {
+                        XzssDO updateObj = new XzssDO()
+                                .setId(id)
+                                .setStatus(BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue()) // 设置为 5(已作废)
+                                .setCancelReason(reason);
+                        xzssMapper.updateById(updateObj);
+                    }
+            );
+        }
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void deleteXzssListByIds(List<Long> ids) {
-        List<XzssDO> xzssList = xzssMapper.selectBatchIds(ids);
-        if (CollectionUtils.isEmpty(xzssList)) {
-           List< String> xmGuids = xzssList.stream()
-                   .map(XzssDO::getXmGuid)
-                   .filter(Objects::nonNull)
-                   .distinct()
-                    .collect(Collectors.toList());
-
-            if (CollectionUtils.isNotEmpty(xmGuids)) {
-                deleteXzssKzByXmGuids(xmGuids);
-            }
+    public void deleteXzssListByIds(List<Long> ids,String reason) {
+        for (Long id : ids) {
+            deleteXzss( id, reason);
         }
-        // 删除
-        xzssMapper.deleteByIds(ids);
+//        List<XzssDO> xzssList = xzssMapper.selectBatchIds(ids);
+//        if (CollectionUtils.isEmpty(xzssList)) {
+//           List< String> xmGuids = xzssList.stream()
+//                   .map(XzssDO::getXmGuid)
+//                   .filter(Objects::nonNull)
+//                   .distinct()
+//                    .collect(Collectors.toList());
+//
+//            if (CollectionUtils.isNotEmpty(xmGuids)) {
+//                deleteXzssKzByXmGuids(xmGuids);
+//            }
+//        }
+//        // 删除
+//        xzssMapper.deleteByIds(ids);
 
     }
 
@@ -203,6 +233,22 @@ public class XzssServiceImpl implements XzssService {
     public List<XzssDO> getXzssListBySsGuid(String ssGuid) {
         return xzssMapper.selectList(new LambdaQueryWrapper<XzssDO>()
                 .eq(XzssDO::getSsGuid, ssGuid));
+    }
+
+    @Override
+    public void updateXzssStatus(Long id, Integer status) {
+        XzssDO xzss = xzssMapper.selectById(id);
+        if (xzss == null) {
+            return;
+        }
+
+        // 防覆盖拦截：如果业务表已经是 5 (已作废)，就不允许工作流再把它降级改为 4 (已取消)
+        if (BpmProcessInstanceStatusEnum.INVALID.getStatus().equals(Integer.valueOf(xzss.getStatus()))) {
+            return;
+        }
+
+        // 正常更新状态
+        xzssMapper.updateById(new XzssDO().setId(id).setStatus(status.shortValue()));
     }
 
 }

@@ -96,5 +96,8 @@ public class XzfyRespVO {
     @Schema(description = "关联的行政诉讼列表")
     private List<XzssRespVO> xzssList;
 
+    private Short status;
+
+    private String cancelReason;
 
 }

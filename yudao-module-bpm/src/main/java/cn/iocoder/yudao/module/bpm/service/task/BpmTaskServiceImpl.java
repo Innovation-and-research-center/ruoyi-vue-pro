@@ -516,6 +516,16 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         if (CollUtil.isEmpty(previousUserList)) {
             return Collections.emptyList();
         }
+        previousUserList = previousUserList.stream()
+                .collect(Collectors.collectingAndThen(
+                        Collectors.toMap(
+                                UserTask::getId,
+                                userTask -> userTask,
+                                (existing, replacement) -> existing,
+                                LinkedHashMap::new
+                        ),
+                        map -> new ArrayList<>(map.values())
+                ));
         // 2.2 过滤：只有串行可到达的节点，才可以退回。类似非串行、子流程无法退回
         previousUserList.removeIf(userTask -> !BpmnModelUtils.isSequentialReachable(source, userTask, null));
 
@@ -1645,6 +1655,125 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         // 3. 构建需要预测的任务流程变量
         Set<String> needSimulateTaskDefinitionKeys = getNeedSimulateTaskDefinitionKeys(bpmnModel, currentTask, targetElement);
 
+
+        List<Long> actualReturnAssignees = reqVO.getReturnAssignees();
+
+        if (CollUtil.isEmpty(actualReturnAssignees)) {
+            actualReturnAssignees = new ArrayList<>();
+
+            // 1) 递归获取当前任务所在分支的所有“祖先执行流 ID” (防跨分支污染)
+            List<String> executionLineage = new ArrayList<>();
+            String currentExecId = currentTask.getExecutionId();
+            while (cn.hutool.core.util.StrUtil.isNotBlank(currentExecId)) {
+                executionLineage.add(currentExecId);
+                // 去运行表中找父级 Execution
+                org.flowable.engine.runtime.Execution exec = runtimeService.createExecutionQuery()
+                        .executionId(currentExecId)
+                        .singleResult();
+                if (exec != null) {
+                    currentExecId = exec.getParentId(); // 向上溯源
+                } else {
+                    // 历史表兜底
+                    org.flowable.engine.history.HistoricActivityInstance historicExec = historyService.createHistoricActivityInstanceQuery()
+                            .executionId(currentExecId)
+                            .listPage(0, 1)
+                            .stream().findFirst().orElse(null);
+                    break;
+                }
+            }
+
+            // 2) 利用血统 ID 去历史任务表中精准找人
+            List<HistoricTaskInstance> targetHistoryTasks = new ArrayList<>();
+            for (String execId : executionLineage) {
+                targetHistoryTasks = historyService.createHistoricTaskInstanceQuery()
+                        .executionId(execId) // 【绝对隔离】：只查当前族谱上的分支！
+                        .taskDefinitionKey(reqVO.getTargetTaskDefinitionKey())
+                        .finished()
+                        .orderByHistoricTaskInstanceEndTime().desc()
+                        .list();
+
+                // 只要在这个树枝上找到了，说明是最近的历史，立马停止！
+                if (CollUtil.isNotEmpty(targetHistoryTasks)) {
+                    break;
+                }
+            }
+
+            // 3) 极小概率兜底：目标节点可能在拆分前的主干上
+            if (CollUtil.isEmpty(targetHistoryTasks)) {
+                targetHistoryTasks = historyService.createHistoricTaskInstanceQuery()
+                        .processInstanceId(currentTask.getProcessInstanceId())
+                        .taskDefinitionKey(reqVO.getTargetTaskDefinitionKey())
+                        .finished()
+                        .orderByHistoricTaskInstanceEndTime().desc()
+                        .listPage(0, 1);
+            }
+
+            // 4) 提取同批次的人员 (容差 2000 毫秒合并多实例人员)
+            if (CollUtil.isNotEmpty(targetHistoryTasks)) {
+                long baselineTime = targetHistoryTasks.get(0).getEndTime().getTime();
+                Set<Long> cleanAssignees = new LinkedHashSet<>();
+                for (HistoricTaskInstance ht : targetHistoryTasks) {
+                    if (Math.abs(ht.getEndTime().getTime() - baselineTime) <= 2000) {
+                        if (cn.hutool.core.util.StrUtil.isNotBlank(ht.getAssignee())) {
+                            cleanAssignees.add(Long.valueOf(ht.getAssignee()));
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                actualReturnAssignees.addAll(cleanAssignees);
+            }
+        }
+
+        // 把洗干净的名单强行覆盖到底层，彻底抹杀其他分支残留！
+        if (CollUtil.isNotEmpty(actualReturnAssignees)) {
+            String targetKey = reqVO.getTargetTaskDefinitionKey();
+            String processInstanceId = currentTask.getProcessInstanceId();
+
+            // 1) 安全覆写全局记忆 Map (防御 ClassCastException)
+            Object lastNodeObj = runtimeService.getVariable(processInstanceId, BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+            Map<String, List<Long>> lastNodeMap = new HashMap<>();
+            if (lastNodeObj instanceof Map) {
+                Map<?, ?> tempMap = (Map<?, ?>) lastNodeObj;
+                for (Map.Entry<?, ?> entry : tempMap.entrySet()) {
+                    if (entry.getKey() != null && entry.getValue() != null) {
+                        Object val = entry.getValue();
+                        if (val instanceof List) {
+                            List<Long> userIds = new ArrayList<>();
+                            for (Object item : (List<?>) val) {
+                                userIds.add(Long.valueOf(item.toString()));
+                            }
+                            lastNodeMap.put(String.valueOf(entry.getKey()), userIds);
+                        }
+                    }
+                }
+            }
+            lastNodeMap.put(targetKey, actualReturnAssignees);
+            runtimeService.setVariable(processInstanceId, BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, lastNodeMap);
+
+            // 2) 安全更新时间戳
+            Object updateDateObj = runtimeService.getVariable(processInstanceId, BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_UPDATE_TIME);
+            Map<String, Long> updateDateMap = new HashMap<>();
+            if (updateDateObj instanceof Map) {
+                Map<?, ?> tempMap = (Map<?, ?>) updateDateObj;
+                for (Map.Entry<?, ?> entry : tempMap.entrySet()) {
+                    if (entry.getKey() != null && entry.getValue() != null) {
+                        updateDateMap.put(String.valueOf(entry.getKey()), Long.valueOf(entry.getValue().toString()));
+                    }
+                }
+            }
+            updateDateMap.put(targetKey, System.currentTimeMillis());
+            runtimeService.setVariable(processInstanceId, BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_UPDATE_TIME, updateDateMap);
+
+            // 3) 防多实例无限裂变：强行覆写底层集合变量
+            if (targetElement instanceof org.flowable.bpmn.model.UserTask) {
+                org.flowable.bpmn.model.UserTask targetUserTask = (org.flowable.bpmn.model.UserTask) targetElement;
+                if (targetUserTask.getLoopCharacteristics() != null && cn.hutool.core.util.StrUtil.isNotBlank(targetUserTask.getLoopCharacteristics().getInputDataItem())) {
+                    String collectionVarName = targetUserTask.getLoopCharacteristics().getInputDataItem().replace("${", "").replace("}", "").trim();
+                    runtimeService.setVariable(processInstanceId, collectionVarName, actualReturnAssignees);
+                }
+            }
+        }
         // 4. 执行驳回
         // ① 使用 moveExecutionsToSingleActivityId 替换 moveActivityIdsToSingleActivityId。原因：当多实例任务回退的时候有问题。
         //    相关 issue: https://github.com/flowable/flowable-engine/issues/3944
@@ -1659,6 +1788,22 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 .localVariable(reqVO.getTargetTaskDefinitionKey(),
                         String.format(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_RETURN_FLAG, reqVO.getTargetTaskDefinitionKey()), Boolean.TRUE)
                 .changeState();
+
+        if (CollUtil.isNotEmpty(actualReturnAssignees)) {
+            List<Task> newTargetTasks = taskService.createTaskQuery()
+                    .processInstanceId(currentTask.getProcessInstanceId())
+                    .taskDefinitionKey(reqVO.getTargetTaskDefinitionKey())
+                    .active()
+                    .list();
+
+            // 如果是单节点 (非多实例)，强行覆盖引擎触发监听器分配的默认人
+            if (newTargetTasks.size() == 1 && actualReturnAssignees.size() == 1) {
+                String targetAssignee = String.valueOf(actualReturnAssignees.get(0));
+                Task newTargetTask = newTargetTasks.get(0);
+                taskService.setAssignee(newTargetTask.getId(), targetAssignee);
+                taskService.setOwner(newTargetTask.getId(), targetAssignee);
+            }
+        }
     }
 
     private Set<String> getNeedSimulateTaskDefinitionKeys(BpmnModel bpmnModel, Task currentTask, FlowElement targetElement) {

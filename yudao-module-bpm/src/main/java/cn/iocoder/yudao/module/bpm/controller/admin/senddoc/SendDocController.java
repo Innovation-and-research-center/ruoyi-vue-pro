@@ -2,6 +2,7 @@ package cn.iocoder.yudao.module.bpm.controller.admin.senddoc;
 
 import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
+import io.swagger.v3.oas.annotations.Parameters;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -63,8 +64,12 @@ public class SendDocController {
     @Operation(summary = "删除发文")
     @Parameter(name = "id", description = "编号", required = true)
     @PreAuthorize("@ss.hasPermission('bpm:send-doc:delete')")
-    public CommonResult<Boolean> deleteSendDoc(@RequestParam("id") Long id) {
-        sendDocService.deleteSendDoc(id);
+    @Parameters({
+            @Parameter(name = "id", description = "编号", required = true),
+            @Parameter(name = "reason", description = "作废原因", required = true)
+    })
+    public CommonResult<Boolean> deleteSendDoc(@RequestParam("id") Long id,@RequestParam("reason") String reason) {
+        sendDocService.deleteSendDoc(id, reason);
         return success(true);
     }
 
@@ -72,8 +77,12 @@ public class SendDocController {
     @Parameter(name = "ids", description = "编号", required = true)
     @Operation(summary = "批量删除发文")
                 @PreAuthorize("@ss.hasPermission('bpm:send-doc:delete')")
-    public CommonResult<Boolean> deleteSendDocList(@RequestParam("ids") List<Long> ids) {
-        sendDocService.deleteSendDocListByIds(ids);
+    @Parameters({
+            @Parameter(name = "ids", description = "编号列表", required = true),
+            @Parameter(name = "reason", description = "作废原因", required = true)
+    })
+    public CommonResult<Boolean> deleteSendDocList(@RequestParam("ids") List<Long> ids,@RequestParam("reason") String reason) {
+        sendDocService.deleteSendDocListByIds(ids,reason);
         return success(true);
     }
 

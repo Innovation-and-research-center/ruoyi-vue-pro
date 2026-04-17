@@ -11,6 +11,9 @@ import cn.idev.excel.annotation.*;
 @Data
 @ExcelIgnoreUnannotated
 public class ConfflowRespVO {
+    @Schema(description = "会议记录id", requiredMode = Schema.RequiredMode.REQUIRED, example = "29970")
+    @ExcelProperty("会议记录 id")
+    private Long id;
 
     @Schema(description = "申请人ID", example = "10425")
     @ExcelProperty("申请人ID")
@@ -74,5 +77,9 @@ public class ConfflowRespVO {
 
     @Schema(description = "召集单位及召集人")
     private String joinUnit;
+
+    private Short status;
+
+    private String cancelReason;
 
 }

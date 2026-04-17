@@ -1,10 +1,12 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.timeexplain;
 
 import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
+import cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.LeaveRespVO;
 import cn.iocoder.yudao.module.system.api.dept.DeptApi;
 import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
+import io.swagger.v3.oas.annotations.Parameters;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -29,6 +31,7 @@ import cn.iocoder.yudao.framework.excel.core.util.ExcelUtils;
 
 import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import static cn.iocoder.yudao.framework.apilog.core.enums.OperateTypeEnum.*;
+import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertSet;
 import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 
 import cn.iocoder.yudao.module.bpm.controller.admin.timeexplain.vo.*;
@@ -73,17 +76,23 @@ public class TimeExplainController {
 
     @DeleteMapping("/delete")
     @Operation(summary = "删除外出请假补假")
-    @Parameter(name = "id", description = "编号", required = true)
-    public CommonResult<Boolean> deleteTimeExplain(@RequestParam("id") Long id) {
-        timeExplainService.deleteTimeExplain(id);
+    @Parameters({
+            @Parameter(name = "id", description = "编号", required = true),
+            @Parameter(name = "reason", description = "作废原因", required = true)
+    })
+    public CommonResult<Boolean> deleteTimeExplain(@RequestParam("id") Long id,@RequestParam("reason") String reason) {
+        timeExplainService.deleteTimeExplain(id,reason);
         return success(true);
     }
 
     @DeleteMapping("/delete-list")
     @Parameter(name = "ids", description = "编号", required = true)
-    @Operation(summary = "批量删除外出请假补假")
-    public CommonResult<Boolean> deleteTimeExplainList(@RequestParam("ids") List<Long> ids) {
-        timeExplainService.deleteTimeExplainListByIds(ids);
+    @Parameters({
+            @Parameter(name = "ids", description = "编号列表", required = true),
+            @Parameter(name = "reason", description = "作废原因", required = true)
+    })
+    public CommonResult<Boolean> deleteTimeExplainList(@RequestParam("ids") List<Long> ids,@RequestParam("reason") String reason) {
+        timeExplainService.deleteTimeExplainListByIds(ids,reason);
         return success(true);
     }
 
@@ -105,7 +114,17 @@ public class TimeExplainController {
     @Operation(summary = "获得外出请假补假分页")
     public CommonResult<PageResult<TimeExplainRespVO>> getTimeExplainPage(@Valid TimeExplainPageReqVO pageReqVO) {
         PageResult<TimeExplainDO> pageResult = timeExplainService.getTimeExplainPage(pageReqVO);
-        return success(BeanUtils.toBean(pageResult, TimeExplainRespVO.class));
+        PageResult<TimeExplainRespVO> result = BeanUtils.toBean(pageResult, TimeExplainRespVO.class);
+        Set<Long> userIds = convertSet(result.getList(), TimeExplainRespVO::getCreator);
+        Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(userIds);
+        result.getList().forEach(vo ->{
+            AdminUserRespDTO user = userMap.get(vo.getCreator());
+            if (user != null) {
+                vo.setNickName(user.getNickname());
+                // 如果需要部门或其他信息，也可以在这里设置
+            }
+        });
+        return success(result);
     }
 
     @GetMapping("/export-excel")

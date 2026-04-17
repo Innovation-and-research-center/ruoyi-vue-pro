@@ -35,14 +35,16 @@ public interface XzfyService {
      *
      * @param id 编号
      */
-    void deleteXzfy(Long id);
+    void deleteXzfy(Long id,String reason);
 
     /**
     * 批量删除行政复议
     *
     * @param ids 编号
     */
-    void deleteXzfyListByIds(List<Long> ids);
+    void deleteXzfyListByIds(List<Long> ids,String reason);
+
+    void updateXzfyStatus(Long id, Integer status);
 
     /**
      * 获得行政复议

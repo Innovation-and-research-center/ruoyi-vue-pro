@@ -24,6 +24,9 @@ public class LeaveSummaryRespVO {
     @Schema(description = "共计天数", example = "5.5")
     private BigDecimal totalDays;
 
+    @Schema(description = "审批中的天数", example = "2.0")
+    private BigDecimal runningDays; // 【新增字段】用于接收审批中的天数
+
     @Schema(description = "请假次数", example = "3")
     private Integer count;
 }

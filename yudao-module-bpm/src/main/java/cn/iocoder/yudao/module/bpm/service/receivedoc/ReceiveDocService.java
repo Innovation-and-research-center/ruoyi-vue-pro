@@ -45,14 +45,14 @@ public interface ReceiveDocService {
      *
      * @param id 编号
      */
-    void deleteReceiveDoc(Long id);
+    void deleteReceiveDoc(Long id,String reason);
 
     /**
     * 批量删除收文
     *
     * @param ids 编号
     */
-    void deleteReceiveDocListByIds(List<Long> ids);
+    void deleteReceiveDocListByIds(List<Long> ids,String reason);
 
     /**
      * 获得收文
@@ -73,5 +73,7 @@ public interface ReceiveDocService {
     List<ReceiveFileRespVO> getReceiveDocAttachListByReceiveDocId(Long receiveDocId);
 
     byte[] generatePdf(Long receiveDocId) throws Exception;
+
+    void updateReceiveStatus(Long id, Integer status);
 
 }

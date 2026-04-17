@@ -34,14 +34,14 @@ public interface LeaveService {
      *
      * @param id 编号
      */
-    void deleteLeave(Long id);
+    void deleteLeave(Long id,String reason);
 
     /**
     * 批量删除假期申请审批
     *
     * @param ids 编号
     */
-    void deleteLeaveListByIds(List<Long> ids);
+    void deleteLeaveListByIds(List<Long> ids,String reason);
 
     /**
      * 获得假期申请审批
@@ -64,5 +64,7 @@ public interface LeaveService {
 
     List<LeaveSummaryRespVO> getLeaveSummary(LeaveSummaryReqVO reqVO);
 
-    List<LeaveDO> getLeaveDetailList(LeaveSummaryReqVO reqVO);
+    List<LeaveHistoryRespVO> getLeaveDetailList(LeaveSummaryReqVO reqVO);
+
+    PageResult<LeaveHistoryRespVO> getLeaveHistoryPage(LeavePageReqVO pageReqVO);
 }

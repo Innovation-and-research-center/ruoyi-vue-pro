@@ -246,4 +246,6 @@ public class TimeExplainDO extends BaseDO {
     private String filepath;
 
 
+    private String cancelReason;
+
 }

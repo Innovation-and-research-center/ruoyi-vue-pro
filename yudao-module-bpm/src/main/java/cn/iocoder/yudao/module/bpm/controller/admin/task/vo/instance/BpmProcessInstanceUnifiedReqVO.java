@@ -38,4 +38,7 @@ public class BpmProcessInstanceUnifiedReqVO extends PageParam {
     private LocalDateTime[] createTime;
 
     private Integer overdueDays;
+
+    @Schema(description = "业务结果(1-处理中, 2-通过, 3-不通过, 4-撤销)", example = "2")
+    private Integer processResult;
 }

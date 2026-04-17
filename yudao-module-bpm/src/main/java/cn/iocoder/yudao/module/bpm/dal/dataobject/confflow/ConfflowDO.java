@@ -109,6 +109,8 @@ public class ConfflowDO extends BaseDO {
      * 附件路径
      */
     private String attachFilePath;
+    private Short status;
 
+    private String cancelReason;
 
 }

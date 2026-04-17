@@ -456,4 +456,8 @@ public class SendDocRespVO {
     @ExcelProperty("创建时间")
     private LocalDateTime createTime;
 
+    private Short status;
+
+    private String cancelReason;
+
 }

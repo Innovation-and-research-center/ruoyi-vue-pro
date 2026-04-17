@@ -24,6 +24,8 @@
         u.nickname,
         d.name AS dept_name,
         t.qxj_type,
+        SUM(CASE WHEN t.spzt = 2 THEN t.total_ts ELSE 0 END) AS total_days,
+        SUM(CASE WHEN t.spzt = 1 THEN t.total_ts ELSE 0 END) AS running_days,
         SUM(t.total_ts) AS total_days,
         COUNT(t.id) AS count
         FROM bpm_leave t
@@ -31,6 +33,7 @@
         LEFT JOIN system_dept d ON u.dept_id = d.id
         <where>
             t.deleted = 0
+            AND t.spzt IN (1, 2)
             <if test="userId != null">
                 AND t.userid = #{userId}
             </if>

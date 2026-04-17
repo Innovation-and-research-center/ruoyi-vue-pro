@@ -29,6 +29,7 @@ public interface LeaveMapper extends BaseMapperX<LeaveDO> {
                 .eqIfPresent(LeaveDO::getQxjType, reqVO.getQxjType())
                 .eqIfPresent(LeaveDO::getTotalTs, reqVO.getTotalTs())
                 .eqIfPresent(LeaveDO::getFilepath, reqVO.getFilepath())
+                .eqIfPresent(LeaveDO::getCreator,reqVO.getUserId())
                 .orderByDesc(LeaveDO::getId));
     }
 

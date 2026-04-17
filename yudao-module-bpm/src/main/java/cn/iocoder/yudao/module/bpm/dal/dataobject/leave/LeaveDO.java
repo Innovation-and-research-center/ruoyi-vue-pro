@@ -165,5 +165,7 @@ public class LeaveDO extends BaseDO {
      */
     private String filepath;
 
+    private String reason;
+
 
 }
