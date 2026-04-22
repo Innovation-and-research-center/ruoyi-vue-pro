@@ -55,12 +55,12 @@ public class DutySmsJob implements JobHandler {
         }
 
         LocalDateTime startTime = targetDate.atStartOfDay();
-        LocalDateTime endTime = targetDate.atTime(LocalTime.MAX);
+        LocalDateTime endTime = targetDate.plusDays(1).atStartOfDay();
 
         List<DutyStaffDO> staffList = dutyStaffMapper.selectList(
                 new LambdaQueryWrapper<DutyStaffDO>()
                         .ge(DutyStaffDO::getDutyDate, startTime)
-                        .le(DutyStaffDO::getDutyDate, endTime)
+                        .lt(DutyStaffDO::getDutyDate, endTime) // 🚨 关键：使用 lt (less than，严格小于)
                         .eq(DutyStaffDO::getDeleted, 0)
         );
 

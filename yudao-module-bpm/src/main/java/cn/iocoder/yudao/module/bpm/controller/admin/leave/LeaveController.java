@@ -10,12 +10,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
-import org.springframework.security.access.prepost.PreAuthorize;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.Operation;
 
-import javax.validation.constraints.*;
 import javax.validation.*;
 import javax.servlet.http.*;
 import java.util.*;
@@ -128,12 +126,12 @@ public class LeaveController {
     @Operation(summary = "导出假期申请审批 Excel")
     @ApiAccessLog(operateType = EXPORT)
     public void exportLeaveExcel(@Valid LeavePageReqVO pageReqVO,
-              HttpServletResponse response) throws IOException {
+                                 HttpServletResponse response) throws IOException {
         pageReqVO.setPageSize(PageParam.PAGE_SIZE_NONE);
         List<LeaveDO> list = leaveService.getLeavePage(pageReqVO).getList();
         // 导出 Excel
         ExcelUtils.write(response, "假期申请审批.xls", "数据", LeaveRespVO.class,
-                        BeanUtils.toBean(list, LeaveRespVO.class));
+                BeanUtils.toBean(list, LeaveRespVO.class));
     }
 
     @GetMapping("/summary")
