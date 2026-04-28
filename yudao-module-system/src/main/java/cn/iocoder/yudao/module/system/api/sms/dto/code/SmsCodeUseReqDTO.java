@@ -19,7 +19,6 @@ public class SmsCodeUseReqDTO {
     /**
      * 手机号
      */
-    @Mobile
     @NotEmpty(message = "手机号不能为空")
     private String mobile;
     /**

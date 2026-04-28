@@ -21,7 +21,6 @@ public class SmsSendSingleToUserReqDTO {
     /**
      * 手机号
      */
-    @Mobile
     private String mobile;
     /**
      * 短信模板编号

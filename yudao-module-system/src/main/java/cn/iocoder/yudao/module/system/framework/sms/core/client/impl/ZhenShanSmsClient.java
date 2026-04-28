@@ -7,9 +7,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import cn.hutool.extra.spring.SpringUtil;
 import cn.hutool.http.HttpRequest;
-import cn.hutool.http.HttpUtil;
 import cn.iocoder.yudao.framework.common.core.KeyValue;
-import cn.iocoder.yudao.framework.common.util.collection.MapUtils;
 import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
 import cn.iocoder.yudao.module.system.dal.dataobject.sms.SmsTemplateDO;
 import cn.iocoder.yudao.module.system.dal.mysql.sms.SmsTemplateMapper;
@@ -32,7 +30,7 @@ public class ZhenShanSmsClient extends AbstractSmsClient {
     private static final String EC_NAME = "义乌市数据管理中心";
     private static final String AP_ID = "ywzgj2";
     private static final String S_KEY = "b32d21ca6fbe4b31a3872b36ab3fbdda";
-    private static final String SIGN = "wJcInYaXr";
+    private static final String SIGN = "mkEoQtYt3";
     private static final String SECRET_KEY = "Ziguiju2@1234";
     private static final String SUBMIT_URL = "http://10.130.146.149:28082/sms";
 
@@ -111,9 +109,6 @@ public class ZhenShanSmsClient extends AbstractSmsClient {
                 .setSerialNo(StrUtil.uuid())
                 .setApiCode(Boolean.TRUE.equals(success) ? "200" : "500")
                 .setApiMsg(message);
-
-
-
 
     }
 

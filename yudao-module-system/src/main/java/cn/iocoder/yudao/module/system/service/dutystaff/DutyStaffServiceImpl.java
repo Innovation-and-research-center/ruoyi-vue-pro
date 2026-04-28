@@ -157,7 +157,7 @@ public class DutyStaffServiceImpl implements DutyStaffService {
             for (Map.Entry<String, Object> entry : importDuty.entrySet()) {
                 String header = entry.getKey();
                 Object val = entry.getValue();
-                String staffName = val != null ? String.valueOf(val) : "";
+                String staffName = String.valueOf(val).replaceAll("\\s+", "");
 
                 if (!dictLabelToValue.containsKey(header)) {
                     continue; // 非值班类型列
@@ -194,7 +194,7 @@ public class DutyStaffServiceImpl implements DutyStaffService {
                     // 插入
                     DutyStaffDO newDuty = DutyStaffDO.builder()
                             .dutyDate(dutyDate.atStartOfDay())
-                            .staffName(user.getUsername())
+                            .staffName(user.getNickname())
                             .staffType(staffType)
                             .userId(user.getId())
                             .smsCount(0L)
