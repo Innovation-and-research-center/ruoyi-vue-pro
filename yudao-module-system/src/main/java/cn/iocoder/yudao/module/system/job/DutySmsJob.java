@@ -75,50 +75,90 @@ public class DutySmsJob implements JobHandler {
         }
 
 
-        int successCount = 0;
+        int successSmsCount = 0;
+        int successDingCount = 0;
         for (DutyStaffDO staff : staffList) {
             if (staff.getUserId() == null) {
                 continue;
             }
             AdminUserDO user = adminUserMapper.selectById(staff.getUserId());
-            // 校验人员及手机号
-            if (user == null || StrUtil.isBlank(user.getMobile())) {
-                log.warn("值班人员 {} (ID:{}) 未配置手机号，跳过发送", staff.getStaffName(), staff.getUserId());
+
+            if (user == null) {
                 continue;
             }
-            // 5. 组装短信模板参数
-            // 请确保这部分 Key 与你在【消息中心 -> 短信模板】中设置的变量名一致
+
+            // 【修改】拆分手机号与钉钉ID的判断逻辑
+            boolean hasMobile = StrUtil.isNotBlank(user.getMobile());
+            boolean hasDingId = StrUtil.isNotBlank(user.getDingId());
+
+            if (!hasMobile && !hasDingId) {
+                log.warn("值班人员 {} (ID:{}) 未配置手机号和钉钉ID，跳过发送", staff.getStaffName(), staff.getUserId());
+                continue;
+            }
+
+            // 5. 组装消息模板参数 (钉钉和短信共用此参数)
             Map<String, Object> templateParams = new HashMap<>(commonDictParams);
-//            templateParams.put("name", user.getNickname());
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy年M月d日");
             templateParams.put("dutydate", targetDate.format(formatter));
-//            templateParams.put("dutydate", targetDate.toString());
-            // 如果你的模板需要显示值班类型（带班领导/值班员），也可以传参
-//             templateParams.put("type", staff.getStaffType());
 
-            String templateCode = "duty_"+staff.getStaffType();
+            String templateCode = "duty_" + staff.getStaffType();
+            String templateDingCode = "duty_ding_" + staff.getStaffType();
+            boolean isSentAny = false; // 标记是否成功发送了任意一种消息
 
-            try {
-                // 调用系统短信 API 投递
-                smsSendApi.sendSingleSmsToAdmin(new SmsSendSingleToUserReqDTO()
-                        .setUserId(user.getId())
-                        .setMobile(user.getMobile())
-                        .setTemplateCode(templateCode)
-                        .setTemplateParams(templateParams));
+            // ================== 【新增】发送钉钉消息逻辑 ==================
+            if (hasDingId) {
+                try {
+                    // TODO: 请将下方替换为你实际的钉钉发送方法调用
+                    // dingTalkSendApi.sendDingMessage(user.getDingId(), templateCode, templateParams);
 
-                successCount++;
+                    smsSendApi.sendSingleSmsToAdmin(new SmsSendSingleToUserReqDTO()
+                            .setUserId(user.getId())
+                            .setMobile(user.getDingId())
+                            .setTemplateCode(templateDingCode)
+                            .setTemplateParams(templateParams));
+                    successDingCount++;
+                    isSentAny = true;
+                } catch (Exception e) {
+                    log.error("给值班人员 {} 发送钉钉消息异常", user.getNickname(), e);
+                }
+            }
+            // ================== 发送短信消息逻辑 ==================
+            if (hasMobile) {
+                try {
+                    // 调用系统短信 API 投递
+                    smsSendApi.sendSingleSmsToAdmin(new SmsSendSingleToUserReqDTO()
+                            .setUserId(user.getId())
+                            .setMobile(user.getMobile())
+                            .setTemplateCode(templateCode)
+                            .setTemplateParams(templateParams));
 
-                // 6. 累加并更新短信发送次数 (利用了你在实体类中的 smsCount 字段)
+                    successSmsCount++;
+                    isSentAny = true;
+                } catch (Exception e) {
+                    log.error("给值班人员 {} 发送短信异常", user.getNickname(), e);
+                }
+            }
+
+            // ================== 6. 累加并更新发送次数 ==================
+            // 【修改】只要短信或钉钉其中一项发送成功，就累加次数
+            if (isSentAny) {
                 Long currentCount = staff.getSmsCount() == null ? 0L : staff.getSmsCount();
                 staff.setSmsCount(currentCount + 1);
                 dutyStaffMapper.updateById(staff);
-
-            } catch (Exception e) {
-                log.error("给值班人员 {} 发送短信异常", user.getNickname(), e);
+                try {
+                    // 每次发送成功后，强制休眠 100 毫秒
+                    // 如果列表人数特别多或依然出现遗漏，可以适当调整为 200
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    log.error("发送消息线程休眠被中断", e);
+                    // 恢复中断状态
+                    Thread.currentThread().interrupt();
+                }
             }
         }
 
-        return String.format("执行成功: 目标日期 %s，共找到 %d 人，成功发送短信 %d 条", targetDate, staffList.size(), successCount);
+        return String.format("执行成功: 目标日期 %s，共找到 %d 人，成功发送短信 %d 条，钉钉消息 %d 条",
+                targetDate, staffList.size(), successSmsCount, successDingCount);
 
     }
 }

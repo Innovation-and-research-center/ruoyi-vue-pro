@@ -7,9 +7,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import cn.hutool.extra.spring.SpringUtil;
 import cn.hutool.http.HttpRequest;
-import cn.hutool.http.HttpUtil;
 import cn.iocoder.yudao.framework.common.core.KeyValue;
-import cn.iocoder.yudao.framework.common.util.collection.MapUtils;
 import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
 import cn.iocoder.yudao.module.system.dal.dataobject.sms.SmsTemplateDO;
 import cn.iocoder.yudao.module.system.dal.mysql.sms.SmsTemplateMapper;
@@ -111,9 +109,6 @@ public class ZhenShanSmsClient extends AbstractSmsClient {
                 .setSerialNo(StrUtil.uuid())
                 .setApiCode(Boolean.TRUE.equals(success) ? "200" : "500")
                 .setApiMsg(message);
-
-
-
 
     }
 
