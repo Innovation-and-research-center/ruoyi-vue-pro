@@ -155,4 +155,12 @@ public class LeaveController {
         return success(pageResult);
     }
 
+    @GetMapping("/get-yearly-stat")
+    @Operation(summary = "获得当前用户本年度的请假类型统计")
+    public CommonResult<List<LeaveTypeStatRespVO>> getCurrentUserYearlyLeaveStat() {
+        // 直接调用 service 获取统计结果
+        List<LeaveTypeStatRespVO> statList = leaveService.getCurrentUserYearlyLeaveStat();
+        return success(statList);
+    }
+
 }

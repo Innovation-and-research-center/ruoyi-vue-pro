@@ -7,6 +7,7 @@ import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocDO;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -69,7 +70,7 @@ public class SendDocServiceImpl implements SendDocService {
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
                         .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(sendDoc.getId()))
                         .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
-        sendDocMapper.updateById(new SendDocDO().setId(sendDoc.getId()).setProcessInstanceId(processInstanceId));
+        sendDocMapper.updateById(new SendDocDO().setId(sendDoc.getId()).setProcessInstanceId(processInstanceId).setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
         // 返回
         return sendDoc.getId();
     }

@@ -66,4 +66,6 @@ public interface LeaveService {
     List<LeaveHistoryRespVO> getLeaveDetailList(LeaveSummaryReqVO reqVO);
 
     PageResult<LeaveHistoryRespVO> getLeaveHistoryPage(LeavePageReqVO pageReqVO);
+
+    List<LeaveTypeStatRespVO> getCurrentUserYearlyLeaveStat();
 }

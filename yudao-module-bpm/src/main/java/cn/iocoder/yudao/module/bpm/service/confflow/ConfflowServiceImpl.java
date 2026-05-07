@@ -9,6 +9,7 @@ import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocDO;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import jodd.util.StringUtil;
@@ -81,7 +82,7 @@ public class ConfflowServiceImpl implements ConfflowService {
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
                         .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(confflow.getId()))
                         .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
-        confflowMapper.updateById(new ConfflowDO().setId(confflow.getId()).setProcessInstanceId(processInstanceId));
+        confflowMapper.updateById(new ConfflowDO().setId(confflow.getId()).setProcessInstanceId(processInstanceId).setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
 
         // 返回
         return confflow.getId();

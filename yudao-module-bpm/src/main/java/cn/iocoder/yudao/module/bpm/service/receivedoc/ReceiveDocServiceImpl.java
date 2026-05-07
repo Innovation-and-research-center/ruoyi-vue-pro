@@ -14,6 +14,7 @@ import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocAttachDO;
 import cn.iocoder.yudao.module.bpm.dal.mysql.receivedoc.ReceiveDocAttachMapper;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
 import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
@@ -146,7 +147,7 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(realKey)
                         .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(receiveDoc.getId()))
                         .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
-        receiveDocMapper.updateById(new ReceiveDocDO().setId(receiveDoc.getId()).setProcessInstanceId(processInstanceId));
+        receiveDocMapper.updateById(new ReceiveDocDO().setId(receiveDoc.getId()).setProcessInstanceId(processInstanceId).setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
 
 
         // 返回
@@ -350,7 +351,7 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(realKey)
                         .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(updateObj.getId()))
                         .setStartUserSelectAssignees(updateReqVO.getStartUserSelectAssignees()));
-        receiveDocMapper.updateById(new ReceiveDocDO().setId(updateObj.getId()).setProcessInstanceId(processInstanceId));
+        receiveDocMapper.updateById(new ReceiveDocDO().setId(updateObj.getId()).setProcessInstanceId(processInstanceId).setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
     }
 
 

@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.system.dal.mysql.holiday;
 
+import java.time.LocalDateTime;
 import java.util.*;
 
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
@@ -18,7 +19,7 @@ import cn.iocoder.yudao.module.system.controller.admin.holiday.vo.*;
 public interface HolidayMapper extends BaseMapperX<HolidayDO> {
 
 
-    default List<HolidayDO> selectByDate(String holidayDate){
+    default List<HolidayDO> selectByDate(LocalDateTime holidayDate){
         return selectList(HolidayDO::getSettingDate, holidayDate);
     }
 

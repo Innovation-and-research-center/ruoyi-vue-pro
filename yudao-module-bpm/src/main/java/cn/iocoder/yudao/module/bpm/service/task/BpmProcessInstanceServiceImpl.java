@@ -1569,6 +1569,24 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         if (StrUtil.isNotBlank(instance.getSuperExecutionId())) {
             throw exception(PROCESS_INSTANCE_CANCEL_CHILD_FAIL_NOT_ALLOW);
         }
+        // 1.5 判断后续节点是否已被审批过（只要存在一个非发起人节点，且状态为 APPROVE 的已完成任务，即视为已被审批过）
+        List<HistoricTaskInstance> finishedTasks = historyService.createHistoricTaskInstanceQuery()
+                .processInstanceId(cancelReqVO.getId())
+                .finished()
+                .includeTaskLocalVariables() // 必须包含本地变量，以便获取 TASK_VARIABLE_STATUS
+                .list();
+
+        boolean hasApprovedNode = finishedTasks.stream()
+                .filter(task -> !START_USER_NODE_ID.equals(task.getTaskDefinitionKey())) // 排除系统自动生成的发起人节点
+                .anyMatch(task -> {
+                    Integer status = (Integer) task.getTaskLocalVariables().get(BpmnVariableConstants.TASK_VARIABLE_STATUS);
+                    return BpmTaskStatusEnum.APPROVE.getStatus().equals(status);
+                });
+
+        if (hasApprovedNode) {
+            // 提示：你需要在 ErrorCodeConstants.java 中新增此错误码，或者直接在这里抛出带中文的 RuntimeException
+            throw exception(PROCESS_INSTANCE_CANCEL_FAIL_NEXT_NODE_APPROVED);
+        }
 
         // 2. 取消流程
         updateProcessInstanceCancel(cancelReqVO.getId(),

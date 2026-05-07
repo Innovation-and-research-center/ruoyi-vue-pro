@@ -20,13 +20,13 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
     default PageResult<ReceiveDocDO> selectPage(ReceiveDocPageReqVO reqVO) {
         return selectPage(reqVO, new LambdaQueryWrapperX<ReceiveDocDO>()
                 .eqIfPresent(ReceiveDocDO::getDocClass, reqVO.getDocClass())
-                .eqIfPresent(ReceiveDocDO::getSendDept, reqVO.getSendDept())
+                .likeIfPresent(ReceiveDocDO::getSendDept, reqVO.getSendDept())
                 .eqIfPresent(ReceiveDocDO::getSendDocNumber, reqVO.getSendDocNumber())
                 .eqIfPresent(ReceiveDocDO::getReceiveDocNumber, reqVO.getReceiveDocNumber())
                 .betweenIfPresent(ReceiveDocDO::getReceiveTime, reqVO.getReceiveTime())
                 .likeIfPresent(ReceiveDocDO::getSubject, reqVO.getSubject())
                 .eqIfPresent(ReceiveDocDO::getUrgencyDegree, reqVO.getUrgencyDegree())
-                .eqIfPresent(ReceiveDocDO::getDocSecondClass, reqVO.getDocSecondClass())
+                .likeIfPresent(ReceiveDocDO::getDocSecondClass, reqVO.getDocSecondClass())
                 .orderByDesc(ReceiveDocDO::getId));
     }
 

@@ -56,6 +56,7 @@ public interface ErrorCodeConstants {
     ErrorCode PROCESS_INSTANCE_CANCEL_CHILD_FAIL_NOT_ALLOW = new ErrorCode(1_009_004_008, "子流程取消失败，子流程不允许取消");
     ErrorCode PROCESS_INSTANCE_NOT_END = new ErrorCode(1_009_004_009, "任务({})的下一节点不是主流程结束节点，不支持批量办结");
     ErrorCode PROCESS_INSTANCE_APPROVE_USER_SELECT_ASSIGNEES_IS_HAVE = new ErrorCode(1_009_004_010, "所选的({})的办理人已在办理该任务");
+    ErrorCode PROCESS_INSTANCE_CANCEL_FAIL_NEXT_NODE_APPROVED = new ErrorCode(1_009_004_011, "后续节点已被审批，无法撤销流程");
 
     // ========== 流程任务 1-009-005-000 ==========
     ErrorCode TASK_OPERATE_FAIL_ASSIGN_NOT_SELF = new ErrorCode(1_009_005_001, "操作失败，原因：该任务的审批人不是你");

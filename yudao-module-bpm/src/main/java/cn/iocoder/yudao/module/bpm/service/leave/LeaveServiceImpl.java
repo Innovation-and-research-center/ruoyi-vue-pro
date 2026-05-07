@@ -24,6 +24,8 @@ import cn.iocoder.yudao.module.system.service.user.AdminUserService;
 import org.flowable.task.api.Task;
 import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
+
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 
 import java.math.BigDecimal;
@@ -463,6 +465,20 @@ public class LeaveServiceImpl implements LeaveService {
                 }
             }
         });
+    }
+
+    @Override
+    public List<LeaveTypeStatRespVO> getCurrentUserYearlyLeaveStat() {
+        // 1. 获取当前调用接口的人的 ID
+        Long userId = SecurityFrameworkUtils.getLoginUserId();
+
+        // 2. 划定今年的时间范围：今年的 1月1日 00:00:00 到 12月31日 23:59:59
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime beginTime = LocalDateTime.of(now.getYear(), 1, 1, 0, 0, 0);
+        LocalDateTime endTime = LocalDateTime.of(now.getYear(), 12, 31, 23, 59, 59);
+
+        // 3. 调用 Mapper 进行统计查询
+        return leaveMapper.selectLeaveTypeStat(userId, beginTime, endTime);
     }
 
 }

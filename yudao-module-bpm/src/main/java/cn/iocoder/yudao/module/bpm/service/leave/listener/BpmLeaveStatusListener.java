@@ -20,6 +20,7 @@ public class BpmLeaveStatusListener extends BpmProcessInstanceStatusEventListene
 
     @Override
     protected void onEvent(BpmProcessInstanceStatusEvent event) {
+        System.out.print("请假流程实例状态发生变化："+event.getStatus());
         leaveService.updateLeaveStatus(Long.parseLong(event.getBusinessKey()), event.getStatus());
     }
 }

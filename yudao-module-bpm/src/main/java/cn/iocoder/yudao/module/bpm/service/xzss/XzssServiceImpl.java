@@ -8,6 +8,7 @@ import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import cn.iocoder.yudao.module.bpm.service.commentattach.CommentAttachService;
@@ -98,7 +99,7 @@ public class XzssServiceImpl implements XzssService {
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
                         .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(xzss.getId()))
                         .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
-        xzssMapper.updateById(new XzssDO().setId(xzss.getId()).setProcessInstanceId(processInstanceId));
+        xzssMapper.updateById(new XzssDO().setId(xzss.getId()).setProcessInstanceId(processInstanceId).setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
         // 返回
         return xzss.getId();
     }

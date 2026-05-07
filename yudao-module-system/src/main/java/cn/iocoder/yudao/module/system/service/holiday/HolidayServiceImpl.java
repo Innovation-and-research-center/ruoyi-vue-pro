@@ -122,7 +122,7 @@ public class HolidayServiceImpl implements HolidayService {
                 // 默认处理 2022-02-15 格式
                 holidayDate = LocalDate.parse(dateString);
             }
-            List<HolidayDO> holidayDo = holidayMapper.selectByDate(String.valueOf(holidayDate));
+            List<HolidayDO> holidayDo = holidayMapper.selectByDate(holidayDate.atStartOfDay());
 
             if (CollUtil.isEmpty(holidayDo)) {
                 HolidayDO holiday = HolidayDO.builder()

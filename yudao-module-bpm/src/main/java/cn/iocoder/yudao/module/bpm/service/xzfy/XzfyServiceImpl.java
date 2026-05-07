@@ -11,6 +11,7 @@ import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
 import cn.iocoder.yudao.module.bpm.dal.mysql.xzss.XzssMapper;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import cn.iocoder.yudao.module.bpm.service.commentattach.CommentAttachService;
@@ -107,7 +108,7 @@ public class XzfyServiceImpl implements XzfyService {
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
                         .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(xzfy.getId()))
                         .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
-        xzfyMapper.updateById(new XzfyDO().setId(xzfy.getId()).setProcessInstanceId(processInstanceId));
+        xzfyMapper.updateById(new XzfyDO().setId(xzfy.getId()).setProcessInstanceId(processInstanceId).setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
         // 返回
         return xzfy.getId();
     }
