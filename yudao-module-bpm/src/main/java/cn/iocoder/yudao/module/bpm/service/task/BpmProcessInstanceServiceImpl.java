@@ -6,6 +6,7 @@ import cn.hutool.core.convert.Convert;
 import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.lang.Assert;
 import cn.hutool.core.util.*;
+import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.util.collection.CollectionUtils;
 import cn.iocoder.yudao.framework.common.util.date.DateUtils;
@@ -418,6 +419,33 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                 loopNode.setFlowSort(2);
                 loopNode.setExtensionProperties(sourceProperties);
                 result.add(loopNode);
+            }
+            if ("1".equals(sourceProperties.get("specified_flag"))) {
+                BpmNextTaskRespVO specifiedNode = new BpmNextTaskRespVO();
+                // 拼接后缀以区分普通节点
+                specifiedNode.setTaskDefKey(sourceElement.getId() + "_specified");
+                // 获取 BPMN 中配置的名称，如果没有则使用默认值
+                String specifiedName = sourceProperties.getOrDefault("specified_name", "指定处理人");
+                specifiedNode.setTaskName(specifiedName);
+                specifiedNode.setFlowName(specifiedName);
+                specifiedNode.setFlowSort(9);
+
+                // 核心逻辑：将 specified_rule 和 specified_value 伪装为标准的 choose_rule 和 rule_value
+                // 这样该方法下半部分的 getCandidateUsers() 逻辑就能自动查出候选部门和人员了
+                Map<String, String> specifiedProps = new HashMap<>(sourceProperties);
+                if (sourceProperties.containsKey("specified_rule")) {
+                    specifiedProps.put("choose_rule", sourceProperties.get("specified_rule"));
+                }
+                if (sourceProperties.containsKey("specified_value")) {
+                    specifiedProps.put("rule_value", sourceProperties.get("specified_value"));
+                }
+                // 将接收变量名的属性也塞进去，方便前端在提交表单时知道用什么 key 传给后端
+                if (sourceProperties.containsKey("specified_variable")) {
+                    specifiedProps.put("variable_name", sourceProperties.get("specified_variable"));
+                }
+
+                specifiedNode.setExtensionProperties(specifiedProps);
+                result.add(specifiedNode);
             }
         }
 
@@ -1750,10 +1778,12 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         if (StrUtil.isEmpty(chooseRule) || StrUtil.isEmpty(ruleValue)) {
             return Collections.emptyList();
         }
-
         if ("role".equals(chooseRule)) {
             Set<Long> roleIds = StrUtils.splitToLongSet(ruleValue);
-            return userService.getUserListByRoleIds(roleIds);
+            List<AdminUserDO> users = userService.getUserListByRoleIds(roleIds);
+            return users.stream()
+                    .filter(u -> CommonStatusEnum.ENABLE.getStatus().equals(u.getStatus()))
+                    .collect(Collectors.toList());
         } else if ("group".equals(chooseRule)) {
             Set<Long> groupIds = StrUtils.splitToLongSet(ruleValue);
             List<BpmUserGroupDO> groupList = userGroupService.getUserGroupList(groupIds);
@@ -1762,7 +1792,11 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                     .filter(Objects::nonNull)
                     .flatMap(Set::stream)
                     .collect(Collectors.toSet());
-            return userService.getUserList(allUserIds);
+            List<AdminUserDO> users = userService.getUserList(allUserIds);
+            // 增加：只保留状态为“开启”的用户
+            return users.stream()
+                    .filter(u -> CommonStatusEnum.ENABLE.getStatus().equals(u.getStatus()))
+                    .collect(Collectors.toList());
         }
         // 可以扩展 dept, post 等其他规则
         return Collections.emptyList();

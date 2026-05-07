@@ -4,7 +4,6 @@ import cn.hutool.core.collection.CollUtil;
 import cn.iocoder.yudao.framework.quartz.core.handler.JobHandler;
 import cn.iocoder.yudao.framework.tenant.core.context.TenantContextHolder;
 import cn.iocoder.yudao.framework.tenant.core.job.TenantJob;
-import cn.iocoder.yudao.module.bpm.dal.dataobject.xzfy.XzfyDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
 import cn.iocoder.yudao.module.bpm.dal.mysql.xzss.XzssMapper;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
@@ -26,7 +25,7 @@ import java.util.stream.Collectors;
 
 @Slf4j
 @Component
-public class XzssTimeOutJob implements JobHandler {
+public class XzssAppealTimeOutJob implements JobHandler {
 
     @Resource
     private XzssMapper xzssMapper;
@@ -40,57 +39,56 @@ public class XzssTimeOutJob implements JobHandler {
     @Resource
     private RuntimeService runtimeService;
 
-    // BPMN中定义的“法规科(结果录入)”的任务节点 ID
-    private static final String TARGET_ACTIVITY_ID = "Activity_01ukxlz";
+    // 上诉阶段的目标节点：法规科办理(上诉)
+    private static final String TARGET_ACTIVITY_ID = "Activity_0gfzyss";
 
-    // 超时工作日天数阈值
+    // 超时天数阈值 (可根据业务调整)
     private static final int TIMEOUT_DAYS = 15;
 
-    private static final String TIMEOUT_REMARK = "过期系统自动完成";
+    private static final String TIMEOUT_REMARK = "上诉阶段过期系统自动完成";
 
+    // 允许触发跳转的白名单节点：局长(上诉)、分管领导(上诉)、相关单位(上诉)
     private static final List<String> ALLOW_TIMEOUT_ACTIVITY_IDS = Arrays.asList(
-            "Activity_06bpq99", "Activity_16wkjql", "Activity_1q3wpn8"
+            "Activity_03i9nb5", "Activity_1j3mjl5", "Activity_0c22of2"
     );
+
     @TenantJob
     @Override
     public String execute(String param) throws Exception {
         Long currentTenantId = TenantContextHolder.getTenantId();
         if (currentTenantId == null || !currentTenantId.equals(1L)) {
-            log.info("当前租户[{}]非目标租户，跳过", currentTenantId);
             return "跳过非目标租户";
         }
-        log.info("开始自动办结行政诉讼");
+
+        log.info("开始自动办结行政诉讼-上诉阶段");
         LocalDateTime thresholdDate = LocalDateTime.now().minusDays(TIMEOUT_DAYS);
-        List<XzssDO> timeoutList = xzssMapper.selectList(new LambdaQueryWrapper<XzssDO>()
+
+        // 查询正在运行且可能超时的上诉相关记录
+        List<XzssDO> runningList = xzssMapper.selectList(new LambdaQueryWrapper<XzssDO>()
                 .isNotNull(XzssDO::getProcessInstanceId)
                 .eq(XzssDO::getStatus, BpmProcessInstanceStatusEnum.RUNNING.getStatus())
-                .isNotNull(XzssDO::getSfyjgRq) // 确保时间字段不为空
                 .le(XzssDO::getSwRq, thresholdDate));
 
-        if (CollUtil.isEmpty(timeoutList)) {
-            log.info("[XzssTimeOutJob] 当前没有进行中的行政诉讼实例。");
+        if (CollUtil.isEmpty(runningList)) {
             return "成功，无处理数据";
         }
 
         int successCount = 0;
-        for (XzssDO xzssDO : timeoutList) {
+        for (XzssDO xzssDO : runningList) {
             try {
-                boolean jumped = jumpToTargetNode(xzssDO.getProcessInstanceId());
+                boolean jumped = jumpToAppealTargetNode(xzssDO.getProcessInstanceId());
                 if (jumped) {
                     successCount++;
                 }
             } catch (Exception e) {
-                log.error("[XzssTimeOutJob] 处理流程实例 {} 时发生异常", xzssDO.getProcessInstanceId(), e);
+                log.error("[XzssAppealTimeOutJob] 处理流程实例 {} 时发生异常", xzssDO.getProcessInstanceId(), e);
             }
         }
 
-        log.info("[XzssTimeOutJob] 执行完成，共成功跳转 {} 个流程实例。", successCount);
-        return String.format("成功跳转 %d 个实例", successCount);
-
+        return String.format("上诉阶段成功跳转 %d 个实例", successCount);
     }
 
-    private boolean jumpToTargetNode(String processInstanceId) {
-        // 1. 获取当前实例的所有活动任务
+    private boolean jumpToAppealTargetNode(String processInstanceId) {
         List<Task> currentTasks = taskService.createTaskQuery()
                 .processInstanceId(processInstanceId)
                 .list();
@@ -99,52 +97,38 @@ public class XzssTimeOutJob implements JobHandler {
             return false;
         }
 
-        // 2. 获取所有当前执行的活动节点 ID 集合
         List<String> currentActivityIds = currentTasks.stream()
                 .map(Task::getTaskDefinitionKey)
                 .distinct()
                 .collect(Collectors.toList());
 
-        // 3. 拦截：如果当前已经在目标节点了，则不需要重复跳
-        if (currentActivityIds.size() == 1 && currentActivityIds.contains(TARGET_ACTIVITY_ID)) {
-            return false;
-        }
-
-        // ================= 【核心拦截：白名单校验】 =================
+        // 1. 白名单校验：必须在指定的上诉审批节点才触发
         boolean canTimeout = currentActivityIds.stream().anyMatch(ALLOW_TIMEOUT_ACTIVITY_IDS::contains);
-
         if (!canTimeout) {
-            log.info("[XzssTimeOutJob] 实例 {} 当前节点 {} 不在允许超时的范围内（已流转到后续阶段或已结束），跳过跳转",
-                    processInstanceId, currentActivityIds);
             return false;
         }
-        // =========================================================
 
-        // ================= 【核心拦截：办理人校验】 =================
-        Object transactorUserId = runtimeService.getVariable(processInstanceId, "transactorUserId");
-        if (transactorUserId == null) {
-            log.warn("[XzssTimeOutJob] 流程实例 {} 缺少 transactorUserId 变量，放弃超时自动完成", processInstanceId);
+        // 2. 核心变量校验：上诉阶段使用的是 lawsuitUserId
+        Object lawsuitUserId = runtimeService.getVariable(processInstanceId, "lawsuitUserId");
+        if (lawsuitUserId == null) {
+            log.warn("[XzssAppealTimeOutJob] 流程实例 {} 缺少 lawsuitUserId 变量，放弃自动完成", processInstanceId);
             return false;
         }
-        // =========================================================
 
-        log.info("[XzssTimeOutJob] 实例 {} 触发超时跳转: 伪装完成并跳转 {} -> {}",
-                processInstanceId, currentActivityIds, TARGET_ACTIVITY_ID);
+        // 3. 执行伪装完成并跳转
+        log.info("[XzssAppealTimeOutJob] 实例 {} 触发上诉超时跳转 -> {}", processInstanceId, TARGET_ACTIVITY_ID);
 
         for (Task task : currentTasks) {
-            // 参数：任务ID, 流程实例ID, 备注内容
             taskService.addComment(task.getId(), processInstanceId, TIMEOUT_REMARK);
-            // 强行注入状态，伪装正常通过
             taskService.setVariableLocal(task.getId(), BpmnVariableConstants.TASK_VARIABLE_STATUS, BpmTaskStatusEnum.APPROVE.getStatus());
             taskService.setVariableLocal(task.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON, TIMEOUT_REMARK);
         }
 
-        // 4. 调用 Flowable 官方 API 动态移动执行实例
         runtimeService.createChangeActivityStateBuilder()
                 .processInstanceId(processInstanceId)
                 .moveActivityIdsToSingleActivityId(currentActivityIds, TARGET_ACTIVITY_ID)
                 .changeState();
+
         return true;
     }
-
 }

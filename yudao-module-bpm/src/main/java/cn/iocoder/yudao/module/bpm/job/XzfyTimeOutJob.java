@@ -3,9 +3,12 @@ package cn.iocoder.yudao.module.bpm.job;
 import cn.hutool.core.collection.CollUtil;
 import cn.iocoder.yudao.framework.quartz.core.handler.JobHandler;
 import cn.iocoder.yudao.framework.tenant.core.context.TenantContextHolder;
+import cn.iocoder.yudao.framework.tenant.core.job.TenantJob;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzfy.XzfyDO;
 import cn.iocoder.yudao.module.bpm.dal.mysql.xzfy.XzfyMapper;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.system.service.holiday.HolidayService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +19,7 @@ import org.flowable.engine.TaskService;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -42,11 +46,15 @@ public class XzfyTimeOutJob implements JobHandler {
     private static final int TIMEOUT_WORK_DAYS = 10;
 
     private static final String TIMEOUT_REMARK = "过期系统自动取消";
+
+    private static final List<String> ALLOW_TIMEOUT_ACTIVITY_IDS = Arrays.asList("Activity_176l096", "Activity_0f53oqt", "Activity_0c9a0ni"
+    );
+    @TenantJob
     @Override
     public String execute(String param) throws Exception {
         Long currentTenantId = TenantContextHolder.getTenantId();
         if (currentTenantId == null || !currentTenantId.equals(1L)) {
-            log.info("当前租户[{}]非目标租户，跳过省厅收文同步", currentTenantId);
+            log.info("当前租户[{}]非目标租户，跳过行政复议超时跳转", currentTenantId);
             return "跳过非目标租户";
         }
         log.info("开始自动办结行政复议");
@@ -90,7 +98,6 @@ public class XzfyTimeOutJob implements JobHandler {
     }
 
     private boolean jumpToTargetNode(String processInstanceId) {
-        // 1. 获取当前实例的所有活动任务
         List<Task> currentTasks = taskService.createTaskQuery()
                 .processInstanceId(processInstanceId)
                 .list();
@@ -99,31 +106,41 @@ public class XzfyTimeOutJob implements JobHandler {
             return false;
         }
 
-        // 2. 获取所有当前执行的活动节点 ID 集合
         List<String> currentActivityIds = currentTasks.stream()
                 .map(Task::getTaskDefinitionKey)
                 .distinct()
                 .collect(Collectors.toList());
 
-        // 3. 拦截：如果当前已经在目标节点了，则不需要重复跳
-        if (currentActivityIds.size() == 1 && currentActivityIds.contains(TARGET_ACTIVITY_ID)) {
+        // ================= 【核心拦截：白名单校验】 =================
+        // 检查当前所有的活动节点中，是否包含在白名单内的节点
+        boolean canTimeout = currentActivityIds.stream().anyMatch(ALLOW_TIMEOUT_ACTIVITY_IDS::contains);
+
+        if (!canTimeout) {
+            log.info("[XzfyTimeOutJob] 实例 {} 当前节点 {} 不在允许超时的范围内（已流转到后续阶段或已结束），跳过跳转",
+                    processInstanceId, currentActivityIds);
+            return false;
+        }
+        // =========================================================
+
+        // 校验：如果没有办理人变量，直接退出不执行 (之前的防御逻辑)
+        Object transactorUserId = runtimeService.getVariable(processInstanceId, "transactorUserId");
+        if (transactorUserId == null) {
+            log.warn("[XzfyTimeOutJob] 流程实例 {} 缺少 transactorUserId 变量，放弃超时自动完成", processInstanceId);
             return false;
         }
 
-        log.info("[XzfyTimeOutJob] 实例 {} 触发超时跳转: 当前节点 {} -> 目标节点 {}",
-                processInstanceId, currentActivityIds, TARGET_ACTIVITY_ID);
-
+        // ... 正常的伪装完成和跳转逻辑 ...
         for (Task task : currentTasks) {
-            // 参数：任务ID, 流程实例ID, 备注内容
-            taskService.addComment(task.getId(), processInstanceId, TIMEOUT_REMARK);
+            taskService.addComment(task.getId(), processInstanceId, "超时系统自动完成");
+            taskService.setVariableLocal(task.getId(), BpmnVariableConstants.TASK_VARIABLE_STATUS, BpmTaskStatusEnum.APPROVE.getStatus());
+            taskService.setVariableLocal(task.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON, "超时系统自动完成");
         }
-        // 4. 调用 Flowable 官方 API 动态移动执行实例 (ChangeActivityStateBuilder)
+
         runtimeService.createChangeActivityStateBuilder()
                 .processInstanceId(processInstanceId)
-                // 自动将现有的一个或多个并发活动全部取消，并转移到单一目标节点
                 .moveActivityIdsToSingleActivityId(currentActivityIds, TARGET_ACTIVITY_ID)
                 .changeState();
+
         return true;
     }
-
 }
