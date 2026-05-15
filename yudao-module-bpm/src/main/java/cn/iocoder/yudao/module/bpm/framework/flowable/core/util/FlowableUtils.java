@@ -19,6 +19,7 @@ import org.flowable.common.engine.impl.identity.Authentication;
 import org.flowable.common.engine.impl.variable.MapDelegateVariableContainer;
 import org.flowable.engine.ManagementService;
 import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.delegate.DelegateExecution;
 import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
 import org.flowable.engine.impl.util.CommandContextUtil;
@@ -235,6 +236,21 @@ public class FlowableUtils {
      */
     public static Map<String, List<Long>> getLastNodeSelectAssignees(ProcessInstance processInstance) {
         return processInstance != null ? getLastNodeSelectAssignees(processInstance.getProcessVariables()) : null;
+    }
+
+
+    public static Map<String, List<Long>> getLastNodeSelectAssignees(DelegateExecution execution) {
+        if (execution == null) {
+            return null;
+        }
+        // 【核心绝杀】：使用 execution.getVariable()，它会从当前分支的 Local 口袋开始找，
+        // 找不到会自动去父分支找，最后找到 ProcessInstance 全局。绝对不漏！
+        Object assigneesObj = execution.getVariable(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+
+        if (assigneesObj instanceof Map) {
+            return (Map<String, List<Long>>) assigneesObj;
+        }
+        return null;
     }
 
     /**
