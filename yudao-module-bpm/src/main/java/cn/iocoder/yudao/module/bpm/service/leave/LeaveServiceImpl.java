@@ -8,6 +8,8 @@ import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveAttachDO;
+import cn.iocoder.yudao.module.bpm.dal.mysql.leave.LeaveAttachMapper;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
@@ -64,6 +66,9 @@ public class LeaveServiceImpl implements LeaveService {
     private LeaveMapper leaveMapper;
 
     @Resource
+    private LeaveAttachMapper leaveAttachMapper;
+
+    @Resource
     private BpmProcessInstanceApi processInstanceApi;
 
     @Resource
@@ -107,6 +112,8 @@ public class LeaveServiceImpl implements LeaveService {
         LeaveDO leave = BeanUtils.toBean(createReqVO, LeaveDO.class)
                 .setUserid(userId.intValue()).setSpzt(BpmTaskStatusEnum.RUNNING.getStatus().shortValue());
         leaveMapper.insert(leave);
+
+        createLeaveAttachList(leave.getId(), createReqVO.getFileList());
 
 
         AdminUserDO user = userService.getUser(getLoginUserId());
@@ -195,6 +202,9 @@ public class LeaveServiceImpl implements LeaveService {
         // 更新
         LeaveDO updateObj = BeanUtils.toBean(updateReqVO, LeaveDO.class);
         leaveMapper.updateById(updateObj);
+
+        // 更新附件子表
+        updateLeaveAttachList(updateReqVO.getId(), updateReqVO.getFileList());
     }
 
     @Override
@@ -237,6 +247,24 @@ public class LeaveServiceImpl implements LeaveService {
     @Override
     public LeaveDO getLeave(Long id) {
         return leaveMapper.selectById(id);
+    }
+
+    @Override
+    public LeaveDetailRespVO getLeaveDetail(Long id) {
+        // 1. 校验并获取请假单主表数据
+        LeaveDO leave = leaveMapper.selectById(id);
+        if (leave == null) {
+            throw exception(LEAVE_NOT_EXISTS);
+        }
+
+        // 2. 将 DO 转换为详情对象 VO
+        LeaveDetailRespVO detailVO = BeanUtils.toBean(leave, LeaveDetailRespVO.class);
+
+        // 3. 关联查询附件列表（复用上一步编写的方法）
+        List<LeaveAttachRespVO> attachList = getLeaveAttachListByLeaveId(id);
+        detailVO.setFileList(attachList);
+
+        return detailVO;
     }
 
     @Override
@@ -479,6 +507,68 @@ public class LeaveServiceImpl implements LeaveService {
 
         // 3. 调用 Mapper 进行统计查询
         return leaveMapper.selectLeaveTypeStat(userId, beginTime, endTime);
+    }
+
+
+    private void createLeaveAttachList(Long leaveId, List<LeaveAttachDO> list) {
+        if (CollUtil.isEmpty(list)) {
+            return;
+        }
+        list.forEach(o -> o.setLeaveId(leaveId).clean());
+        leaveAttachMapper.insertBatch(list);
+    }
+
+    private void updateLeaveAttachList(Long leaveId, List<LeaveAttachDO> list) {
+        if (list == null) {
+            list = new ArrayList<>();
+        }
+        list.forEach(o -> o.setLeaveId(leaveId).clean());
+        List<LeaveAttachDO> oldList = leaveAttachMapper.selectListByLeaveId(leaveId);
+
+        // 比较新老列表，计算出需要新增、修改、删除的数据
+        List<List<LeaveAttachDO>> diffList = cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.diffList(oldList, list, (oldVal, newVal) -> {
+            boolean same = cn.hutool.core.util.ObjectUtil.equal(oldVal.getId(), newVal.getId());
+            if (same) {
+                newVal.setId(oldVal.getId()).clean();
+            }
+            return same;
+        });
+
+        // 批量添加、修改、删除
+        if (CollUtil.isNotEmpty(diffList.get(0))) {
+            leaveAttachMapper.insertBatch(diffList.get(0));
+        }
+        if (CollUtil.isNotEmpty(diffList.get(1))) {
+            leaveAttachMapper.updateBatch(diffList.get(1));
+        }
+        if (CollUtil.isNotEmpty(diffList.get(2))) {
+            leaveAttachMapper.deleteBatchIds(cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList(diffList.get(2), LeaveAttachDO::getId));
+        }
+    }
+
+    @Override
+    public List<LeaveAttachRespVO> getLeaveAttachListByLeaveId(Long leaveId) {
+        // 1. 查询数据库，获取 DO 列表 (复用我们在 Mapper 中写好的 default 方法)
+        List<LeaveAttachDO> doList = leaveAttachMapper.selectListByLeaveId(leaveId);
+
+        // 2. 如果为空，直接返回空列表
+        if (CollUtil.isEmpty(doList)) {
+            return Collections.emptyList();
+        }
+
+        // 3. 转换为 VO
+        List<LeaveAttachRespVO> voList = BeanUtils.toBean(doList, LeaveAttachRespVO.class);
+
+        // 4. 处理 URL (因为 T_TIME_ATTACH 直接存了 filePath，可以直接拿来用)
+        voList.forEach(vo -> {
+            // 如果你系统的 filePath 已经是完整的 URL，直接赋给 fileUrl 供前端渲染
+            vo.setFileUrl(vo.getFilePath());
+
+            // 提示：如果你系统的 filePath 只是相对路径，可以在这里拼接上前缀
+            // 例如：vo.setFileUrl( "https://你的域名.com/" + vo.getFilePath() );
+        });
+
+        return voList;
     }
 
 }

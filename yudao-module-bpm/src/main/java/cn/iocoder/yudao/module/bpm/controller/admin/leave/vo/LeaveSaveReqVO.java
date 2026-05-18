@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.leave.vo;
 
+import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveAttachDO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.*;
 import java.util.*;
@@ -54,5 +55,8 @@ public class LeaveSaveReqVO {
 
     @Schema(description = "下一节点审批人", example = "assist")
     private Map<String, List<Long>> nextNodeAssignees;
+
+    @Schema(description = "附件列表")
+    private List<LeaveAttachDO> fileList;
 
 }

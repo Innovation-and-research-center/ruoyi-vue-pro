@@ -95,14 +95,13 @@ public class LeaveController {
     @Operation(summary = "获得假期申请审批")
     @Parameter(name = "id", description = "编号", required = true, example = "1024")
     @DataPermission(enable = false)
-    public CommonResult<LeaveRespVO> getLeave(@RequestParam("id") Long id) {
-        LeaveDO leave = leaveService.getLeave(id);
-        AdminUserRespDTO startUser = adminUserApi.getUser(Long.valueOf(leave.getCreator()));
+    public CommonResult<LeaveDetailRespVO> getLeave(@RequestParam("id") Long id) {
+        LeaveDetailRespVO detail = leaveService.getLeaveDetail(id);
+        AdminUserRespDTO startUser = adminUserApi.getUser(detail.getCreator());
         DeptRespDTO dept = deptApi.getDept(startUser.getDeptId());
-        LeaveRespVO result = BeanUtils.toBean(leave, LeaveRespVO.class);
-        result.setDeptName(dept.getName());
-        result.setNickName(startUser.getNickname());
-        return success(result);
+        detail.setDeptName(dept.getName());
+        detail.setNickName(startUser.getNickname());
+        return success(detail);
     }
 
     @GetMapping("/page")

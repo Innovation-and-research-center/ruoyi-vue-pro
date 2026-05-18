@@ -5,7 +5,6 @@ import javax.validation.*;
 import cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
-
 /**
  * 假期申请审批 Service 接口
  *
@@ -50,6 +49,8 @@ public interface LeaveService {
      */
     LeaveDO getLeave(Long id);
 
+    LeaveDetailRespVO getLeaveDetail(Long id);
+
     /**
      * 获得假期申请审批分页
      *
@@ -68,4 +69,6 @@ public interface LeaveService {
     PageResult<LeaveHistoryRespVO> getLeaveHistoryPage(LeavePageReqVO pageReqVO);
 
     List<LeaveTypeStatRespVO> getCurrentUserYearlyLeaveStat();
+
+    List<LeaveAttachRespVO> getLeaveAttachListByLeaveId(Long leaveId);
 }
