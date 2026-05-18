@@ -1,33 +1,38 @@
-package cn.iocoder.yudao.module.bpm.dal.dataobject.leave;
+package cn.iocoder.yudao.module.bpm.dal.dataobject.confflow;
 
 import lombok.*;
 import com.baomidou.mybatisplus.annotation.*;
 import cn.iocoder.yudao.framework.mybatis.core.dataobject.BaseDO;
 
 /**
- * 外出请假补假附件 DO
+ * 会议报告单附件 DO
  */
-@TableName("t_leave_attach")
-@KeySequence("t_leave_attach_seq") // 对应序列
+@TableName("t_confflow_attach")
+@KeySequence("seq_confflow_attach_id")
 @Data
 @EqualsAndHashCode(callSuper = true)
 @ToString(callSuper = true)
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class LeaveAttachDO extends BaseDO {
+public class ConfflowAttachDO extends BaseDO {
 
     /**
      * 主键
      */
-    private Long id;
+    @TableId
+    private Long confflowAttachId;
 
     /**
-     * 项目编号 (关联 LeaveDO 的 id)
+     * 关联 ConfflowDO 的 id
      */
-    private Long leaveId;
+    private Long commId;
 
-    private Long attachFileId;
+    private String commType;
+
+    private String docGuid;
+
+    private String docType;
 
     /**
      * 存储路径
@@ -43,6 +48,5 @@ public class LeaveAttachDO extends BaseDO {
      * 附件类型
      */
     private String fileExtension;
-
 
 }

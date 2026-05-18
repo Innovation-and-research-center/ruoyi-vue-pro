@@ -107,6 +107,9 @@ public class TimeExplainController {
         TimeExplainRespVO result = BeanUtils.toBean(timeExplain, TimeExplainRespVO.class);
         result.setDeptName(dept.getName());
         result.setUserName(startUser.getNickname());
+        // 查询附件列表
+        List<TimeExplainAttachRespVO> attachList = timeExplainService.getTimeExplainAttachListByTimeExplainId(id);
+        result.setFileList(attachList);
         return success(result);
     }
 
@@ -137,6 +140,13 @@ public class TimeExplainController {
         // 导出 Excel
         ExcelUtils.write(response, "外出请假补假.xls", "数据", TimeExplainRespVO.class,
                         BeanUtils.toBean(list, TimeExplainRespVO.class));
+    }
+
+    @GetMapping("/time-explain-attach/list-by-time-explain-id")
+    @Operation(summary = "获得外出请假补假附件列表")
+    @Parameter(name = "timeExplainId", description = "外出请假补假编号(外键t_time_explain_attach.time_explain_id)")
+    public CommonResult<List<TimeExplainAttachRespVO>> getTimeExplainAttachListByTimeExplainId(@RequestParam("timeExplainId") Long timeExplainId) {
+        return success(timeExplainService.getTimeExplainAttachListByTimeExplainId(timeExplainId));
     }
 
 }

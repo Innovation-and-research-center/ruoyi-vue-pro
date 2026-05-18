@@ -63,5 +63,6 @@ public interface TimeExplainService {
 
     void updateTimeExplainStatus(Long id, Integer status);
 
+    List<TimeExplainAttachRespVO> getTimeExplainAttachListByTimeExplainId(Long timeExplainId);
 
 }

@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.confflow.vo;
 
+import cn.iocoder.yudao.module.bpm.dal.dataobject.confflow.ConfflowAttachDO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.*;
 import java.util.*;
@@ -61,6 +62,9 @@ public class ConfflowSaveReqVO {
 
     @Schema(description = "附件路径")
     private String attachFilePath;
+
+    @Schema(description = "附件列表")
+    private List<ConfflowAttachDO> fileList;
 
     @Schema(description = "下一个节点", example = "assist")
     private String selectNode;

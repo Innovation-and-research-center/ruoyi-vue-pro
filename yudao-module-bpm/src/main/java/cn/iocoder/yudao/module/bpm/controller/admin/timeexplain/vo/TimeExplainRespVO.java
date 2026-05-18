@@ -3,6 +3,7 @@ package cn.iocoder.yudao.module.bpm.controller.admin.timeexplain.vo;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.*;
 import java.util.*;
+import java.util.List;
 import java.math.BigDecimal;
 import org.springframework.format.annotation.DateTimeFormat;
 import java.time.LocalDateTime;
@@ -75,5 +76,8 @@ public class TimeExplainRespVO {
     private String nickName;
 
     private Long creator;
+
+    @Schema(description = "附件列表")
+    private List<TimeExplainAttachRespVO> fileList;
 
 }

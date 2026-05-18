@@ -162,4 +162,11 @@ public class LeaveController {
         return success(statList);
     }
 
+    @GetMapping("/leave-attach/list-by-leave-id")
+    @Operation(summary = "获得请假附件列表")
+    @Parameter(name = "leaveId", description = "请假编号(外键t_leave_attact.leave_id)")
+    public CommonResult<List<LeaveAttachRespVO>> getLeaveAttachListByLeaveId(@RequestParam("leaveId") Long leaveId) {
+        return success(leaveService.getLeaveAttachListByLeaveId(leaveId));
+    }
+
 }

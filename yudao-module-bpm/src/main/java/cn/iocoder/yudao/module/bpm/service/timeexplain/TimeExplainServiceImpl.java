@@ -9,6 +9,8 @@ import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.timeexplain.TimeExplainAttachDO;
+import cn.iocoder.yudao.module.bpm.dal.mysql.timeexplain.TimeExplainAttachMapper;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
@@ -56,6 +58,9 @@ public class TimeExplainServiceImpl implements TimeExplainService {
     private TimeExplainMapper timeExplainMapper;
 
     @Resource
+    private TimeExplainAttachMapper timeExplainAttachMapper;
+
+    @Resource
     private BpmProcessInstanceApi processInstanceApi;
 
     @Resource
@@ -101,6 +106,9 @@ public class TimeExplainServiceImpl implements TimeExplainService {
                 .setUserName(user.getUsername())
                 .setFirstType("外出").setSecondType("因公外出");
         timeExplainMapper.insert(out);
+
+        createTimeExplainAttachList(out.getId(), createReqVO.getFileList());
+
         Set<Long> roleIds = permissionService.getUserRoleIdListByUserId(getLoginUserId());
         List<RoleDO> roles = roleService.getRoleList(roleIds);
         roles.removeIf(role -> !CommonStatusEnum.ENABLE.getStatus().equals(role.getStatus())&& role.getCode().contains("grade_")); // 移除禁用的角色
@@ -147,6 +155,9 @@ public class TimeExplainServiceImpl implements TimeExplainService {
         // 更新
         TimeExplainDO updateObj = BeanUtils.toBean(updateReqVO, TimeExplainDO.class);
         timeExplainMapper.updateById(updateObj);
+
+        // 更新附件子表
+        updateTimeExplainAttachList(updateReqVO.getId(), updateReqVO.getFileList());
     }
 
     @Override
@@ -213,6 +224,53 @@ public class TimeExplainServiceImpl implements TimeExplainService {
 
         // 正常更新状态
         timeExplainMapper.updateById(new TimeExplainDO().setId(id).setStatus(Long.valueOf(status)));
+    }
+
+    private void createTimeExplainAttachList(Long timeExplainId, List<TimeExplainAttachDO> list) {
+        if (CollUtil.isEmpty(list)) {
+            return;
+        }
+        list.forEach(o -> o.setTimeExplainId(timeExplainId).clean());
+        timeExplainAttachMapper.insertBatch(list);
+    }
+
+    private void updateTimeExplainAttachList(Long timeExplainId, List<TimeExplainAttachDO> list) {
+        if (list == null) {
+            list = new ArrayList<>();
+        }
+        list.forEach(o -> o.setTimeExplainId(timeExplainId).clean());
+        List<TimeExplainAttachDO> oldList = timeExplainAttachMapper.selectListByTimeExplainId(timeExplainId);
+
+        List<List<TimeExplainAttachDO>> diffList = cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.diffList(oldList, list, (oldVal, newVal) -> {
+            boolean same = cn.hutool.core.util.ObjectUtil.equal(oldVal.getId(), newVal.getId());
+            if (same) {
+                newVal.setId(oldVal.getId()).clean();
+            }
+            return same;
+        });
+
+        if (CollUtil.isNotEmpty(diffList.get(0))) {
+            timeExplainAttachMapper.insertBatch(diffList.get(0));
+        }
+        if (CollUtil.isNotEmpty(diffList.get(1))) {
+            timeExplainAttachMapper.updateBatch(diffList.get(1));
+        }
+        if (CollUtil.isNotEmpty(diffList.get(2))) {
+            timeExplainAttachMapper.deleteBatchIds(cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList(diffList.get(2), TimeExplainAttachDO::getId));
+        }
+    }
+
+    @Override
+    public List<TimeExplainAttachRespVO> getTimeExplainAttachListByTimeExplainId(Long timeExplainId) {
+        List<TimeExplainAttachDO> doList = timeExplainAttachMapper.selectListByTimeExplainId(timeExplainId);
+        if (CollUtil.isEmpty(doList)) {
+            return Collections.emptyList();
+        }
+        List<TimeExplainAttachRespVO> voList = BeanUtils.toBean(doList, TimeExplainAttachRespVO.class);
+        voList.forEach(vo -> {
+            vo.setFileUrl(vo.getFilePath());
+        });
+        return voList;
     }
 
 }

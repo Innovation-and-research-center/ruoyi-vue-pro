@@ -82,4 +82,7 @@ public class ConfflowRespVO {
 
     private String cancelReason;
 
+    @Schema(description = "附件列表")
+    private List<ConfflowAttachRespVO> fileList;
+
 }

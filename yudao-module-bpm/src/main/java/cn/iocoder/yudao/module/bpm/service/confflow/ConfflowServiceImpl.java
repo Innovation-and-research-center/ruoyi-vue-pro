@@ -8,6 +8,8 @@ import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocDO;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.confflow.ConfflowAttachDO;
+import cn.iocoder.yudao.module.bpm.dal.mysql.confflow.ConfflowAttachMapper;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
@@ -50,6 +52,9 @@ public class ConfflowServiceImpl implements ConfflowService {
     private ConfflowMapper confflowMapper;
 
     @Resource
+    private ConfflowAttachMapper confflowAttachMapper;
+
+    @Resource
     private BpmProcessInstanceApi processInstanceApi;
 
     @Resource
@@ -60,6 +65,8 @@ public class ConfflowServiceImpl implements ConfflowService {
         // 插入
         ConfflowDO confflow = BeanUtils.toBean(createReqVO, ConfflowDO.class);
         confflowMapper.insert(confflow);
+
+        createConfflowAttachList(confflow.getId(), createReqVO.getFileList());
 
         Map<String, Object> processInstanceVariables = new HashMap<>();
         if (CollUtil.isNotEmpty(createReqVO.getProcessVariables())) {
@@ -95,6 +102,9 @@ public class ConfflowServiceImpl implements ConfflowService {
         // 更新
         ConfflowDO updateObj = BeanUtils.toBean(updateReqVO, ConfflowDO.class);
         confflowMapper.updateById(updateObj);
+
+        // 更新附件子表
+        updateConfflowAttachList(updateReqVO.getId(), updateReqVO.getFileList());
     }
 
     @Override
@@ -171,6 +181,51 @@ public class ConfflowServiceImpl implements ConfflowService {
         confflowMapper.updateById(new ConfflowDO().setId(id).setStatus(status.shortValue()));
     }
 
+    private void createConfflowAttachList(Long commId, List<ConfflowAttachDO> list) {
+        if (CollUtil.isEmpty(list)) {
+            return;
+        }
+        list.forEach(o -> o.setCommId(commId).clean());
+        confflowAttachMapper.insertBatch(list);
+    }
 
+    private void updateConfflowAttachList(Long commId, List<ConfflowAttachDO> list) {
+        if (list == null) {
+            list = new ArrayList<>();
+        }
+        list.forEach(o -> o.setCommId(commId).clean());
+        List<ConfflowAttachDO> oldList = confflowAttachMapper.selectListByCommId(commId);
+
+        List<List<ConfflowAttachDO>> diffList = cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.diffList(oldList, list, (oldVal, newVal) -> {
+            boolean same = cn.hutool.core.util.ObjectUtil.equal(oldVal.getConfflowAttachId(), newVal.getConfflowAttachId());
+            if (same) {
+                newVal.setConfflowAttachId(oldVal.getConfflowAttachId()).clean();
+            }
+            return same;
+        });
+
+        if (CollUtil.isNotEmpty(diffList.get(0))) {
+            confflowAttachMapper.insertBatch(diffList.get(0));
+        }
+        if (CollUtil.isNotEmpty(diffList.get(1))) {
+            confflowAttachMapper.updateBatch(diffList.get(1));
+        }
+        if (CollUtil.isNotEmpty(diffList.get(2))) {
+            confflowAttachMapper.deleteBatchIds(cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList(diffList.get(2), ConfflowAttachDO::getConfflowAttachId));
+        }
+    }
+
+    @Override
+    public List<ConfflowAttachRespVO> getConfflowAttachListByCommId(Long commId) {
+        List<ConfflowAttachDO> doList = confflowAttachMapper.selectListByCommId(commId);
+        if (CollUtil.isEmpty(doList)) {
+            return Collections.emptyList();
+        }
+        List<ConfflowAttachRespVO> voList = BeanUtils.toBean(doList, ConfflowAttachRespVO.class);
+        voList.forEach(vo -> {
+            vo.setFileUrl(vo.getFilePath());
+        });
+        return voList;
+    }
 
 }

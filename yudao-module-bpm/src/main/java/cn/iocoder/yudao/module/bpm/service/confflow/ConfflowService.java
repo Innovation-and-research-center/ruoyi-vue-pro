@@ -61,4 +61,6 @@ public interface ConfflowService {
 
     void updateConfflowStatus(Long id, Integer status);
 
+    List<ConfflowAttachRespVO> getConfflowAttachListByCommId(Long commId);
+
 }

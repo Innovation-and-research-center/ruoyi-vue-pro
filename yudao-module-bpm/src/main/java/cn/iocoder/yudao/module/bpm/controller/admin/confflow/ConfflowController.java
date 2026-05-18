@@ -104,7 +104,11 @@ public class ConfflowController {
 //    @PreAuthorize("@ss.hasPermission('bpm:confflow:query')")
     public CommonResult<ConfflowRespVO> getConfflow(@RequestParam("id") Long id) {
         ConfflowDO confflow = confflowService.getConfflow(id);
-        return success(BeanUtils.toBean(confflow, ConfflowRespVO.class));
+        ConfflowRespVO result = BeanUtils.toBean(confflow, ConfflowRespVO.class);
+        // 查询附件列表
+        List<ConfflowAttachRespVO> attachList = confflowService.getConfflowAttachListByCommId(id);
+        result.setFileList(attachList);
+        return success(result);
     }
 
     @GetMapping("/page")
@@ -139,6 +143,13 @@ public class ConfflowController {
         // 导出 Excel
         ExcelUtils.write(response, "会议报告单.xls", "数据", ConfflowRespVO.class,
                         BeanUtils.toBean(list, ConfflowRespVO.class));
+    }
+
+    @GetMapping("/confflow-attach/list-by-comm-id")
+    @Operation(summary = "获得会议报告单附件列表")
+    @Parameter(name = "commId", description = "会议报告单编号(外键t_confflow_attach.comm_id)")
+    public CommonResult<List<ConfflowAttachRespVO>> getConfflowAttachListByCommId(@RequestParam("commId") Long commId) {
+        return success(confflowService.getConfflowAttachListByCommId(commId));
     }
 
 }
