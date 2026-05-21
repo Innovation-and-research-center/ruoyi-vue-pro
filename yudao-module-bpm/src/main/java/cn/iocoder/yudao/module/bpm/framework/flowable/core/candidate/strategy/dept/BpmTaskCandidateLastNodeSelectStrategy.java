@@ -39,8 +39,9 @@ public class BpmTaskCandidateLastNodeSelectStrategy extends AbstractBpmTaskCandi
     @Override
     public LinkedHashSet<Long> calculateUsersByTask(DelegateExecution execution, String param) {
         ProcessInstance processInstance = processInstanceService.getProcessInstance(execution.getProcessInstanceId());
+        Map<String, List<Long>> nextNodeSelectAssignees = FlowableUtils.getLastNodeSelectAssignees(execution);
         Assert.notNull(processInstance, "流程实例({})不能为空", execution.getProcessInstanceId());
-        Map<String, List<Long>> nextNodeSelectAssignees = FlowableUtils.getLastNodeSelectAssignees(processInstance);
+//        Map<String, List<Long>> nextNodeSelectAssignees = FlowableUtils.getLastNodeSelectAssignees(processInstance);
         Assert.notNull(nextNodeSelectAssignees, "流程实例({}) 的手动选择审批人不能为空",
                 execution.getProcessInstanceId());
         // 获得审批人
