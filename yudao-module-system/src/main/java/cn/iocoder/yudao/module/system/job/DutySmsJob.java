@@ -44,7 +44,7 @@ public class DutySmsJob implements JobHandler {
 
         Long currentTenantId = TenantContextHolder.getTenantId();
         if (currentTenantId == null || !currentTenantId.equals(1L)) {
-            log.info("当前租户[{}]非目标租户，跳过值班短信任务", currentTenantId);
+            log.info("当前租户[{}]非目标租户，跳过档案归档任务", currentTenantId);
             return "跳过非目标租户";
         }
 

@@ -298,7 +298,6 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 .finished() // 已完成
                 .taskAssignee(String.valueOf(userId)) // 分配给自己
                 .includeTaskLocalVariables()
-                .taskVariableValueNotEquals(BpmnVariableConstants.TASK_VARIABLE_STATUS, BpmTaskStatusEnum.CANCEL.getStatus())
                 .orderByHistoricTaskInstanceEndTime().desc(); // 审批时间倒序
         if (StrUtil.isNotBlank(pageVO.getName())) {
             taskQuery.taskNameLike("%" + pageVO.getName() + "%");
@@ -1110,7 +1109,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         }
 
         // 7. 调用 BPM complete 去完成任务 (此时的 variables 已经完全脱敏剥离，绝对纯净安全！)
-        taskService.complete(task.getId(), variables, localIsolatedVariables);
+        taskService.complete(task.getId(), variables, true);
 
         // 【加签专属】处理加签任务
         handleParentTaskIfSign(task.getParentTaskId());
@@ -1632,24 +1631,6 @@ public class BpmTaskServiceImpl implements BpmTaskService {
      * @param targetElement 需要退回到的目标任务
      * @param reqVO         前端参数封装
      */
-    /**
-     * 执行退回逻辑（精准分支隔离 + 防重复数据 + 精准追溯历史办理人）
-     *
-     * @param userId        用户编号
-     * @param bpmnModel     流程模型
-     * @param currentTask   当前退回的任务
-     * @param targetElement 需要退回到的目标任务
-     * @param reqVO         前端参数封装
-     */
-    /**
-     * 执行退回逻辑（精准分支隔离 + 防重复数据 + 精准追溯历史办理人 + 并行分支防误杀）
-     *
-     * @param userId        用户编号
-     * @param bpmnModel     流程模型
-     * @param currentTask   当前退回的任务
-     * @param targetElement 需要退回到的目标任务
-     * @param reqVO         前端参数封装
-     */
     public void returnTask(Long userId, BpmnModel bpmnModel, Task currentTask, FlowElement targetElement, BpmTaskReturnReqVO reqVO) {
         String processInstanceId = currentTask.getProcessInstanceId();
         String targetTaskKey = reqVO.getTargetTaskDefinitionKey();
@@ -1662,115 +1643,15 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         List<String> runTaskKeyList = allActiveTasks.stream()
                 .map(Task::getTaskDefinitionKey).distinct().collect(Collectors.toList());
 
-        // 3. 利用原有的拓扑算法，找出在 targetElement 之后的任务节点 (此时可能包含平行的误杀节点)
+        // 3. 【核心防误杀机制】：利用原有的拓扑算法，只找出在 targetElement(退回目标) 之后的任务节点
+        // 这样绝对不会牵连平行的“全局阅”或“局长批示”等无关分支
         List<UserTask> downstreamUserTasks = BpmnModelUtils.iteratorFindChildUserTasks(targetElement, runTaskKeyList, null, null);
         List<String> returnTaskKeyList = downstreamUserTasks.stream().map(UserTask::getId).distinct().collect(Collectors.toList());
 
-        // ================== 【修复 BUG：新增运行时执行流血统校验 + 时间戳防误杀 + 同源分身合并】 ==================
-
-        // 3.1 获取当前任务 (例如:局领导批示) 的完整 Execution 血统 (向上溯源，用于后续同源比对)
-        Set<String> currentExecutionLineage = new HashSet<>();
-        String traceExecId = currentTask.getExecutionId();
-        while (cn.hutool.core.util.StrUtil.isNotBlank(traceExecId)) {
-            currentExecutionLineage.add(traceExecId);
-            org.flowable.engine.runtime.Execution exec = runtimeService.createExecutionQuery()
-                    .executionId(traceExecId).singleResult();
-            if (exec != null) {
-                traceExecId = exec.getParentId();
-            } else {
-                break;
-            }
-        }
-
-        // 3.2 找到目标退回节点 (例如:局长批示) 在历史中的执行流基座与【办结时间】
-        String targetNodeExecutionId = null;
-        Date targetTaskEndTime = null;
-        for (String execId : currentExecutionLineage) {
-            List<HistoricTaskInstance> historyTasks = historyService.createHistoricTaskInstanceQuery()
-                    .executionId(execId)
-                    .taskDefinitionKey(targetTaskKey)
-                    .finished()
-                    .orderByHistoricTaskInstanceEndTime().desc()
-                    .list();
-            if (CollUtil.isNotEmpty(historyTasks)) {
-                targetNodeExecutionId = execId;
-                targetTaskEndTime = historyTasks.get(0).getEndTime();
-                break;
-            }
-        }
-
-        // 兜底查找: 如果底层执行流复用断层导致找不到，直接去全局历史表里找最近的那次目标节点办结记录
-        if (targetTaskEndTime == null) {
-            List<HistoricTaskInstance> globalHistoryTasks = historyService.createHistoricTaskInstanceQuery()
-                    .processInstanceId(processInstanceId)
-                    .taskDefinitionKey(targetTaskKey)
-                    .finished()
-                    .orderByHistoricTaskInstanceEndTime().desc()
-                    .listPage(0, 1);
-            if (CollUtil.isNotEmpty(globalHistoryTasks)) {
-                targetNodeExecutionId = globalHistoryTasks.get(0).getExecutionId();
-                targetTaskEndTime = globalHistoryTasks.get(0).getEndTime();
-            }
-        }
-
-        // 3.3 过滤出真正需要被撤销的 Task（仅限当前分支及其下游衍生的分支，绝对防误杀平行分支）
-        List<Task> tasksToCancel = new ArrayList<>();
-        for (Task activeTask : allActiveTasks) {
-            if (!returnTaskKeyList.contains(activeTask.getTaskDefinitionKey())) {
-                continue;
-            }
-
-            // 永远连带撤销当前正在操作的任务本身
-            if (activeTask.getId().equals(currentTask.getId())) {
-                tasksToCancel.add(activeTask);
-                continue;
-            }
-
-            // 【核心防御 1：时间戳物理防误杀】
-            // 如果活跃任务(主办/协办)的创建时间，早于目标节点(局长)的办结时间
-            // 证明它们是之前并行网关同时派发出来的【平行兄弟】，直接护盾放过！
-            if (targetTaskEndTime != null) {
-                long timeDiff = activeTask.getCreateTime().getTime() - targetTaskEndTime.getTime();
-                if (timeDiff < -1000) { // 容忍 2000ms 事务并发延迟
-                    continue;
-                }
-            }
-
-            // 【核心防御 2：血统精准判定】
-            boolean isDescendantOfTarget = false;
-            String taskExecId = activeTask.getExecutionId();
-
-            if (targetNodeExecutionId != null) {
-                // 场景 A：能找到目标节点的底层执行流（单实例节点通常能找到）
-                while (cn.hutool.core.util.StrUtil.isNotBlank(taskExecId)) {
-                    if (taskExecId.equals(targetNodeExecutionId)) {
-                        isDescendantOfTarget = true;
-                        break;
-                    }
-                    org.flowable.engine.runtime.Execution exec = runtimeService.createExecutionQuery()
-                            .executionId(taskExecId).singleResult();
-                    taskExecId = exec != null ? exec.getParentId() : null;
-                }
-            } else {
-                // 场景 B：找不到目标执行流（因为目标是多实例节点，底层被物理销毁）
-                // 此时判断 activeTask 是否与 currentTask 属于“同一颗局部树”
-                while (cn.hutool.core.util.StrUtil.isNotBlank(taskExecId) && !taskExecId.equals(processInstanceId)) {
-                    // 只要跟 currentTask 的血统有交集（排除整个流程的 Root ID），就说明是多实例的另一个分身
-                    if (currentExecutionLineage.contains(taskExecId)) {
-                        isDescendantOfTarget = true;
-                        break;
-                    }
-                    org.flowable.engine.runtime.Execution exec = runtimeService.createExecutionQuery()
-                            .executionId(taskExecId).singleResult();
-                    taskExecId = exec != null ? exec.getParentId() : null;
-                }
-            }
-
-            if (isDescendantOfTarget) {
-                tasksToCancel.add(activeTask);
-            }
-        }
-        // ===============================================================================================
+        // 过滤出真正需要被撤销的 Task（仅限当前分支及其下游衍生的分支）
+        List<Task> tasksToCancel = allActiveTasks.stream()
+                .filter(task -> returnTaskKeyList.contains(task.getTaskDefinitionKey()))
+                .collect(Collectors.toList());
 
         List<String> executionIdsToMove = new ArrayList<>();
 
@@ -1808,7 +1689,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         }
 
         // =========================================================================
-        // 5. “精准追溯历史处理人”防污染血统算法
+        // 5. 您原有的“精准追溯历史处理人”防污染血统算法（原封不动）
         // =========================================================================
         List<Long> actualReturnAssignees = reqVO.getReturnAssignees();
 
@@ -1867,7 +1748,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 long baselineTime = targetHistoryTasks.get(0).getEndTime().getTime();
                 Set<Long> cleanAssignees = new LinkedHashSet<>();
                 for (HistoricTaskInstance ht : targetHistoryTasks) {
-                    if (Math.abs(ht.getEndTime().getTime() - baselineTime) <= 1000) {
+                    if (Math.abs(ht.getEndTime().getTime() - baselineTime) <= 2000) {
                         if (cn.hutool.core.util.StrUtil.isNotBlank(ht.getAssignee())) {
                             cleanAssignees.add(Long.valueOf(ht.getAssignee()));
                         }
@@ -2971,9 +2852,10 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         return dto;
     }
 
+
     @Override
     @Transactional(rollbackFor = Exception.class)
-    @DataPermission(enable = false) // 关闭数据权限，避免查询不到用户数据
+    @DataPermission(enable = false) // 关闭数据权限，避免查询不到用户数据。相关案例：https://gitee.com/zhijiantianya/yudao-cloud/issues/ID1UYA
     public void withdrawTask(Long userId, String taskId) {
         // 1.1 查询本人已办任务
         HistoricTaskInstance taskInstance = historyService.createHistoricTaskInstanceQuery()
@@ -2992,8 +2874,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         if (ObjUtil.isNull(processDefinitionInfo) || !Boolean.TRUE.equals(processDefinitionInfo.getAllowWithdrawTask())) {
             throw exception(TASK_WITHDRAW_FAIL_NOT_ALLOW);
         }
-
-        // 1.4 获取当前节点定义的合法下一节点集合
+        // 1.4 判断下一个节点是否被审批过，如果是则无法撤回
         BpmnModel bpmnModel = modelService.getBpmnModelByDefinitionId(taskInstance.getProcessDefinitionId());
         UserTask userTask = (UserTask) BpmnModelUtils.getFlowElementById(bpmnModel, taskInstance.getTaskDefinitionKey());
         List<String> nextUserTaskKeys = convertList(BpmnModelUtils.getNextUserTasks(userTask), UserTask::getId);
@@ -3001,98 +2882,19 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             throw exception(TASK_WITHDRAW_FAIL_NEXT_TASK_NOT_ALLOW);
         }
 
-        long sourceTaskCreateTime = taskInstance.getCreateTime().getTime();
 
-        // =================================================================================
-        // 【第一道防线】：同批次隔离哨兵（处理同节点未结束撤回 / 多人排队撤回）
-        // =================================================================================
-        List<Task> rawActiveTasksInSourceNode = taskService.createTaskQuery()
-                .processInstanceId(processInstance.getProcessInstanceId())
-                .taskDefinitionKey(taskInstance.getTaskDefinitionKey())
-                .active().list();
 
-        List<Task> activeTasksInSourceNode = new ArrayList<>();
-        if (CollUtil.isNotEmpty(rawActiveTasksInSourceNode)) {
-            for (Task runningTask : rawActiveTasksInSourceNode) {
-                if (Math.abs(runningTask.getCreateTime().getTime() - sourceTaskCreateTime) <= 1000) {
-                    activeTasksInSourceNode.add(runningTask);
-                }
-            }
+
+
+        // TODO @芋艿：是否选择升级flowable版本解决taskCreatedAfter、taskCreatedBefore问题，升级7.1.0可以；包括 todo 和 done 那边的查询哇？？？ 是的！
+        long nextUserTaskFinishedCount = historyService.createHistoricTaskInstanceQuery()
+                .processInstanceId(processInstance.getProcessInstanceId()).taskDefinitionKeys(nextUserTaskKeys)
+                .taskCreatedAfter(taskInstance.getEndTime()).finished().count();
+        if (nextUserTaskFinishedCount > 0) {
+            throw exception(TASK_WITHDRAW_FAIL_NEXT_TASK_NOT_ALLOW);
         }
 
-        if (CollUtil.isNotEmpty(activeTasksInSourceNode)) {
-            boolean alreadyHasMyTask = activeTasksInSourceNode.stream()
-                    .anyMatch(t -> userId.toString().equals(t.getAssignee()));
-            if (alreadyHasMyTask) {
-                throw new RuntimeException("撤回失败：您在该环节已有运行中的任务，无需重复撤回");
-            }
-
-            updateTaskStatusAndReason(taskId, BpmTaskStatusEnum.CANCEL.getStatus(), BpmReasonEnum.CANCEL_BY_WITHDRAW.getReason());
-
-            Map<String, Object> executionVariables = new HashMap<>();
-            executionVariables.put("assignee", userId.toString());
-
-            Execution newExecution = runtimeService.addMultiInstanceExecution(
-                    taskInstance.getTaskDefinitionKey(),
-                    processInstance.getProcessInstanceId(),
-                    executionVariables
-            );
-
-            if (newExecution != null) {
-                Task newlyCreatedTask = taskService.createTaskQuery().executionId(newExecution.getId()).singleResult();
-                if (newlyCreatedTask != null) {
-                    taskService.setAssignee(newlyCreatedTask.getId(), userId.toString());
-                    taskService.setOwner(newlyCreatedTask.getId(), userId.toString());
-                }
-            }
-            return;
-        }
-
-        // =================================================================================
-        // 【前置推导】：推导节点真实流转时间
-        // =================================================================================
-        List<HistoricTaskInstance> historyTasksOfSourceNode = historyService.createHistoricTaskInstanceQuery()
-                .processInstanceId(processInstance.getProcessInstanceId())
-                .taskDefinitionKey(taskInstance.getTaskDefinitionKey())
-                .finished()
-                .list();
-
-        long realNodeOutflowTime = taskInstance.getEndTime().getTime();
-
-        if (CollUtil.isNotEmpty(historyTasksOfSourceNode)) {
-            List<HistoricTaskInstance> sameBatchTasks = new ArrayList<>();
-            for (HistoricTaskInstance ht : historyTasksOfSourceNode) {
-                if (Math.abs(ht.getCreateTime().getTime() - sourceTaskCreateTime) <= 1000) {
-                    sameBatchTasks.add(ht);
-                }
-            }
-            if (CollUtil.isNotEmpty(sameBatchTasks)) {
-                sameBatchTasks.sort((t1, t2) -> t2.getEndTime().compareTo(t1.getEndTime()));
-                realNodeOutflowTime = sameBatchTasks.get(0).getEndTime().getTime();
-            }
-        }
-
-        // =================================================================================
-        // 【绝对拦截防线】：防“部分办结”漏洞！
-        // =================================================================================
-        List<HistoricTaskInstance> finishedDownstreamTasks = historyService.createHistoricTaskInstanceQuery()
-                .processInstanceId(processInstance.getProcessInstanceId())
-                .taskDefinitionKeys(nextUserTaskKeys)
-                .finished()
-                .list();
-
-        if (CollUtil.isNotEmpty(finishedDownstreamTasks)) {
-            for (HistoricTaskInstance ht : finishedDownstreamTasks) {
-                long timeDiff = Math.abs(ht.getCreateTime().getTime() - realNodeOutflowTime);
-                if (timeDiff <= 1000) {
-                    throw new RuntimeException("撤回失败：下游已有节点完成审批，流程已部分流转，禁止撤回！");
-                }
-            }
-        }
-
-        // =================================================================================
-        // 【第二道防线】：跨节点拉回，收集存活的分身
-        // =================================================================================
+        // 1.5 获取粗筛的运行任务 (此时包含了整个流程实例中的匹配节点，可能有并行分支的干扰数据)
         List<Task> allRunningTasks = taskService.createTaskQuery()
                 .processInstanceId(processInstance.getProcessInstanceId())
                 .taskDefinitionKeys(nextUserTaskKeys).active().list();
@@ -3100,139 +2902,56 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             throw exception(TASK_WITHDRAW_FAIL_NEXT_TASK_NOT_ALLOW);
         }
 
+        String sourceExecutionId = taskInstance.getExecutionId();
         List<Task> targetRunningTasks = new ArrayList<>();
-        for (Task task : allRunningTasks) {
-            long targetCreateTime = task.getCreateTime().getTime();
-            long timeDiff = Math.abs(targetCreateTime - realNodeOutflowTime);
 
-            if (timeDiff <= 1000) {
-                targetRunningTasks.add(task);
-            } else {
-                String currentExecId = task.getExecutionId();
-                while (StrUtil.isNotBlank(currentExecId)) {
-                    if (currentExecId.equals(taskInstance.getExecutionId())) {
-                        targetRunningTasks.add(task);
-                        break;
-                    }
-                    Execution exec = runtimeService.createExecutionQuery().executionId(currentExecId).singleResult();
-                    currentExecId = exec != null ? exec.getParentId() : null;
+        for (Task task : allRunningTasks) {
+            String currentExecId = task.getExecutionId();
+            boolean isLineageMatch = false;
+
+            // 向上溯源：检查当前运行的 Task 的 Execution 族谱中，是否包含撤回源头 taskInstance 的 Execution
+            while (StrUtil.isNotBlank(currentExecId)) {
+                if (currentExecId.equals(sourceExecutionId)) {
+                    isLineageMatch = true;
+                    break;
                 }
+                Execution exec = runtimeService.createExecutionQuery().executionId(currentExecId).singleResult();
+                if (exec != null) {
+                    currentExecId = exec.getParentId();
+                } else {
+                    break;
+                }
+            }
+
+            // 只有属于同一条树枝上的任务，才允许被撤回
+            if (isLineageMatch) {
+                targetRunningTasks.add(task);
             }
         }
 
+        // 如果经过血统过滤后为空，说明目标任务虽然存在，但属于其他并行分支，当前分支无法撤回
         if (CollUtil.isEmpty(targetRunningTasks)) {
             throw exception(TASK_WITHDRAW_FAIL_NEXT_TASK_NOT_ALLOW);
         }
 
-        // =================================================================================
-        // 【防裂变处理】：取消目标任务、收集血脉、精准提取 MI Root 进行执行流去重
-        // =================================================================================
-        List<String> executionIdsToMove = new ArrayList<>();
-        Set<String> branchExecutionLineage = new HashSet<>();
-
+        // 2.1 取消当前分支的运行任务
+        List<String> withdrawExecutionIds = new ArrayList<>();
         for (Task task : targetRunningTasks) {
+            // 标记撤回任务为取消
             taskService.addComment(task.getId(), taskInstance.getProcessInstanceId(), BpmCommentTypeEnum.CANCEL.getType(),
                     BpmCommentTypeEnum.CANCEL.formatComment("前一节点撤回"));
             updateTaskStatusAndReason(task.getId(), BpmTaskStatusEnum.CANCEL.getStatus(), BpmReasonEnum.CANCEL_BY_WITHDRAW.getReason());
-
-            // 1. 向上收集当前分支的执行流血统 (用于后续的局部变量清理)
-            String tempId = task.getExecutionId();
-            while (cn.hutool.core.util.StrUtil.isNotBlank(tempId)) {
-                branchExecutionLineage.add(tempId);
-                Execution exec = runtimeService.createExecutionQuery().executionId(tempId).singleResult();
-                tempId = exec != null ? exec.getParentId() : null;
-            }
-
-            // 2. 提取多实例根节点 (MI Root)，防止多实例分支撤回时生成多条任务
-            Execution taskExecution = runtimeService.createExecutionQuery().executionId(task.getExecutionId()).singleResult();
-            String execIdToMove = taskExecution.getId();
-
-            if (taskExecution.getParentId() != null) {
-                Execution parentExecution = runtimeService.createExecutionQuery().executionId(taskExecution.getParentId()).singleResult();
-                // 核心：含有 nrOfInstances 变量的即为多实例包裹容器
-                if (parentExecution != null && runtimeService.hasVariableLocal(parentExecution.getId(), "nrOfInstances")) {
-                    execIdToMove = parentExecution.getId();
-                }
-            }
-
-            // 3. 去重：如果是同批次并发分支，MI Root 必然是同一个，完美合并为 1 个 Token
-            if (!executionIdsToMove.contains(execIdToMove)) {
-                executionIdsToMove.add(execIdToMove);
-            }
+            withdrawExecutionIds.add(task.getExecutionId());
         }
 
-        // =================================================================================
-        // 【对照实验组】：仅移除运行时局部变量，不触碰历史表！
-        // =================================================================================
-        org.flowable.bpmn.model.FlowElement currentFlowElement = bpmnModel.getFlowElement(taskInstance.getTaskDefinitionKey());
-        if (currentFlowElement instanceof org.flowable.bpmn.model.FlowNode) {
-            List<org.flowable.bpmn.model.SequenceFlow> outgoingFlows = ((org.flowable.bpmn.model.FlowNode) currentFlowElement).getOutgoingFlows();
-
-            Object assigneesObj = runtimeService.getVariable(processInstance.getProcessInstanceId(), BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
-            Map<String, List<Long>> assigneesMap = null;
-            if (assigneesObj instanceof Map) {
-                assigneesMap = new HashMap<>((Map<String, List<Long>>) assigneesObj);
-            }
-            boolean assigneesChanged = false;
-
-            for (org.flowable.bpmn.model.SequenceFlow flow : outgoingFlows) {
-                // 1. 抹除目标节点残留的人员配置 (这也是通过重写全局变量实现的)
-                String targetNodeId = flow.getTargetRef();
-                if (assigneesMap != null && assigneesMap.containsKey(targetNodeId)) {
-                    assigneesMap.remove(targetNodeId);
-                    assigneesChanged = true;
-                }
-
-                // 2. 双重正则提取真正的路由变量
-                String condition = flow.getConditionExpression();
-                if (cn.hutool.core.util.StrUtil.isNotBlank(condition)) {
-                    Set<String> variablesToRemove = new HashSet<>();
-
-                    java.util.regex.Matcher m1 = java.util.regex.Pattern.compile("variables:get\\(['\"]?([a-zA-Z0-9_]+)['\"]?\\)").matcher(condition);
-                    while (m1.find()) { variablesToRemove.add(m1.group(1)); }
-
-                    java.util.regex.Matcher m2 = java.util.regex.Pattern.compile("(?<!['\"])\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b(?!['\"])").matcher(condition);
-                    while (m2.find()) {
-                        String match = m2.group(1);
-                        if (!Arrays.asList("variables", "get", "null", "empty", "true", "false").contains(match)) {
-                            variablesToRemove.add(match);
-                        }
-                    }
-
-                    // 3. 【核心对照组测试】：仅仅从运行时表 (ACT_RU_VARIABLE) 中移除
-                    for (String varName : variablesToRemove) {
-                        for (String branchExecId : branchExecutionLineage) {
-//                            if (branchExecId.equals(processInstance.getProcessInstanceId())) {
-//                                continue;
-//                            }
-                            // 只做这一步：移除运行时局部变量
-                            if (runtimeService.hasVariableLocal(branchExecId, varName)) {
-                                runtimeService.removeVariableLocal(branchExecId, varName);
-                            }
-                        }
-                    }
-                }
-            }
-            if (assigneesChanged) {
-                runtimeService.setVariable(processInstance.getProcessInstanceId(), BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, assigneesMap);
-            }
-        }
-
-        // =================================================================================
-        // 【执行阶段】：单一主分身拉回 + 多余分身 EndEvent 合法蒸发防雪崩
-        // =================================================================================
-        List<String> singleUserList = new ArrayList<>();
-        singleUserList.add(userId.toString());
-        String miCollectionVarName = "coll_userList";
-
+        // 2.2 执行撤回操作 (Flowable 会销毁当前的 executions 并回到目标节点)
         runtimeService.createChangeActivityStateBuilder()
                 .processInstanceId(processInstance.getProcessInstanceId())
-                .moveExecutionsToSingleActivityId(executionIdsToMove, taskInstance.getTaskDefinitionKey())
-                .processVariable(miCollectionVarName, singleUserList)
+                .moveExecutionsToSingleActivityId(withdrawExecutionIds, taskInstance.getTaskDefinitionKey())
                 .changeState();
 
         // =================================================================================
-        // 【收尾】：强制覆盖重置办理人，重新夺回任务控制权
+        // 【关键修改点 2】：强制覆盖重置办理人，无视局部变量的残留干扰！
         // =================================================================================
         List<Task> revertedTasks = taskService.createTaskQuery()
                 .processInstanceId(processInstance.getProcessInstanceId())
@@ -3240,14 +2959,17 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 .active()
                 .list();
 
+        // 找到刚刚被重建的节点，强制物归原主 (只处理未分配或属于当前分支的，防止多实例场景报错)
         if (CollUtil.isNotEmpty(revertedTasks)) {
             for (Task revertedTask : revertedTasks) {
                 taskService.setAssignee(revertedTask.getId(), userId.toString());
                 taskService.setOwner(revertedTask.getId(), userId.toString());
+                // 顺手重置一下任务状态为运行中，抹除撤回动作可能引发的状态异常
                 updateTaskStatus(revertedTask.getId(), BpmTaskStatusEnum.RUNNING.getStatus());
             }
         }
     }
+
     /**
      * 校验任务是否能被减签
      *
