@@ -103,10 +103,10 @@ public class TimeExplainController {
     public CommonResult<TimeExplainRespVO> getTimeExplain(@RequestParam("id") Long id) {
         TimeExplainDO timeExplain = timeExplainService.getTimeExplain(id);
         AdminUserRespDTO startUser = adminUserApi.getUser(Long.valueOf(timeExplain.getCreator()));
-        DeptRespDTO dept = deptApi.getDept(startUser.getDeptId());
+        DeptRespDTO dept = startUser.getDeptId() != null ? deptApi.getDept(startUser.getDeptId()) : null;
         TimeExplainRespVO result = BeanUtils.toBean(timeExplain, TimeExplainRespVO.class);
-        result.setDeptName(dept.getName());
-        result.setUserName(startUser.getNickname());
+        result.setDeptName(dept != null ? dept.getName() : "");
+        result.setUserName(startUser != null ? startUser.getNickname() : "");
         // 查询附件列表
         List<TimeExplainAttachRespVO> attachList = timeExplainService.getTimeExplainAttachListByTimeExplainId(id);
         result.setFileList(attachList);

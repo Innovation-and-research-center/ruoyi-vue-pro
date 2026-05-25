@@ -75,6 +75,7 @@ public class CityDocJob implements JobHandler {
                     + "?ceadReceiverUuid=" + configApi.getConfigValueByKey(RECEIVE_UUID_KEY) + "&ceadState=0";
 
             String result = HttpUtil.get(listUrl);
+            log.info("【市局公文】列表响应(前500): {}", StrUtil.sub(result, 0, 500));
             if (StrUtil.isEmpty(result)){
                 log.error("【市局公文】接口返回结果为空");
                 return "【市局公文】接口返回结果为空";
@@ -119,6 +120,7 @@ public class CityDocJob implements JobHandler {
 
         String url = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/oa/api/public/service/getSourceAndConvertData.do?ceadUuid=" + ceadUuid;
         String result = HttpUtil.get(url);
+            log.info("【市局公文】详情响应(前500): {}", StrUtil.sub(result, 0, 500));
         RemoteDocResult<RemoteDocDetail> resDetail = JSONUtil.toBean(result, new TypeReference<RemoteDocResult<RemoteDocDetail>>() {}, false);
 
         if (!resDetail.isSuccess() || resDetail.getData() == null) {
@@ -210,7 +212,7 @@ public class CityDocJob implements JobHandler {
         exchangeVO.setDocunique(ceadUuid); // 关键：保存外部UUID
         fileExchangeService.createFileExchange(exchangeVO);
 
-//        // 6. 更新远程状态
+////        // 6. 更新远程状态
 //        updateRemoteState(ceadUuid);
 
         return true;
@@ -256,7 +258,7 @@ public class CityDocJob implements JobHandler {
             String url = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/oa/api/public/service/updateState.do?ceadUuid=" + uuid + "&ceadState=1";
             HttpUtil.get(url);
         } catch (Exception e) {
-            log.warn("更新远程公文状态失败: {}", uuid, e);
+            log.warn("更新市公文状态失败: {}", uuid, e);
         }
     }
 
@@ -313,17 +315,8 @@ public class CityDocJob implements JobHandler {
 
             // 5. 遍历字典进行匹配
             for (DictDataRespDTO dict : dictList) {
-                // dict.getLabel() 对应 C# 中的 key (中文名称，如 "通知")
-                // dict.getValue() 对应 C# 中的 value (数字值，如 "1")
-
-                // 逻辑：判断最后四个字中是否包含字典的 Label
                 if (suffix.contains(dict.getLabel())) {
-                    try {
-                        return dict.getLabel();
-                    } catch (NumberFormatException e) {
-                        // 防止字典值配置的不是数字
-                        return "";
-                    }
+                    return dict.getLabel();
                 }
             }
         }

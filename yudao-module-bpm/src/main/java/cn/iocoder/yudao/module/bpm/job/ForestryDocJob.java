@@ -86,7 +86,7 @@ public class ForestryDocJob implements JobHandler {
             // 1. 准备请求参数
             String md5Pwd = SecureUtil.md5(password); // 对应 C# GetMD5Encrypt32
 //            String today = DateUtil.today(); // yyyy-MM-dd
-            String today = "2025-08-07";
+            String today = DateUtil.today();
 
             String listUrl = domain + "/push/docsReader.do?sysCmd=getReader&dataTime=" + today
                     + "&loginName=" + loginName + "&passWord=" + md5Pwd;
@@ -102,6 +102,7 @@ public class ForestryDocJob implements JobHandler {
             }
 
             String result = response.body();
+            log.info("【林业局收文】列表响应(前500): {}", StrUtil.sub(result, 0, 500));
             // 获取 Session Cookie，用于后续下载附件
             String sessionCookie = response.getCookieStr();
 
@@ -162,9 +163,8 @@ public class ForestryDocJob implements JobHandler {
                 syncMissingAttachments(receiveDocId, allFiles, sessionCookie);
             }
 
-            // 更新远程状态
-            //测试阶段注释
-//            updateRemoteStatus(domain, loginName, md5Pwd, doc.getId());
+//            // C# 逻辑：已签收 → 更新远程状态
+            updateRemoteStatus(domain, loginName, md5Pwd, doc.getId());
             return false;
         }
 
@@ -220,7 +220,7 @@ public class ForestryDocJob implements JobHandler {
         exchangeVO.setDocunique(docUnique);
         fileExchangeService.createFileExchange(exchangeVO);
 
-        // 8. 更新远程状态 (对应 C# getReaderStatus)
+//        // 8. 更新远程状态 (对应 C# getReaderStatus)
 //        updateRemoteStatus(domain, loginName, md5Pwd, doc.getId());
 
         return true;
@@ -341,11 +341,7 @@ public class ForestryDocJob implements JobHandler {
             String suffix = title.substring(title.length() - 4);
             for (DictDataRespDTO dict : dictList) {
                 if (suffix.contains(dict.getLabel())) {
-                    try {
-                        return dict.getLabel();
-                    } catch (NumberFormatException e) {
-                        return "";
-                    }
+                    return dict.getLabel();
                 }
             }
         }

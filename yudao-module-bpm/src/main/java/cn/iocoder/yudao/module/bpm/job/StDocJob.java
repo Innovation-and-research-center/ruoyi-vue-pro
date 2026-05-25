@@ -84,6 +84,7 @@ public class StDocJob implements JobHandler {
             log.info("====== [DQSList 接口 CURL] ======\ncurl -X POST \"{}\" \\\n     -H \"Content-Type: application/json\" \\\n     -d '{}'", url, paramStr);
             // 👆 ----------------------------------- 👆
             String result = HttpUtil.post(url, paramStr);
+            log.info("【省厅收文】列表响应(前500): {}", StrUtil.sub(result, 0, 500));
 //            String result = ResourceUtil.readUtf8Str("mock/st_list.json");;
             // 解析 JSON
             STResult<DQSList> stRes = JSONUtil.toBean(result, new cn.hutool.core.lang.TypeReference<STResult<DQSList>>() {}, false);
@@ -216,17 +217,16 @@ public class StDocJob implements JobHandler {
         exchangeVO.setDocunique(rec.getInfoexchangeid());
         fileExchangeService.createFileExchange(exchangeVO);
 
-        // 6. 签收接口调用
-//        String signOffParam = String.format("{\"id\":\"%s\",\"sign\":\"%s\",\"infoexchangeid\":\"%s\"}",
-//                stUnitId, sign, rec.getInfoexchangeid());
-//        String signOffResult = HttpUtil.post(stServiceIp+"/api6/infoexchange-table/QSJK", signOffParam);
-//
-//        STResult<Object> qsjk = JSONUtil.toBean(signOffResult, new cn.hutool.core.lang.TypeReference<STResult<Object>>() {}, false);
-//        if (qsjk != null && qsjk.getCode() == 200) {
-//            log.info("222办件：{} 已签收!", rec.getBt());
-//        } else {
-//            log.error("222办件：{} 签收失败!", rec.getBt());
-//        }
+        // 6. C# 签收接口 QSJK
+        String signOffParam = String.format("{\"id\":\"%s\",\"sign\":\"%s\",\"infoexchangeid\":\"%s\"}",
+                stUnitId, sign, rec.getInfoexchangeid());
+        String signOffResult = HttpUtil.post(stServiceIp + "/api6/infoexchange-table/QSJK", signOffParam);
+        STResult<Object> qsjk = JSONUtil.toBean(signOffResult, new cn.hutool.core.lang.TypeReference<STResult<Object>>() {}, false);
+        if (qsjk != null && qsjk.getCode() == 200) {
+            log.info("省厅办件：{} 已签收!", rec.getBt());
+        } else {
+            log.error("省厅办件：{} 签收失败!", rec.getBt());
+        }
 
         return true;
     }

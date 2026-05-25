@@ -4,7 +4,6 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.date.DateTime;
 import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.io.FileUtil;
-import cn.hutool.core.io.resource.ResourceUtil;
 import cn.hutool.core.lang.TypeReference;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.http.HttpUtil;
@@ -74,14 +73,12 @@ public class CityNoticeJob implements JobHandler {
             return "跳过非目标租户";
         }
         try{
-            String listUrl = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/getHistoryList.do"
+            String listUrl = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/getPendingList.do"
                     + "?strMap.userUuid=" + configApi.getConfigValueByKey(NOTICE_USER_UUID)
-                    + "&page=1&limit=10&start=0";
+                    + "&page=1&limit=10000&start=0";
 
-//            String result = HttpUtil.get(listUrl);
-
-//            log.info("请求的字符串："+result);
-            String result = ResourceUtil.readUtf8Str("mock/notice_list.json");;
+            String result = HttpUtil.get(listUrl);
+            log.info("【市局公告】列表响应(前500): {}", StrUtil.sub(result, 0, 500));
             if (StrUtil.isEmpty(result)) {
                 log.warn("【市局公告】接口返回结果为空");
                 return "接口返回为空";
@@ -125,16 +122,9 @@ public class CityNoticeJob implements JobHandler {
 
         // 2. 获取详情 (C# /public/oaNotice/showOaNoticeDetail.do)
         String url = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/showOaNoticeDetail.do?oanoUuid=" + noticeUuid;
-//        String result = HttpUtil.get(url);
-        String mockFileName = "mock/detail/" + noticeUuid + ".json";
-        String result;
-        try {
-            result = ResourceUtil.readUtf8Str(mockFileName);
-            log.info("【测试模式】读取本地详情文件: {}", mockFileName);
-        } catch (Exception e) {
-            log.error("找不到模拟文件: {}", mockFileName);
-            return false;
-        }
+        String result = HttpUtil.get(url);
+            log.info("【市局公告】详情响应(前500): {}", StrUtil.sub(result, 0, 500));
+        if (StrUtil.isEmpty(result)) return false;
 
         // 注意：C# 返回的是 ResultData<NoticeDetail>
         NoticeResult<NoticeDetailDTO> resDetail = JSONUtil.toBean(result, new TypeReference<NoticeResult<NoticeDetailDTO>>() {}, false);
@@ -276,8 +266,7 @@ public class CityNoticeJob implements JobHandler {
             // C# Url: /public/oaNotice/loadFile.do?CMD=DF&uuid=...
             String downloadUrl = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/loadFile.do?CMD=DF&uuid=" + fileUuid;
 
-//            byte[] fileBytes = HttpUtil.downloadBytes(downloadUrl);
-            byte[] fileBytes = ResourceUtil.readBytes("mock/test.pdf");
+            byte[] fileBytes = HttpUtil.downloadBytes(downloadUrl);
             if (fileBytes == null || fileBytes.length == 0) return null;
 
             // 上传到 FileService
@@ -359,11 +348,7 @@ public class CityNoticeJob implements JobHandler {
             String suffix = title.substring(title.length() - 4);
             for (DictDataRespDTO dict : dictList) {
                 if (suffix.contains(dict.getLabel())) {
-                    try {
-                        return dict.getLabel();
-                    } catch (NumberFormatException e) {
-                        return "";
-                    }
+                    return dict.getLabel();
                 }
             }
         }

@@ -16,8 +16,10 @@ import cn.iocoder.yudao.module.bpm.framework.print.BpmProcessPrintDataFactory;
 import cn.iocoder.yudao.module.bpm.framework.print.BpmProcessPrintDataHandler;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmCategoryService;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmProcessDefinitionService;
+import cn.iocoder.yudao.module.bpm.service.process.BpmProcessWordService;
 import cn.iocoder.yudao.module.bpm.service.task.BpmProcessInstanceService;
 import cn.iocoder.yudao.module.bpm.service.task.BpmTaskService;
+import cn.iocoder.yudao.module.infra.api.file.FileApi;
 import cn.iocoder.yudao.module.system.api.dept.DeptApi;
 import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
@@ -29,15 +31,20 @@ import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.engine.repository.ProcessDefinition;
 import org.flowable.task.api.Task;
 import org.flowable.task.api.history.HistoricTaskInstance;
+import cn.iocoder.yudao.framework.tenant.core.aop.TenantIgnore;
+import javax.annotation.security.PermitAll;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
+import javax.servlet.http.HttpServletResponse;
 import javax.validation.Valid;
+import java.net.URLEncoder;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.LinkedHashMap;
 import java.util.stream.Collectors;
 
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
@@ -68,6 +75,12 @@ public class BpmProcessInstanceController {
     private AdminUserApi adminUserApi;
     @Resource
     private DeptApi deptApi;
+
+    @Resource
+    private BpmProcessWordService processWordService;
+
+    @Resource
+    private FileApi fileApi;
 
     @GetMapping("/my-page")
     @Operation(summary = "获得我的实例分页列表", description = "在【我的流程】菜单中，进行调用")
@@ -279,6 +292,75 @@ public class BpmProcessInstanceController {
     public CommonResult<PageResult<BpmProcessInstanceUnifiedRespVO>> getUnifiedProcessInstancePage(
             @Valid BpmProcessInstanceUnifiedReqVO reqVO) {
         return success(processInstanceService.getUnifiedProcessInstancePage(getLoginUserId(), reqVO));
+    }
+
+    @GetMapping("/get-print-word")
+    @Operation(summary = "获得流程实例的阅办单 Word 文档")
+    @Parameter(name = "processInstanceId", description = "流程实例的编号", required = true)
+    @DataPermission(enable = false)
+    public void getProcessInstancePrintWord(@RequestParam("processInstanceId") String processInstanceId,
+                                             HttpServletResponse response) throws Exception {
+        byte[] wordBytes = processWordService.generateWord(processInstanceId);
+        response.setContentType("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        response.setCharacterEncoding("UTF-8");
+        String fileName = URLEncoder.encode("阅办单.docx", "UTF-8").replace("+", "%20");
+        response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + fileName);
+        response.getOutputStream().write(wordBytes);
+        response.getOutputStream().flush();
+    }
+
+    @GetMapping("/get-print-html")
+    @Operation(summary = "获得流程实例的阅办单 HTML（用于前端预览/编辑/打印）")
+    @Parameter(name = "processInstanceId", description = "流程实例的编号", required = true)
+    @DataPermission(enable = false)
+    public CommonResult<String> getProcessInstancePrintHtml(@RequestParam("processInstanceId") String processInstanceId) throws Exception {
+        return success(processWordService.generateHtml(processInstanceId));
+    }
+
+    // ==================== OnlyOffice 对接 ====================
+
+    @GetMapping("/get-print-word-file")
+    @Operation(summary = "获取阅办单 Word 文件地址（供 OnlyOffice 打开）")
+    @Parameter(name = "processInstanceId", description = "流程实例的编号", required = true)
+    @PermitAll
+    @TenantIgnore
+    @DataPermission(enable = false)
+    public CommonResult<String> getProcessInstancePrintWordFile(@RequestParam("processInstanceId") String processInstanceId) throws Exception {
+        byte[] wordBytes = processWordService.generateWord(processInstanceId);
+        String url = fileApi.createFile(wordBytes,
+                "阅办单_" + processInstanceId + ".docx",
+                "bpm/process-instance",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        return success(url);
+    }
+
+    @PostMapping("/save-print-word")
+    @Operation(summary = "OnlyOffice 编辑回调（安抚接口，仅 status==2 才实际保存）")
+    @PermitAll
+    @TenantIgnore
+    @DataPermission(enable = false)
+    public Map<String, Object> savePrintWord(@RequestBody String body) {
+        Map<String, Object> json = JsonUtils.parseObject(body, Map.class);
+        Integer status = (Integer) json.get("status");
+        // 仅 status == 2（用户主动保存）或 6（强制保存）时才真正下载并保存文件
+        if (status != null && (status == 2 || status == 6)) {
+            String fileUrl = (String) json.get("url");
+            if (fileUrl != null) {
+                try {
+                    byte[] fileBytes = cn.hutool.http.HttpUtil.downloadBytes(fileUrl);
+                    fileApi.createFile(fileBytes,
+                            "阅办单_edited_" + json.get("key") + ".docx",
+                            "bpm/process-instance",
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+                } catch (Exception ignored) {
+                    // 保存失败也返回 error: 0，避免 OnlyOffice 弹框
+                }
+            }
+        }
+        // 核心：始终返回 error: 0 安抚 OnlyOffice
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("error", 0);
+        return result;
     }
 
 }

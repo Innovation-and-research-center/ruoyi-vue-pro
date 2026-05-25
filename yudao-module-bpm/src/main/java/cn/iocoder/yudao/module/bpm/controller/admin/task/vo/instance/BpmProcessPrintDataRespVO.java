@@ -40,6 +40,9 @@ public class BpmProcessPrintDataRespVO {
         @Schema(description = "任务名称", requiredMode = Schema.RequiredMode.REQUIRED, example = "芋道")
         private String name;
 
+        @Schema(description = "任务定义 Key", example = "Activity_1m15g69")
+        private String taskDefinitionKey;
+
         @Schema(description = "签名 URL", example = "https://www.iocoder.cn/sign.png")
         private String signPicUrl;
 

@@ -322,6 +322,7 @@ public interface BpmProcessInstanceConvert {
             BpmProcessPrintDataRespVO.Task approveTask = new BpmProcessPrintDataRespVO.Task();
             approveTask.setName(item.getName());
             approveTask.setId(item.getId());
+            approveTask.setTaskDefinitionKey(item.getTaskDefinitionKey());
             approveTask.setSignPicUrl((String) taskLocalVariables.get(BpmnVariableConstants.TASK_SIGN_PIC_URL));
             String assigneeStr = item.getAssignee();
             String ownerStr = "";
