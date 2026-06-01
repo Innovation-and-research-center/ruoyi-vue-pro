@@ -92,6 +92,7 @@ public class ForestryDocJob implements JobHandler {
                     + "&loginName=" + loginName + "&passWord=" + md5Pwd;
 
             // 2. 发送请求并获取 Cookie (C# session = response.Headers["Set-Cookie"])
+            log.info("【林业局收文】列表请求 URL: {}", listUrl);
             HttpResponse response = HttpRequest.get(listUrl)
                     .timeout(10000)
                     .execute();
@@ -102,7 +103,7 @@ public class ForestryDocJob implements JobHandler {
             }
 
             String result = response.body();
-            log.info("【林业局收文】列表响应(前500): {}", StrUtil.sub(result, 0, 500));
+            log.info("【林业局收文】列表响应(长度={}): {}", result.length(), result);
             // 获取 Session Cookie，用于后续下载附件
             String sessionCookie = response.getCookieStr();
 
@@ -241,6 +242,7 @@ public class ForestryDocJob implements JobHandler {
             }
 
             // 发起请求下载
+            log.info("【林业局收文】附件下载请求 URL: {}", url);
             HttpResponse response = HttpRequest.get(url)
                     .cookie(sessionCookie) // 关键：带上 Session
                     .execute();
@@ -324,7 +326,8 @@ public class ForestryDocJob implements JobHandler {
             // C# sysCmd=getReaderStatus
             String url = domain + "/push/docsReader.do?sysCmd=getReaderStatus"
                     + "&loginName=" + loginName + "&passWord=" + md5Pwd + "&id=" + id;
-            HttpUtil.get(url);
+            log.info("【林业局收文】更新状态请求 URL: {}", url);
+            HttpUtil.get(url, 10000);
         } catch (Exception e) {
             log.warn("更新林业局远程状态失败: {}", id, e);
         }

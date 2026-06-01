@@ -17,6 +17,7 @@ import cn.iocoder.yudao.module.bpm.framework.print.BpmProcessPrintDataHandler;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmCategoryService;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmProcessDefinitionService;
 import cn.iocoder.yudao.module.bpm.service.process.BpmProcessWordService;
+import cn.iocoder.yudao.module.bpm.service.processfile.BpmProcessFileService;
 import cn.iocoder.yudao.module.bpm.service.task.BpmProcessInstanceService;
 import cn.iocoder.yudao.module.bpm.service.task.BpmTaskService;
 import cn.iocoder.yudao.module.infra.api.file.FileApi;
@@ -81,6 +82,9 @@ public class BpmProcessInstanceController {
 
     @Resource
     private FileApi fileApi;
+
+    @Resource
+    private BpmProcessFileService processFileService;
 
     @GetMapping("/my-page")
     @Operation(summary = "获得我的实例分页列表", description = "在【我的流程】菜单中，进行调用")
@@ -331,18 +335,53 @@ public class BpmProcessInstanceController {
                 "阅办单_" + processInstanceId + ".docx",
                 "bpm/process-instance",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        // 写入文件→流程关联
+        processFileService.save(url, processInstanceId);
         return success(url);
     }
 
+    @GetMapping("/get-print-word-stream")
+    @Operation(summary = "获取阅办单 Word 文件流（供 OnlyOffice 免登录加载）")
+    @Parameter(name = "processInstanceId", description = "流程实例的编号", required = true)
+    @PermitAll
+    @TenantIgnore
+    @DataPermission(enable = false)
+    public void getProcessInstancePrintWordStream(@RequestParam("processInstanceId") String processInstanceId,
+                                                   HttpServletResponse response) throws Exception {
+        byte[] wordBytes = processWordService.generateWord(processInstanceId);
+        response.setContentType("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        response.setHeader("Content-Disposition", "inline; filename=阅办单.docx");
+        response.getOutputStream().write(wordBytes);
+        response.getOutputStream().flush();
+    }
+
+    @GetMapping("/get-print-word-download")
+    @Operation(summary = "下载阅办单文件（需流程参与权限）")
+    @Parameter(name = "fileUrl", description = "文件地址", required = true)
+    public void getPrintWordDownload(@RequestParam("fileUrl") String fileUrl,
+                                      HttpServletResponse response) throws Exception {
+        Long userId = getLoginUserId();
+        if (!processFileService.canAccess(userId, fileUrl)) {
+            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            response.getWriter().write("无权限下载该文件");
+            return;
+        }
+        // 通过 HTTP 内部代理下载文件
+        byte[] content = cn.hutool.http.HttpUtil.downloadBytes(fileUrl);
+        response.setContentType("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        response.setHeader("Content-Disposition", "attachment; filename=阅办单.docx");
+        response.getOutputStream().write(content);
+        response.getOutputStream().flush();
+    }
+
     @PostMapping("/save-print-word")
-    @Operation(summary = "OnlyOffice 编辑回调（安抚接口，仅 status==2 才实际保存）")
+    @Operation(summary = "OnlyOffice 编辑保存回调")
     @PermitAll
     @TenantIgnore
     @DataPermission(enable = false)
     public Map<String, Object> savePrintWord(@RequestBody String body) {
         Map<String, Object> json = JsonUtils.parseObject(body, Map.class);
         Integer status = (Integer) json.get("status");
-        // 仅 status == 2（用户主动保存）或 6（强制保存）时才真正下载并保存文件
         if (status != null && (status == 2 || status == 6)) {
             String fileUrl = (String) json.get("url");
             if (fileUrl != null) {
@@ -353,11 +392,9 @@ public class BpmProcessInstanceController {
                             "bpm/process-instance",
                             "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
                 } catch (Exception ignored) {
-                    // 保存失败也返回 error: 0，避免 OnlyOffice 弹框
                 }
             }
         }
-        // 核心：始终返回 error: 0 安抚 OnlyOffice
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("error", 0);
         return result;

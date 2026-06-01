@@ -83,8 +83,8 @@ public class StDocJob implements JobHandler {
             // 👇 --- 新增：打印 CURL 命令到日志 --- 👇
             log.info("====== [DQSList 接口 CURL] ======\ncurl -X POST \"{}\" \\\n     -H \"Content-Type: application/json\" \\\n     -d '{}'", url, paramStr);
             // 👆 ----------------------------------- 👆
-            String result = HttpUtil.post(url, paramStr);
-            log.info("【省厅收文】列表响应(前500): {}", StrUtil.sub(result, 0, 500));
+            String result = HttpUtil.post(url, paramStr, 30000);
+            log.info("【省厅收文】列表响应(长度={}): {}", result.length(), result);
 //            String result = ResourceUtil.readUtf8Str("mock/st_list.json");;
             // 解析 JSON
             STResult<DQSList> stRes = JSONUtil.toBean(result, new cn.hutool.core.lang.TypeReference<STResult<DQSList>>() {}, false);
@@ -220,7 +220,9 @@ public class StDocJob implements JobHandler {
         // 6. C# 签收接口 QSJK
         String signOffParam = String.format("{\"id\":\"%s\",\"sign\":\"%s\",\"infoexchangeid\":\"%s\"}",
                 stUnitId, sign, rec.getInfoexchangeid());
-        String signOffResult = HttpUtil.post(stServiceIp + "/api6/infoexchange-table/QSJK", signOffParam);
+        String signOffUrl = stServiceIp + "/api6/infoexchange-table/QSJK";
+        log.info("【省厅收文】签收请求 URL: {}, Body: {}", signOffUrl, signOffParam);
+        String signOffResult = HttpUtil.post(signOffUrl, signOffParam, 10000);
         STResult<Object> qsjk = JSONUtil.toBean(signOffResult, new cn.hutool.core.lang.TypeReference<STResult<Object>>() {}, false);
         if (qsjk != null && qsjk.getCode() == 200) {
             log.info("省厅办件：{} 已签收!", rec.getBt());
@@ -245,7 +247,7 @@ public class StDocJob implements JobHandler {
             // 👇 --- 新增：打印 CURL 命令到日志 --- 👇
             log.info("====== [HQFJ 获取附件列表 CURL] ======\ncurl -X POST \"{}\" \\\n     -H \"Content-Type: application/json\" \\\n     -d '{}'", url, paramStr);
             // 👆 ----------------------------------- 👆
-            String result = HttpUtil.post(url, paramStr);
+            String result = HttpUtil.post(url, paramStr, 30000);
 //            String mockFileName = "mock/st_detail/" + rec.getInfoexchangeid() + ".json";
 //            String result = ResourceUtil.readUtf8Str(mockFileName);
 
@@ -310,7 +312,9 @@ public class StDocJob implements JobHandler {
             // 1. 获取省厅接口的附件列表
             String paramStr = String.format("{\"id\":\"%s\",\"sign\":\"%s\",\"infoexchangeid\":\"%s\"}",
                     stUnitId, sign, rec.getInfoexchangeid());
-            String result = HttpUtil.post(stServiceIp + "/api6/infoexchange-table/HQFJ", paramStr);
+            String url = stServiceIp + "/api6/infoexchange-table/HQFJ";
+            log.info("【省厅收文】补充附件-获取附件列表请求 URL: {}, Body: {}", url, paramStr);
+            String result = HttpUtil.post(url, paramStr, 30000);
 //            String mockFileName = "mock/st_detail/" + rec.getInfoexchangeid() + ".json";
 //            String result = ResourceUtil.readUtf8Str(mockFileName);
 

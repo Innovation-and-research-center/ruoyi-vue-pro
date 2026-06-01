@@ -74,8 +74,9 @@ public class CityDocJob implements JobHandler {
             String listUrl = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/oa/api/public/service/showCoreExchgappData.do"
                     + "?ceadReceiverUuid=" + configApi.getConfigValueByKey(RECEIVE_UUID_KEY) + "&ceadState=0";
 
-            String result = HttpUtil.get(listUrl);
-            log.info("【市局公文】列表响应(前500): {}", StrUtil.sub(result, 0, 500));
+            log.info("【市局公文】列表请求 URL: {}", listUrl);
+            String result = HttpUtil.get(listUrl, 30000);
+            log.info("【市局公文】列表响应(长度={}): {}", result.length(), result);
             if (StrUtil.isEmpty(result)){
                 log.error("【市局公文】接口返回结果为空");
                 return "【市局公文】接口返回结果为空";
@@ -103,7 +104,7 @@ public class CityDocJob implements JobHandler {
             }
 
         } catch (Exception e) {
-
+            log.error("【市局公文】同步任务发生严重异常，请求可能失败！", e);
         }
 
         return param;
@@ -119,8 +120,9 @@ public class CityDocJob implements JobHandler {
                 .eq(FileExchangeDO::getDocunique, ceadUuid));
 
         String url = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/oa/api/public/service/getSourceAndConvertData.do?ceadUuid=" + ceadUuid;
-        String result = HttpUtil.get(url);
-            log.info("【市局公文】详情响应(前500): {}", StrUtil.sub(result, 0, 500));
+        log.info("【市局公文】详情请求 URL: {}", url);
+        String result = HttpUtil.get(url, 30000);
+        log.info("【市局公文】详情响应(长度={}): {}", result.length(), result);
         RemoteDocResult<RemoteDocDetail> resDetail = JSONUtil.toBean(result, new TypeReference<RemoteDocResult<RemoteDocDetail>>() {}, false);
 
         if (!resDetail.isSuccess() || resDetail.getData() == null) {
@@ -224,6 +226,7 @@ public class CityDocJob implements JobHandler {
     private ReceiveDocAttachDO downloadAndUploadFile(RemoteWkflwFile remoteFile) {
         try {
             String downloadUrl = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/oa/api/public/risen/wkflw/download.do?CMD=DF&TYPE=stream&uuid=" + remoteFile.getWkfileUuid();
+            log.info("【市局公文】附件下载请求 URL: {}", downloadUrl);
 
             // 1. 下载字节流
             byte[] fileBytes = HttpUtil.downloadBytes(downloadUrl);
@@ -256,7 +259,8 @@ public class CityDocJob implements JobHandler {
     private void updateRemoteState(String uuid) {
         try {
             String url = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/oa/api/public/service/updateState.do?ceadUuid=" + uuid + "&ceadState=1";
-            HttpUtil.get(url);
+            log.info("【市局公文】更新状态请求 URL: {}", url);
+            HttpUtil.get(url, 10000);
         } catch (Exception e) {
             log.warn("更新市公文状态失败: {}", uuid, e);
         }

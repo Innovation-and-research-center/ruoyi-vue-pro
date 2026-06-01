@@ -75,10 +75,11 @@ public class CityNoticeJob implements JobHandler {
         try{
             String listUrl = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/getPendingList.do"
                     + "?strMap.userUuid=" + configApi.getConfigValueByKey(NOTICE_USER_UUID)
-                    + "&page=1&limit=10000&start=0";
+                    + "&page=1&limit=20&start=0";
 
-            String result = HttpUtil.get(listUrl);
-            log.info("【市局公告】列表响应(前500): {}", StrUtil.sub(result, 0, 500));
+            log.info("【市局公告】列表请求 URL: {}", listUrl);
+            String result = HttpUtil.get(listUrl, 30000);
+            log.info("【市局公告】列表响应(长度={}): {}", result.length(), result);
             if (StrUtil.isEmpty(result)) {
                 log.warn("【市局公告】接口返回结果为空");
                 return "接口返回为空";
@@ -122,8 +123,9 @@ public class CityNoticeJob implements JobHandler {
 
         // 2. 获取详情 (C# /public/oaNotice/showOaNoticeDetail.do)
         String url = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/showOaNoticeDetail.do?oanoUuid=" + noticeUuid;
-        String result = HttpUtil.get(url);
-            log.info("【市局公告】详情响应(前500): {}", StrUtil.sub(result, 0, 500));
+        log.info("【市局公告】详情请求 URL: {}", url);
+        String result = HttpUtil.get(url, 30000);
+        log.info("【市局公告】详情响应(长度={}): {}", result.length(), result);
         if (StrUtil.isEmpty(result)) return false;
 
         // 注意：C# 返回的是 ResultData<NoticeDetail>
@@ -265,6 +267,7 @@ public class CityNoticeJob implements JobHandler {
         try {
             // C# Url: /public/oaNotice/loadFile.do?CMD=DF&uuid=...
             String downloadUrl = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/loadFile.do?CMD=DF&uuid=" + fileUuid;
+            log.info("【市局公告】附件下载请求 URL: {}", downloadUrl);
 
             byte[] fileBytes = HttpUtil.downloadBytes(downloadUrl);
             if (fileBytes == null || fileBytes.length == 0) return null;

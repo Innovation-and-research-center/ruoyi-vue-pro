@@ -1,0 +1,11 @@
+--- #################### 生产环境安全配置 ####################
+
+knife4j:
+  enable: false
+  production: true
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
