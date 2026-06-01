@@ -29,6 +29,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import jodd.util.StringUtil;
+import lombok.extern.slf4j.Slf4j;
+import org.flowable.engine.RuntimeService;
 import org.flowable.task.api.history.HistoricTaskInstance;
 import org.flowable.task.service.TaskService;
 import org.springframework.context.annotation.Lazy;
@@ -67,6 +69,7 @@ import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVari
  */
 @Service
 @Validated
+@Slf4j
 public class ReceiveDocServiceImpl implements ReceiveDocService {
 
     public static final String PROCESS_KEY = RECEIVE;
@@ -96,6 +99,9 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
 
     @Resource
     private BpmInvalidateHelper bpmInvalidateHelper;
+
+    @Resource
+    private RuntimeService runtimeService;
 
     @Override
     public Long createReceiveDoc(Long userId,ReceiveDocSaveReqVO createReqVO) {
@@ -323,6 +329,7 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
             realKey=PROCESS_KEY_CHANGE;
         }
 //        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEXT_NODE, createReqVO.getSelectNode());
+        processInstanceVariables.put(PROCESS_SOURCE_UNIT, updateReqVO.getSendDept());
         String customName =StringUtil.isEmpty(updateReqVO.getSubject()) ? "收文":updateReqVO.getSubject();
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
         processInstanceVariables.put(PROCESS_URGENCY_DEGREE, updateReqVO.getUrgencyDegree());
@@ -781,6 +788,37 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         receiveDocMapper.updateById(new ReceiveDocDO().setId(id).setStatus(status.shortValue()));
     }
 
+    @Override
+    public Long getPendingCount() {
+        return receiveDocMapper.selectCount(
+                Wrappers.<ReceiveDocDO>lambdaQuery().eq(ReceiveDocDO::getStatus, BpmTaskStatusEnum.WAIT.getStatus())
+        );
+    }
 
+    @Override
+    public int backfillSourceUnit() {
+        List<ReceiveDocDO> list = receiveDocMapper.selectList(
+                Wrappers.<ReceiveDocDO>lambdaQuery()
+                        .isNotNull(ReceiveDocDO::getProcessInstanceId)
+                        .ne(ReceiveDocDO::getProcessInstanceId, "")
+                        .isNotNull(ReceiveDocDO::getSendDept)
+                        .ne(ReceiveDocDO::getSendDept, "")
+        );
+        int count = 0;
+        for (ReceiveDocDO doc : list) {
+            try {
+                Object exist = runtimeService.getVariable(doc.getProcessInstanceId(), PROCESS_SOURCE_UNIT);
+                if (exist == null) {
+                    runtimeService.setVariable(doc.getProcessInstanceId(), PROCESS_SOURCE_UNIT, doc.getSendDept());
+                    count++;
+                    log.info("补设 PROCESS_SOURCE_UNIT: processInstanceId={}, sendDept={}", doc.getProcessInstanceId(), doc.getSendDept());
+                }
+            } catch (Exception e) {
+                log.warn("补设 PROCESS_SOURCE_UNIT 失败: processInstanceId={}", doc.getProcessInstanceId(), e);
+            }
+        }
+        log.info("补设 PROCESS_SOURCE_UNIT 完成, 总数={}, 修复={}", list.size(), count);
+        return count;
+    }
 
 }

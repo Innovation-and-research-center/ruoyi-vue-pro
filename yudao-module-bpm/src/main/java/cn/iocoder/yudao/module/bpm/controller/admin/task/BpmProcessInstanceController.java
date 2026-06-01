@@ -335,8 +335,6 @@ public class BpmProcessInstanceController {
                 "阅办单_" + processInstanceId + ".docx",
                 "bpm/process-instance",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-        // 写入文件→流程关联
-        processFileService.save(url, processInstanceId);
         return success(url);
     }
 

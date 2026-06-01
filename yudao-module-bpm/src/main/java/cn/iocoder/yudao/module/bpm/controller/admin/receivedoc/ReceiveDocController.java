@@ -152,4 +152,16 @@ public class ReceiveDocController {
         return success(receiveDocService.getReceiveDocAttachListByReceiveDocId(receiveDocId));
     }
 
+    @GetMapping("/get-pending-count")
+    @Operation(summary = "获得待收文数量")
+    public CommonResult<Long> getPendingCount() {
+        return success(receiveDocService.getPendingCount());
+    }
+
+    @PostMapping("/backfill-source-unit")
+    @Operation(summary = "补设流程变量 PROCESS_SOURCE_UNIT（一次性修复）")
+    public CommonResult<Integer> backfillSourceUnit() {
+        return success(receiveDocService.backfillSourceUnit());
+    }
+
 }

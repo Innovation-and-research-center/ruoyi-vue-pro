@@ -27,6 +27,7 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
                 .likeIfPresent(ReceiveDocDO::getSubject, reqVO.getSubject())
                 .eqIfPresent(ReceiveDocDO::getUrgencyDegree, reqVO.getUrgencyDegree())
                 .likeIfPresent(ReceiveDocDO::getDocSecondClass, reqVO.getDocSecondClass())
+                .eqIfPresent(ReceiveDocDO::getStatus, reqVO.getStatus())
                 .orderByDesc(ReceiveDocDO::getId));
     }
 

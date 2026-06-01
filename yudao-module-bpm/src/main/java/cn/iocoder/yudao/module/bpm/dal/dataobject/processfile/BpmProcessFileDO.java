@@ -1,7 +1,7 @@
 package cn.iocoder.yudao.module.bpm.dal.dataobject.processfile;
 
 import cn.iocoder.yudao.framework.mybatis.core.dataobject.BaseDO;
-import com.baomidou.mybatisplus.annotation.KeySequence;
+import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.*;
@@ -13,10 +13,9 @@ import lombok.*;
 @NoArgsConstructor
 @AllArgsConstructor
 @TableName("bpm_process_file")
-@KeySequence("bpm_process_file_seq")
 public class BpmProcessFileDO extends BaseDO {
 
-    @TableId
+    @TableId(type = IdType.AUTO)
     private Long id;
 
     /** 文件路径（对应文件服务返回的 URL） */

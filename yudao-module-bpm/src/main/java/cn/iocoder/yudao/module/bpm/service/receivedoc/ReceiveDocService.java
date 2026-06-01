@@ -76,4 +76,8 @@ public interface ReceiveDocService {
 
     void updateReceiveStatus(Long id, Integer status);
 
+    Long getPendingCount();
+
+    int backfillSourceUnit();
+
 }

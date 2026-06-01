@@ -38,4 +38,7 @@ public class ReceiveDocPageReqVO extends PageParam {
     @Schema(description = "文件类别")
     private String docSecondClass;
 
+    @Schema(description = "状态", example = "0")
+    private Short status;
+
 }

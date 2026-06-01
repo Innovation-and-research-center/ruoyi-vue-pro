@@ -486,19 +486,18 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
             }
             return value.toString();
         }
-        // String 类型：纯数字时间戳 或 ISO 日期字符串
+        // String 类型：仅纯数字时间戳才转日期，其余保持原文
         if (value instanceof String) {
             String strVal = (String) value;
-            try {
-                if (strVal.matches("^\\d{10}$|^\\d{13}$")) {
+            if (strVal.matches("^\\d{10}$|^\\d{13}$")) {
+                try {
                     long timestamp = Long.parseLong(strVal);
                     if (strVal.length() == 10) timestamp *= 1000;
                     return cn.hutool.core.date.DateUtil.format(new Date(timestamp), DATE_FORMAT);
+                } catch (Exception ignored) {
                 }
-                return cn.hutool.core.date.DateUtil.format(
-                        cn.hutool.core.date.DateUtil.parse(strVal), DATE_FORMAT);
-            } catch (Exception ignored) {
             }
+            return strVal;
         }
         // Jackson 可能将 LocalDateTime 转为 List [2026, 5, 22, ...]
         if (value instanceof List && ((List<?>) value).size() >= 3) {
