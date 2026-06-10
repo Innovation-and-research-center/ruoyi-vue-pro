@@ -214,6 +214,7 @@ public class ForestryDocJob implements JobHandler {
         FileExchangeSaveReqVO exchangeVO = new FileExchangeSaveReqVO();
         exchangeVO.setOperationDate(LocalDateTime.now());
         exchangeVO.setOperationPerson("系统自动");
+        exchangeVO.setOperationInformation("林业局收文");
         exchangeVO.setOperationType((short) 2);
         exchangeVO.setDocId(receiveDocId);
         exchangeVO.setSendDocNumber(receiveDocDO.getSendDocNumber());

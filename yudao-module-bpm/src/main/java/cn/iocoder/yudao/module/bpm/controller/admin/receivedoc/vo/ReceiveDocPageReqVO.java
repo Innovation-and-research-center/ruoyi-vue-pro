@@ -41,4 +41,7 @@ public class ReceiveDocPageReqVO extends PageParam {
     @Schema(description = "状态", example = "0")
     private Short status;
 
+    @Schema(description = "来源")
+    private String source;
+
 }

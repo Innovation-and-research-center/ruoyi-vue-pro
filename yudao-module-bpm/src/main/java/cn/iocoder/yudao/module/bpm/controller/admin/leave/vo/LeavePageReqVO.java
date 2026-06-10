@@ -17,6 +17,10 @@ public class LeavePageReqVO extends PageParam {
     @DateTimeFormat(pattern = FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)
     private LocalDateTime[] applyDate;
 
+    @Schema(description = "请假时间范围，与该范围有交集的记录")
+    @DateTimeFormat(pattern = FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)
+    private LocalDateTime[] leaveTime;
+
     @Schema(description = "开始时间(请假时间段中最小的时间)")
     @DateTimeFormat(pattern = FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)
     private LocalDateTime[] qxjStartDate;
@@ -25,8 +29,11 @@ public class LeavePageReqVO extends PageParam {
     @DateTimeFormat(pattern = FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)
     private LocalDateTime[] qxjEndDate;
 
-    @Schema(description = "请（休）假种类", example = "1")
+    @Schema(description = "请(休)假种类", example = "1")
     private Integer qxjType;
+
+    @Schema(description = "请假事由")
+    private String sjReason;
 
     @Schema(description = "共计天数")
     private BigDecimal totalTs;
@@ -34,7 +41,13 @@ public class LeavePageReqVO extends PageParam {
     @Schema(description = "文件地址")
     private String filepath;
 
-    @Schema(description = "用户ID")
-    private String userId;
+    @Schema(description = "申请用户ID")
+    private Long userId;
+
+    @Schema(description = "申请用户昵称")
+    private String nickName;
+
+    @Schema(description = "办理状态")
+    private Short spzt;
 
 }

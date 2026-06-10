@@ -79,6 +79,10 @@ public class ReceiveDocRespVO {
 
     private String cancelReason;
 
+    @Schema(description = "来源")
+    @ExcelProperty("来源")
+    private String source;
+
 
 
 

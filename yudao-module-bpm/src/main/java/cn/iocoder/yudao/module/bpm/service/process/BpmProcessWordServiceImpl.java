@@ -257,9 +257,10 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
         DocumentBuilder builder = new DocumentBuilder(doc);
 
         fillProcessInstanceInfo(builder, historicProcessInstance, startUser, dept);
-        if (businessData != null && !businessData.isEmpty()) {
-            fillBusinessData(builder, businessData, processDefinitionKey);
+        if (businessData == null) {
+            businessData = new HashMap<>();
         }
+        fillBusinessData(builder, businessData, processDefinitionKey);
         fillApprovalComments(builder, doc, printData, processDefinitionKey);
 
         return doc;
@@ -365,10 +366,8 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
     private void fillApprovalComments(DocumentBuilder builder, Document doc,
                                        BpmProcessPrintDataRespVO printData,
                                        String processDefinitionKey) throws Exception {
-        List<BpmProcessPrintDataRespVO.Task> taskList = printData.getTasks();
-        if (CollUtil.isEmpty(taskList)) {
-            return;
-        }
+        List<BpmProcessPrintDataRespVO.Task> taskList =
+                (printData != null && printData.getTasks() != null) ? printData.getTasks() : new ArrayList<>();
 
         Map<String, CommentCategory> keyMapping = TASK_KEY_MAPPING.get(processDefinitionKey);
 

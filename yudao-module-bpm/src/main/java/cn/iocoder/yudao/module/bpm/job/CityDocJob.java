@@ -207,6 +207,7 @@ public class CityDocJob implements JobHandler {
         FileExchangeSaveReqVO exchangeVO = new FileExchangeSaveReqVO();
         exchangeVO.setOperationDate(LocalDateTime.now());
         exchangeVO.setOperationPerson("系统自动");
+        exchangeVO.setOperationInformation("市局公文");
         exchangeVO.setOperationType((short) 2); // 2 代表接收
         exchangeVO.setDocId(receiveDocId);
         exchangeVO.setSendDocNumber(receiveDocDO.getSendDocNumber());

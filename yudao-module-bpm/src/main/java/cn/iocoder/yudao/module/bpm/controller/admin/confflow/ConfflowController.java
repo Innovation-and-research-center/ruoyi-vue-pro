@@ -64,6 +64,24 @@ public class ConfflowController {
         return success(confflowService.createConfflow(getLoginUserId(),createReqVO));
     }
 
+    @PostMapping("/save")
+    @Operation(summary = "保存会议报告单草稿")
+//    @PreAuthorize("@ss.hasPermission('bpm:confflow:create')")
+    public CommonResult<Long> saveConfflow(@Valid @RequestBody ConfflowSaveReqVO createReqVO) {
+        return success(confflowService.saveConfflow(getLoginUserId(), createReqVO));
+    }
+
+    @PostMapping("/create-flow")
+    @Operation(summary = "草稿发起会议报告单流程")
+//    @PreAuthorize("@ss.hasPermission('bpm:confflow:create')")
+    public CommonResult<Boolean> createFlowConfflow(@Valid @RequestBody ConfflowSaveReqVO createReqVO) {
+        if (StrUtil.isNotEmpty(createReqVO.getProcessVariablesStr())) {
+            createReqVO.setProcessVariables(JsonUtils.parseObject(createReqVO.getProcessVariablesStr(), Map.class));
+        }
+        confflowService.createFlowConfflow(getLoginUserId(), createReqVO);
+        return success(true);
+    }
+
     @PutMapping("/update")
     @Operation(summary = "更新会议报告单")
 //    @PreAuthorize("@ss.hasPermission('bpm:confflow:update')")

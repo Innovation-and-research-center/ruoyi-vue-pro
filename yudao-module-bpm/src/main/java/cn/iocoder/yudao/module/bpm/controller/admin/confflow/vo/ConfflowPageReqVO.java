@@ -33,6 +33,9 @@ public class ConfflowPageReqVO extends PageParam {
     @DateTimeFormat(pattern = FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)
     private LocalDateTime[] startDate;
 
+    @Schema(description = "会议名称")
+    private String title;
+
     @Schema(description = "提议内容")
     private String content;
 
@@ -41,5 +44,17 @@ public class ConfflowPageReqVO extends PageParam {
 
     @Schema(description = "会议地点")
     private String venue;
+
+    @Schema(description = "召集单位及召集人")
+    private String joinUnit;
+
+    @Schema(description = "我局参会科室")
+    private String offerUnit;
+
+    @Schema(description = "我局参会人员")
+    private String offerPerson;
+
+    @Schema(description = "审批状态")
+    private Short status;
 
 }

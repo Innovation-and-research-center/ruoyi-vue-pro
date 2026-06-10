@@ -25,9 +25,15 @@ public interface ConfflowMapper extends BaseMapperX<ConfflowDO> {
                 .likeIfPresent(ConfflowDO::getDeptName, reqVO.getDeptName())
                 .betweenIfPresent(ConfflowDO::getApplyDate, reqVO.getApplyDate())
                 .betweenIfPresent(ConfflowDO::getStartDate, reqVO.getStartDate())
-                .eqIfPresent(ConfflowDO::getContent, reqVO.getContent())
-                .eqIfPresent(ConfflowDO::getRemark, reqVO.getRemark())
-                .eqIfPresent(ConfflowDO::getVenue, reqVO.getVenue())
+                .likeIfPresent(ConfflowDO::getTitle, reqVO.getTitle())
+                .likeIfPresent(ConfflowDO::getContent, reqVO.getContent())
+                .likeIfPresent(ConfflowDO::getRemark, reqVO.getRemark())
+                .likeIfPresent(ConfflowDO::getVenue, reqVO.getVenue())
+                .likeIfPresent(ConfflowDO::getJoinUnit, reqVO.getJoinUnit())
+                .likeIfPresent(ConfflowDO::getOfferUnit, reqVO.getOfferUnit())
+                .likeIfPresent(ConfflowDO::getOfferPerson, reqVO.getOfferPerson())
+                .eqIfPresent(ConfflowDO::getStatus, reqVO.getStatus())
+                .orderByDesc(ConfflowDO::getStartDate)
                 .orderByDesc(ConfflowDO::getId));
     }
 

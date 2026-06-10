@@ -327,5 +327,11 @@ public class ReceiveDocDO extends BaseDO {
 
     private String cancelReason;
 
+    /**
+     * 收文来源。接口同步的来源取自文件交换表；没有交换记录的视为网页新建。
+     */
+    @TableField(exist = false)
+    private String source;
+
 
 }

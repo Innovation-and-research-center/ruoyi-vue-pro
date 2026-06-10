@@ -356,6 +356,9 @@ public class SendDocPageReqVO extends PageParam {
     @Schema(description = "流程实例的编号", example = "29028")
     private String processInstanceId;
 
+    @Schema(description = "办理状态")
+    private Short status;
+
     @Schema(description = "创建时间")
     @DateTimeFormat(pattern = FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)
     private LocalDateTime[] createTime;

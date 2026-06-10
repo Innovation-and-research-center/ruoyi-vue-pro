@@ -49,7 +49,7 @@ public class LeaveDO extends BaseDO {
      */
     private LocalDateTime qxjEndDate;
     /**
-     * 请（休）假种类
+     * 请(休)假种类
      */
     private Integer qxjType;
     /**

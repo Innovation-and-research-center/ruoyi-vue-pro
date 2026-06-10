@@ -28,8 +28,8 @@ public class LeaveRespVO {
     @ExcelProperty("结束时间(请假时间段中最大的时间)")
     private LocalDateTime qxjEndDate;
 
-    @Schema(description = "请（休）假种类", example = "1")
-    @ExcelProperty("请（休）假种类")
+    @Schema(description = "请(休)假种类", example = "1")
+    @ExcelProperty("请(休)假种类")
     private Integer qxjType;
 
     @Schema(description = "事假理由", example = "不好")

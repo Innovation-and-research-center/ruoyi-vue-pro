@@ -34,7 +34,7 @@ public class LeaveSaveReqVO {
     @NotNull(message = "结束时段不能为空")
     private String endPeriod;
 
-    @Schema(description = "请（休）假种类", example = "1",requiredMode = Schema.RequiredMode.REQUIRED)
+    @Schema(description = "请(休)假种类", example = "1",requiredMode = Schema.RequiredMode.REQUIRED)
     @NotNull(message = "请假类型不能为空")
     private Integer qxjType;
 

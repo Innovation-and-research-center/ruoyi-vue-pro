@@ -363,7 +363,7 @@ public class LeaveServiceImpl implements LeaveService {
     @Override
     public PageResult<LeaveHistoryRespVO> getLeaveHistoryPage(LeavePageReqVO pageReqVO) {
         // 1. 强制过滤当前用户
-        pageReqVO.setUserId(String.valueOf(SecurityFrameworkUtils.getLoginUserId()));
+        pageReqVO.setUserId(SecurityFrameworkUtils.getLoginUserId());
 
         // 2. 查询数据库分页
         PageResult<LeaveDO> pageResult = leaveMapper.selectPage(pageReqVO);

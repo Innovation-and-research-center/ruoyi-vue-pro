@@ -2,7 +2,7 @@ package cn.iocoder.yudao.module.bpm.dal.dataobject.confflow;
 
 import lombok.*;
 import com.baomidou.mybatisplus.annotation.*;
-import cn.iocoder.yudao.framework.mybatis.core.dataobject.BaseDO;
+import cn.iocoder.yudao.framework.tenant.core.db.TenantBaseDO;
 
 /**
  * 会议报告单附件 DO
@@ -15,7 +15,7 @@ import cn.iocoder.yudao.framework.mybatis.core.dataobject.BaseDO;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class ConfflowAttachDO extends BaseDO {
+public class ConfflowAttachDO extends TenantBaseDO {
 
     /**
      * 主键

@@ -23,10 +23,11 @@ public interface XzfyMapper extends BaseMapperX<XzfyDO> {
                 .likeIfPresent(XzfyDO::getSwJg, reqVO.getSwJg())
                 .betweenIfPresent(XzfyDO::getSwRq, reqVO.getSwRq())
                 .likeIfPresent(XzfyDO::getSqr, reqVO.getSqr())
-                .eqIfPresent(XzfyDO::getDsr, reqVO.getDsr())
+                .likeIfPresent(XzfyDO::getDsr, reqVO.getDsr())
                 .eqIfPresent(XzfyDO::getLb1, reqVO.getLb1())
                 .eqIfPresent(XzfyDO::getLb2, reqVO.getLb2())
                 .eqIfPresent(XzfyDO::getLb3, reqVO.getLb3())
+                .eqIfPresent(XzfyDO::getStatus, reqVO.getStatus())
                 .orderByDesc(XzfyDO::getId));
     }
 

@@ -22,6 +22,10 @@ public interface ConfflowService {
      */
     Long createConfflow(Long userId, @Valid ConfflowSaveReqVO createReqVO);
 
+    Long saveConfflow(Long userId, @Valid ConfflowSaveReqVO createReqVO);
+
+    void createFlowConfflow(Long userId, @Valid ConfflowSaveReqVO updateReqVO);
+
     /**
      * 更新会议报告单
      *

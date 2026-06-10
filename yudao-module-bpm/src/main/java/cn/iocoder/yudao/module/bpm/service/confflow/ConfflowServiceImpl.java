@@ -47,6 +47,7 @@ import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVari
 public class ConfflowServiceImpl implements ConfflowService {
 
     public static final String PROCESS_KEY = CONFLOW_REPORT;
+    private static final short DRAFT_STATUS = 0;
 
     @Resource
     private ConfflowMapper confflowMapper;
@@ -61,21 +62,69 @@ public class ConfflowServiceImpl implements ConfflowService {
     private BpmInvalidateHelper bpmInvalidateHelper;
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Long createConfflow(Long userId,ConfflowSaveReqVO createReqVO) {
+        validateSubmitReq(createReqVO);
         // 插入
         ConfflowDO confflow = BeanUtils.toBean(createReqVO, ConfflowDO.class);
         confflowMapper.insert(confflow);
 
         createConfflowAttachList(confflow.getId(), createReqVO.getFileList());
 
+        startProcess(userId, confflow.getId(), createReqVO);
+
+        // 返回
+        return confflow.getId();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Long saveConfflow(Long userId, ConfflowSaveReqVO createReqVO) {
+        ConfflowDO confflow = BeanUtils.toBean(createReqVO, ConfflowDO.class);
+        confflow.setCreator(String.valueOf(userId));
+        confflow.setProcessInstanceId(null);
+        confflow.setStatus(DRAFT_STATUS);
+        confflowMapper.insert(confflow);
+
+        createConfflowAttachList(confflow.getId(), createReqVO.getFileList());
+        return confflow.getId();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void createFlowConfflow(Long userId, ConfflowSaveReqVO updateReqVO) {
+        ConfflowDO confflow = confflowMapper.selectById(updateReqVO.getId());
+        if (confflow == null) {
+            throw exception(CONFFLOW_NOT_EXISTS);
+        }
+        if (StrUtil.isNotBlank(confflow.getProcessInstanceId())) {
+            throw exception(CONFFLOW_ALREADY_SUBMITTED);
+        }
+        validateSubmitReq(updateReqVO);
+
+        ConfflowDO updateObj = BeanUtils.toBean(updateReqVO, ConfflowDO.class);
+        updateObj.setProcessInstanceId(null);
+        confflowMapper.updateById(updateObj);
+
+        updateConfflowAttachList(updateReqVO.getId(), updateReqVO.getFileList());
+        startProcess(userId, updateReqVO.getId(), updateReqVO);
+    }
+
+    private void validateSubmitReq(ConfflowSaveReqVO reqVO) {
+        if (StringUtil.isEmpty(reqVO.getTitle()) || reqVO.getStartDate() == null || StringUtil.isEmpty(reqVO.getVenue())) {
+            throw exception(CONFFLOW_SUBMIT_REQUIRED);
+        }
+    }
+
+    private void startProcess(Long userId, Long confflowId, ConfflowSaveReqVO reqVO) {
         Map<String, Object> processInstanceVariables = new HashMap<>();
-        if (CollUtil.isNotEmpty(createReqVO.getProcessVariables())) {
-            processInstanceVariables.putAll(createReqVO.getProcessVariables());
+        if (CollUtil.isNotEmpty(reqVO.getProcessVariables())) {
+            processInstanceVariables.putAll(reqVO.getProcessVariables());
         }
 //        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEXT_NODE, createReqVO.getSelectNode());
-        String customName = StringUtil.isEmpty(createReqVO.getTitle()) ? "会议报告单":createReqVO.getTitle();
+        String customName = StringUtil.isEmpty(reqVO.getTitle()) ? "会议报告单" : reqVO.getTitle();
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
-        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
+        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, reqVO.getNextNodeAssignees());
         String timeKey = "common";
         String timeoutLabel = DictFrameworkUtils.parseDictDataLabel("bpm_process_timeout_config", timeKey);
         if (StrUtil.isNotBlank(timeoutLabel) && NumberUtil.isNumber(timeoutLabel)) {
@@ -87,15 +136,13 @@ public class ConfflowServiceImpl implements ConfflowService {
         }
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
-                        .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(confflow.getId()))
-                        .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
-        confflowMapper.updateById(new ConfflowDO().setId(confflow.getId()).setProcessInstanceId(processInstanceId).setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
-
-        // 返回
-        return confflow.getId();
+                        .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(confflowId))
+                        .setStartUserSelectAssignees(reqVO.getStartUserSelectAssignees()));
+        confflowMapper.updateById(new ConfflowDO().setId(confflowId).setProcessInstanceId(processInstanceId).setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void updateConfflow(ConfflowSaveReqVO updateReqVO) {
         // 校验存在
         validateConfflowExists(updateReqVO.getId());

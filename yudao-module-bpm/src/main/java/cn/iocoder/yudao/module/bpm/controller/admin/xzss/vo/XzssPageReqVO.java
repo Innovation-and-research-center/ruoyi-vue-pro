@@ -57,16 +57,21 @@ public class XzssPageReqVO extends PageParam {
     private String cbr;
 
     @Schema(description = "承办日期")
-    private LocalDateTime cbRq;
+    @DateTimeFormat(pattern = FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)
+    private LocalDateTime[] cbRq;
 
     @Schema(description = "送法院日期")
-    private LocalDateTime sfyjgRq;
+    @DateTimeFormat(pattern = FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)
+    private LocalDateTime[] sfyjgRq;
 
     @Schema(description = "监督监管")
     private Short issupervise;
 
     @Schema(description = "是否已寄件提醒")
     private Short mailTip;
+
+    @Schema(description = "办理状态")
+    private Short status;
 
     @Schema(description = "创建时间")
     @DateTimeFormat(pattern = FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)

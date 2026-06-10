@@ -209,7 +209,7 @@ public class StDocJob implements JobHandler {
         FileExchangeSaveReqVO exchangeVO = new FileExchangeSaveReqVO();
         exchangeVO.setOperationDate(LocalDateTime.now().withNano(0));
         exchangeVO.setOperationPerson("系统自动");
-        exchangeVO.setOperationInformation("");
+        exchangeVO.setOperationInformation("省厅收文");
         exchangeVO.setOperationType((short) 2);
         exchangeVO.setDocId(receiveDocId);
         exchangeVO.setSendDocNumber(receiveDocDO.getSendDocNumber());

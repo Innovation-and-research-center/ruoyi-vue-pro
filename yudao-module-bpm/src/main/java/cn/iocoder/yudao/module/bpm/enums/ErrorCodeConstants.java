@@ -18,6 +18,8 @@ public interface ErrorCodeConstants {
     ErrorCode RECEIVE_DOC_EXISTS = new ErrorCode(1_009_021_002,"收文编号重复");
     ErrorCode RECEIVE_DOC_ERROR= new ErrorCode(1_009_021_003,"收文编号格式不正确");
     ErrorCode CONFFLOW_NOT_EXISTS = new ErrorCode(1_009_022_001, "会议报告单不存在");
+    ErrorCode CONFFLOW_SUBMIT_REQUIRED = new ErrorCode(1_009_022_002, "会议名称、会议时间、会议地点不能为空");
+    ErrorCode CONFFLOW_ALREADY_SUBMITTED = new ErrorCode(1_009_022_003, "会议报告单已发起流程，不能重复提交");
     ErrorCode TIME_EXPLAIN_NOT_EXISTS = new ErrorCode(1_009_023_001, "外出请假补假不存在");
     ErrorCode XZFY_NOT_EXISTS = new ErrorCode(1_009_024_001, "行政复议不存在");
     ErrorCode XZSS_NOT_EXISTS = new ErrorCode(1_009_025_001, "行政诉讼不存在");

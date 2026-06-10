@@ -15,6 +15,12 @@ public class ConfflowSaveReqVO {
     @Schema(description = "主键", requiredMode = Schema.RequiredMode.REQUIRED, example = "8620")
     private Long id;
 
+    @Schema(description = "办件GUID")
+    private String docGuid;
+
+    @Schema(description = "办件类型")
+    private String docType;
+
     @Schema(description = "申请人ID", example = "10425")
     private Long userId;
 
@@ -30,12 +36,10 @@ public class ConfflowSaveReqVO {
     @Schema(description = "申请日期")
     private LocalDateTime applyDate;
 
-    @Schema(description = "会议时间", requiredMode = Schema.RequiredMode.REQUIRED)
-    @NotNull(message = "会议时间不能为空")
+    @Schema(description = "会议时间")
     private LocalDateTime startDate;
 
-    @Schema(description = "会议名称", requiredMode = Schema.RequiredMode.REQUIRED)
-    @NotEmpty(message = "会议名称不能为空")
+    @Schema(description = "会议名称")
     private String title;
 
     @Schema(description = "提议内容")
@@ -44,8 +48,7 @@ public class ConfflowSaveReqVO {
     @Schema(description = "备注", example = "你说的对")
     private String remark;
 
-    @Schema(description = "会议地点", requiredMode = Schema.RequiredMode.REQUIRED)
-    @NotEmpty(message = "会议地点不能为空")
+    @Schema(description = "会议地点")
     private String venue;
 
     @Schema(description = "召集单位及召集人")

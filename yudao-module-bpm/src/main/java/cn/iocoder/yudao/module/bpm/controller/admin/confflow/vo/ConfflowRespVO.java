@@ -80,6 +80,8 @@ public class ConfflowRespVO {
 
     private Short status;
 
+    private String processInstanceId;
+
     private String cancelReason;
 
     @Schema(description = "附件列表")

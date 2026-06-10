@@ -23,15 +23,25 @@ public class TimeExplainPageReqVO extends PageParam {
     @Schema(description = "人员姓名", example = "王五")
     private String userName;
 
+    @Schema(description = "申请用户昵称", example = "王五")
+    private String nickName;
+
     @Schema(description = "登记时间")
     @DateTimeFormat(pattern = FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)
     private LocalDateTime[] checkDate;
 
-    @Schema(description = "开始时间")
-    private LocalDateTime checkBegin;
+    @Schema(description = "外出时间范围，与该范围有交集的记录")
+    @DateTimeFormat(pattern = FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)
+    private LocalDateTime[] outingTime;
 
-    @Schema(description = "结束时间")
-    private LocalDateTime checkEnd;
+    @Schema(description = "外出事由")
+    private String reason;
+
+    @Schema(description = "出发地")
+    private String startPlace;
+
+    @Schema(description = "目的地")
+    private String endPlace;
 
     @Schema(description = "审核状态（0审批中 1审核完毕 2删除）", example = "2")
     private Long status;

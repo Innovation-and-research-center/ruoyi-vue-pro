@@ -38,4 +38,7 @@ public class XzfyPageReqVO extends PageParam {
     @Schema(description = "类别三")
     private String lb3;
 
+    @Schema(description = "办理状态")
+    private Short status;
+
 }
