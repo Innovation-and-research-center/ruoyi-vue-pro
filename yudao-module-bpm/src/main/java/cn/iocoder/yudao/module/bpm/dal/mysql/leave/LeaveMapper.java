@@ -3,6 +3,7 @@ package cn.iocoder.yudao.module.bpm.dal.mysql.leave;
 import java.time.LocalDateTime;
 import java.util.*;
 
+import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.mybatis.core.mapper.BaseMapperX;
 import cn.iocoder.yudao.framework.mybatis.core.query.MPJLambdaWrapperX;
@@ -40,8 +41,8 @@ public interface LeaveMapper extends BaseMapperX<LeaveDO> {
                 .eqIfPresent(LeaveDO::getFilepath, reqVO.getFilepath())
                 .eqIfPresent(LeaveDO::getUserid, reqVO.getUserId())
                 .likeIfPresent(AdminUserDO::getNickname, reqVO.getNickName())
-                .eqIfPresent(LeaveDO::getSpzt, reqVO.getSpzt())
-                .orderByDesc(LeaveDO::getId);
+                .eqIfPresent(LeaveDO::getSpzt, reqVO.getSpzt());
+        orderBy(reqVO, wrapper);
         return selectJoinPage(reqVO, LeaveDO.class, wrapper);
     }
 
@@ -51,6 +52,50 @@ public interface LeaveMapper extends BaseMapperX<LeaveDO> {
 
     static LocalDateTime getRangeEnd(LocalDateTime[] range) {
         return range != null && range.length > 1 ? range[1] : null;
+    }
+
+    default void orderBy(LeavePageReqVO reqVO, MPJLambdaWrapperX<LeaveDO> wrapper) {
+        if (StrUtil.isBlank(reqVO.getOrderField()) || StrUtil.isBlank(reqVO.getOrderDirection())) {
+            wrapper.orderByDesc(LeaveDO::getId);
+            return;
+        }
+        boolean asc = "asc".equalsIgnoreCase(reqVO.getOrderDirection());
+        switch (reqVO.getOrderField()) {
+            case "nickName":
+                if (asc) wrapper.orderByAsc(AdminUserDO::getNickname);
+                else wrapper.orderByDesc(AdminUserDO::getNickname);
+                break;
+            case "qxjStartDate":
+                if (asc) wrapper.orderByAsc(LeaveDO::getQxjStartDate);
+                else wrapper.orderByDesc(LeaveDO::getQxjStartDate);
+                break;
+            case "qxjEndDate":
+                if (asc) wrapper.orderByAsc(LeaveDO::getQxjEndDate);
+                else wrapper.orderByDesc(LeaveDO::getQxjEndDate);
+                break;
+            case "qxjType":
+                if (asc) wrapper.orderByAsc(LeaveDO::getQxjType);
+                else wrapper.orderByDesc(LeaveDO::getQxjType);
+                break;
+            case "sjReason":
+                if (asc) wrapper.orderByAsc(LeaveDO::getSjReason);
+                else wrapper.orderByDesc(LeaveDO::getSjReason);
+                break;
+            case "totalTs":
+                if (asc) wrapper.orderByAsc(LeaveDO::getTotalTs);
+                else wrapper.orderByDesc(LeaveDO::getTotalTs);
+                break;
+            case "spzt":
+                if (asc) wrapper.orderByAsc(LeaveDO::getSpzt);
+                else wrapper.orderByDesc(LeaveDO::getSpzt);
+                break;
+            case "applyDate":
+                if (asc) wrapper.orderByAsc(LeaveDO::getApplyDate);
+                else wrapper.orderByDesc(LeaveDO::getApplyDate);
+                break;
+            default:
+                wrapper.orderByDesc(LeaveDO::getId);
+        }
     }
 
     @Select("SELECT qxj_type AS qxjType, " +

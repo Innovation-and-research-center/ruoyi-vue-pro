@@ -19,6 +19,7 @@ import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.*;
 import cn.iocoder.yudao.module.bpm.convert.task.BpmTaskConvert;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmFormDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmProcessDefinitionInfoDO;
+import cn.iocoder.yudao.module.bpm.dal.mysql.task.BpmTaskSortMapper;
 import cn.iocoder.yudao.module.bpm.enums.definition.*;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmCommentTypeEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmReasonEnum;
@@ -112,6 +113,8 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     private BpmMessageService messageService;
     @Resource
     private BpmFormService formService;
+    @Resource
+    private BpmTaskSortMapper taskSortMapper;
 
     @Resource
     private AdminUserApi adminUserApi;
@@ -126,11 +129,13 @@ public class BpmTaskServiceImpl implements BpmTaskService {
 
     @Override
     public PageResult<Task> getTaskTodoPage(Long userId, BpmTaskPageReqVO pageVO) {
+        if (isProcessSortField(pageVO.getOrderField())) {
+            return getTaskTodoPageBySql(userId, pageVO);
+        }
         TaskQuery taskQuery = taskService.createTaskQuery()
                 .taskAssignee(String.valueOf(userId)) // 分配给自己
                 .active()
-                .includeProcessVariables()
-                .orderByTaskCreateTime().desc(); // 创建时间倒序
+                .includeProcessVariables();
         if (StrUtil.isNotBlank(pageVO.getName())) {
             taskQuery.taskNameLike("%" + pageVO.getName() + "%");
         }
@@ -202,12 +207,29 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             taskQuery.processVariableValueLikeIgnoreCase(PROCESS_SOURCE_UNIT, "%" + pageVO.getSendingUnit() + "%");
         }
 
+        orderTodoTaskQuery(taskQuery, pageVO);
 
         long count = taskQuery.count();
         if (count == 0) {
             return PageResult.empty();
         }
         List<Task> tasks = taskQuery.listPage(PageUtils.getStart(pageVO), pageVO.getPageSize());
+        return new PageResult<>(tasks, count);
+    }
+
+    private PageResult<Task> getTaskTodoPageBySql(Long userId, BpmTaskPageReqVO pageVO) {
+        Long count = taskSortMapper.selectTodoTaskCount(userId, pageVO);
+        if (count == null || count == 0) {
+            return PageResult.empty();
+        }
+        List<String> taskIds = taskSortMapper.selectTodoTaskIds(userId, pageVO);
+        if (CollUtil.isEmpty(taskIds)) {
+            return new PageResult<>(Collections.emptyList(), count);
+        }
+        List<Task> tasks = taskIds.stream()
+                .map(taskId -> taskService.createTaskQuery().taskId(taskId).includeProcessVariables().singleResult())
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
         return new PageResult<>(tasks, count);
     }
 
@@ -294,12 +316,14 @@ public class BpmTaskServiceImpl implements BpmTaskService {
 
     @Override
     public PageResult<HistoricTaskInstance> getTaskDonePage(Long userId, BpmTaskPageReqVO pageVO) {
+        if (isProcessSortField(pageVO.getOrderField())) {
+            return getTaskDonePageBySql(userId, pageVO);
+        }
         HistoricTaskInstanceQuery taskQuery = historyService.createHistoricTaskInstanceQuery()
                 .finished() // 已完成
                 .taskAssignee(String.valueOf(userId)) // 分配给自己
                 .includeTaskLocalVariables()
-                .taskVariableValueNotEquals(BpmnVariableConstants.TASK_VARIABLE_STATUS, BpmTaskStatusEnum.CANCEL.getStatus())
-                .orderByHistoricTaskInstanceEndTime().desc(); // 审批时间倒序
+                .taskVariableValueNotEquals(BpmnVariableConstants.TASK_VARIABLE_STATUS, BpmTaskStatusEnum.CANCEL.getStatus());
         if (StrUtil.isNotBlank(pageVO.getName())) {
             taskQuery.taskNameLike("%" + pageVO.getName() + "%");
         }
@@ -379,6 +403,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             // 这里假设 flowable 历史查询支持该变量查询
             taskQuery.processVariableValueLikeIgnoreCase(PROCESS_SOURCE_UNIT, "%" + pageVO.getSendingUnit() + "%");
         }
+        orderDoneTaskQuery(taskQuery, pageVO);
         // 执行查询
         long count = taskQuery.count();
         if (count == 0) {
@@ -396,6 +421,92 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                     || task.getCreateTime().after(DateUtils.of(pageVO.getCreateTime()[1])));
         }
         return new PageResult<>(tasks, count);
+    }
+
+    private PageResult<HistoricTaskInstance> getTaskDonePageBySql(Long userId, BpmTaskPageReqVO pageVO) {
+        Long count = taskSortMapper.selectDoneTaskCount(userId, pageVO);
+        if (count == null || count == 0) {
+            return PageResult.empty();
+        }
+        List<String> taskIds = taskSortMapper.selectDoneTaskIds(userId, pageVO);
+        if (CollUtil.isEmpty(taskIds)) {
+            return new PageResult<>(Collections.emptyList(), count);
+        }
+        List<HistoricTaskInstance> tasks = taskIds.stream()
+                .map(taskId -> historyService.createHistoricTaskInstanceQuery().taskId(taskId).includeTaskLocalVariables().singleResult())
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        return new PageResult<>(tasks, count);
+    }
+
+    private boolean isProcessSortField(String orderField) {
+        return StrUtil.equalsAny(orderField,
+                "processInstance.name", "processInstanceName",
+                "urgencyDegree", "deadlineDate",
+                "processInstance.createTime");
+    }
+
+    private void orderTodoTaskQuery(TaskQuery taskQuery, BpmTaskPageReqVO pageVO) {
+        boolean asc = "asc".equalsIgnoreCase(pageVO.getOrderDirection());
+        if (StrUtil.isBlank(pageVO.getOrderField()) || StrUtil.isBlank(pageVO.getOrderDirection())) {
+            taskQuery.orderByTaskCreateTime().desc();
+            return;
+        }
+        switch (pageVO.getOrderField()) {
+            case "name":
+                taskQuery.orderByTaskName();
+                break;
+            case "createTime":
+                taskQuery.orderByTaskCreateTime();
+                break;
+            case "dueDate":
+                taskQuery.orderByTaskDueDate();
+                break;
+            case "processInstanceId":
+                taskQuery.orderByProcessInstanceId();
+                break;
+            default:
+                taskQuery.orderByTaskCreateTime().desc();
+                return;
+        }
+        if (asc) {
+            taskQuery.asc();
+        } else {
+            taskQuery.desc();
+        }
+    }
+
+    private void orderDoneTaskQuery(HistoricTaskInstanceQuery taskQuery, BpmTaskPageReqVO pageVO) {
+        boolean asc = "asc".equalsIgnoreCase(pageVO.getOrderDirection());
+        if (StrUtil.isBlank(pageVO.getOrderField()) || StrUtil.isBlank(pageVO.getOrderDirection())) {
+            taskQuery.orderByHistoricTaskInstanceEndTime().desc();
+            return;
+        }
+        switch (pageVO.getOrderField()) {
+            case "name":
+                taskQuery.orderByTaskName();
+                break;
+            case "createTime":
+                taskQuery.orderByHistoricTaskInstanceStartTime();
+                break;
+            case "endTime":
+                taskQuery.orderByHistoricTaskInstanceEndTime();
+                break;
+            case "dueDate":
+                taskQuery.orderByTaskDueDate();
+                break;
+            case "processInstanceId":
+                taskQuery.orderByProcessInstanceId();
+                break;
+            default:
+                taskQuery.orderByHistoricTaskInstanceEndTime().desc();
+                return;
+        }
+        if (asc) {
+            taskQuery.asc();
+        } else {
+            taskQuery.desc();
+        }
     }
 
     @Override

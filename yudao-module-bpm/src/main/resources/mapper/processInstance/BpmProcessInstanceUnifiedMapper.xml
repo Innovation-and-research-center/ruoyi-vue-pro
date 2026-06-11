@@ -99,7 +99,29 @@
             </if>
         </where>
 
-        ORDER BY res.START_TIME_ DESC
+        ORDER BY
+        <choose>
+            <when test="reqVO.orderField == 'name' and reqVO.orderDirection == 'asc'">res.NAME_ ASC</when>
+            <when test="reqVO.orderField == 'name' and reqVO.orderDirection == 'desc'">res.NAME_ DESC</when>
+            <when test="reqVO.orderField == 'category' and reqVO.orderDirection == 'asc'">def.NAME_ ASC</when>
+            <when test="reqVO.orderField == 'category' and reqVO.orderDirection == 'desc'">def.NAME_ DESC</when>
+            <when test="reqVO.orderField == 'sourceUnit' and reqVO.orderDirection == 'asc'">sourceUnit ASC</when>
+            <when test="reqVO.orderField == 'sourceUnit' and reqVO.orderDirection == 'desc'">sourceUnit DESC</when>
+            <when test="reqVO.orderField == 'urgencyDegree' and reqVO.orderDirection == 'asc'">urgencyDegree ASC</when>
+            <when test="reqVO.orderField == 'urgencyDegree' and reqVO.orderDirection == 'desc'">urgencyDegree DESC</when>
+            <when test="reqVO.orderField == 'createTime' and reqVO.orderDirection == 'asc'">res.START_TIME_ ASC</when>
+            <when test="reqVO.orderField == 'createTime' and reqVO.orderDirection == 'desc'">res.START_TIME_ DESC</when>
+            <when test="reqVO.orderField == 'deadlineDate' and reqVO.orderDirection == 'asc'">deadlineDate ASC</when>
+            <when test="reqVO.orderField == 'deadlineDate' and reqVO.orderDirection == 'desc'">deadlineDate DESC</when>
+            <when test="reqVO.orderField == 'status' and reqVO.orderDirection == 'asc'">status ASC</when>
+            <when test="reqVO.orderField == 'status' and reqVO.orderDirection == 'desc'">status DESC</when>
+            <when test="reqVO.orderField == 'currTaskName' and reqVO.orderDirection == 'asc'">currTaskName ASC</when>
+            <when test="reqVO.orderField == 'currTaskName' and reqVO.orderDirection == 'desc'">currTaskName DESC</when>
+            <when test="reqVO.orderField == 'currTaskAssignee' and reqVO.orderDirection == 'asc'">currTaskAssignee ASC</when>
+            <when test="reqVO.orderField == 'currTaskAssignee' and reqVO.orderDirection == 'desc'">currTaskAssignee DESC</when>
+            <otherwise>res.START_TIME_ DESC</otherwise>
+        </choose>
+        , res.ID_ DESC
         LIMIT #{reqVO.pageSize} OFFSET (#{reqVO.pageNo} - 1) * #{reqVO.pageSize}
     </select>
 

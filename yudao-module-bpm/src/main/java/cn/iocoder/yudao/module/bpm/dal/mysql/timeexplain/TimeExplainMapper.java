@@ -2,6 +2,7 @@ package cn.iocoder.yudao.module.bpm.dal.mysql.timeexplain;
 
 import java.util.*;
 
+import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.mybatis.core.mapper.BaseMapperX;
 import cn.iocoder.yudao.framework.mybatis.core.query.MPJLambdaWrapperX;
@@ -35,8 +36,8 @@ public interface TimeExplainMapper extends BaseMapperX<TimeExplainDO> {
                 .eqIfPresent(TimeExplainDO::getStatus, reqVO.getStatus())
                 .eqIfPresent(TimeExplainDO::getDays, reqVO.getDays())
                 .eqIfPresent(TimeExplainDO::getYear, reqVO.getYear())
-                .betweenIfPresent(TimeExplainDO::getCreateTime, reqVO.getCreateTime())
-                .orderByDesc(TimeExplainDO::getId);
+                .betweenIfPresent(TimeExplainDO::getCreateTime, reqVO.getCreateTime());
+        orderBy(reqVO, wrapper);
         return selectJoinPage(reqVO, TimeExplainDO.class, wrapper);
     }
 
@@ -46,6 +47,54 @@ public interface TimeExplainMapper extends BaseMapperX<TimeExplainDO> {
 
     static java.time.LocalDateTime getRangeEnd(java.time.LocalDateTime[] range) {
         return range != null && range.length > 1 ? range[1] : null;
+    }
+
+    default void orderBy(TimeExplainPageReqVO reqVO, MPJLambdaWrapperX<TimeExplainDO> wrapper) {
+        if (StrUtil.isBlank(reqVO.getOrderField()) || StrUtil.isBlank(reqVO.getOrderDirection())) {
+            wrapper.orderByDesc(TimeExplainDO::getId);
+            return;
+        }
+        boolean asc = "asc".equalsIgnoreCase(reqVO.getOrderDirection());
+        switch (reqVO.getOrderField()) {
+            case "nickName":
+                if (asc) wrapper.orderByAsc(AdminUserDO::getNickname);
+                else wrapper.orderByDesc(AdminUserDO::getNickname);
+                break;
+            case "checkBegin":
+                if (asc) wrapper.orderByAsc(TimeExplainDO::getCheckBegin);
+                else wrapper.orderByDesc(TimeExplainDO::getCheckBegin);
+                break;
+            case "checkEnd":
+                if (asc) wrapper.orderByAsc(TimeExplainDO::getCheckEnd);
+                else wrapper.orderByDesc(TimeExplainDO::getCheckEnd);
+                break;
+            case "startPlace":
+                if (asc) wrapper.orderByAsc(TimeExplainDO::getStartPlace);
+                else wrapper.orderByDesc(TimeExplainDO::getStartPlace);
+                break;
+            case "endPlace":
+                if (asc) wrapper.orderByAsc(TimeExplainDO::getEndPlace);
+                else wrapper.orderByDesc(TimeExplainDO::getEndPlace);
+                break;
+            case "reason":
+                if (asc) wrapper.orderByAsc(TimeExplainDO::getReason);
+                else wrapper.orderByDesc(TimeExplainDO::getReason);
+                break;
+            case "days":
+                if (asc) wrapper.orderByAsc(TimeExplainDO::getDays);
+                else wrapper.orderByDesc(TimeExplainDO::getDays);
+                break;
+            case "status":
+                if (asc) wrapper.orderByAsc(TimeExplainDO::getStatus);
+                else wrapper.orderByDesc(TimeExplainDO::getStatus);
+                break;
+            case "checkDate":
+                if (asc) wrapper.orderByAsc(TimeExplainDO::getCheckDate);
+                else wrapper.orderByDesc(TimeExplainDO::getCheckDate);
+                break;
+            default:
+                wrapper.orderByDesc(TimeExplainDO::getId);
+        }
     }
 
 }

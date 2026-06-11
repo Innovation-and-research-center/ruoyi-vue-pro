@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.iocoder.yudao.module.bpm.dal.mysql.task.BpmTaskSortMapper">
+
+    <sql id="TodoFrom">
+        FROM ACT_RU_TASK t
+        LEFT JOIN ACT_HI_PROCINST p ON p.ID_ = t.PROC_INST_ID_
+        LEFT JOIN ACT_RE_PROCDEF def ON def.ID_ = t.PROC_DEF_ID_
+        LEFT JOIN ACT_RU_VARIABLE urgency ON urgency.PROC_INST_ID_ = t.PROC_INST_ID_ AND urgency.NAME_ = #{VAR_URGENCY}
+        LEFT JOIN ACT_RU_VARIABLE sourceUnit ON sourceUnit.PROC_INST_ID_ = t.PROC_INST_ID_ AND sourceUnit.NAME_ = #{VAR_SOURCE_UNIT}
+        LEFT JOIN ACT_RU_VARIABLE deadline ON deadline.PROC_INST_ID_ = t.PROC_INST_ID_ AND deadline.NAME_ = #{VAR_DEADLINE}
+    </sql>
+
+    <sql id="TodoWhere">
+        <where>
+            t.ASSIGNEE_ = CAST(#{userId} AS VARCHAR)
+            AND t.SUSPENSION_STATE_ = 1
+            <if test="reqVO.name != null and reqVO.name != ''"> AND t.NAME_ LIKE CONCAT('%', #{reqVO.name}, '%') </if>
+            <if test="reqVO.category != null and reqVO.category != ''"> AND t.CATEGORY_ = #{reqVO.category} </if>
+            <if test="reqVO.processDefinitionKey != null and reqVO.processDefinitionKey != ''"> AND def.KEY_ = #{reqVO.processDefinitionKey} </if>
+            <if test="reqVO.createTime != null and reqVO.createTime.length > 0">
+                AND t.CREATE_TIME_ BETWEEN #{reqVO.createTime[0]} AND #{reqVO.createTime[1]}
+            </if>
+            <if test="reqVO.processInstanceName != null and reqVO.processInstanceName != ''"> AND p.NAME_ LIKE CONCAT('%', #{reqVO.processInstanceName}, '%') </if>
+            <if test="reqVO.processInstanceId != null and reqVO.processInstanceId != ''"> AND t.PROC_INST_ID_ = #{reqVO.processInstanceId} </if>
+            <if test="reqVO.urgencyDegree != null"> AND COALESCE(CAST(urgency.LONG_ AS VARCHAR), urgency.TEXT_) = CAST(#{reqVO.urgencyDegree} AS VARCHAR) </if>
+            <if test="reqVO.sendingUnit != null and reqVO.sendingUnit != ''"> AND LOWER(sourceUnit.TEXT_) LIKE LOWER(CONCAT('%', #{reqVO.sendingUnit}, '%')) </if>
+            <if test="reqVO.dueDate != null and reqVO.dueDate.length > 0">
+                AND t.DUE_DATE_ BETWEEN #{reqVO.dueDate[0]} AND #{reqVO.dueDate[1]}
+            </if>
+            <if test="reqVO.processDeadline != null and reqVO.processDeadline.length > 0">
+                AND deadline.LONG_ IS NOT NULL
+                AND to_timestamp(deadline.LONG_ / 1000) BETWEEN #{reqVO.processDeadline[0]} AND #{reqVO.processDeadline[1]}
+            </if>
+        </where>
+    </sql>
+
+    <sql id="DoneFrom">
+        FROM ACT_HI_TASKINST t
+        LEFT JOIN ACT_HI_PROCINST p ON p.ID_ = t.PROC_INST_ID_
+        LEFT JOIN ACT_RE_PROCDEF def ON def.ID_ = t.PROC_DEF_ID_
+        LEFT JOIN ACT_HI_VARINST urgency ON urgency.PROC_INST_ID_ = t.PROC_INST_ID_ AND urgency.NAME_ = #{VAR_URGENCY}
+        LEFT JOIN ACT_HI_VARINST sourceUnit ON sourceUnit.PROC_INST_ID_ = t.PROC_INST_ID_ AND sourceUnit.NAME_ = #{VAR_SOURCE_UNIT}
+        LEFT JOIN ACT_HI_VARINST deadline ON deadline.PROC_INST_ID_ = t.PROC_INST_ID_ AND deadline.NAME_ = #{VAR_DEADLINE}
+    </sql>
+
+    <sql id="DoneWhere">
+        <where>
+            t.ASSIGNEE_ = CAST(#{userId} AS VARCHAR)
+            AND t.END_TIME_ IS NOT NULL
+            AND t.TASK_DEF_KEY_ != #{START_USER_NODE_ID}
+            AND NOT EXISTS (
+                SELECT 1 FROM ACT_HI_VARINST statusVar
+                WHERE statusVar.TASK_ID_ = t.ID_
+                  AND statusVar.NAME_ = #{TASK_STATUS}
+                  AND COALESCE(CAST(statusVar.LONG_ AS VARCHAR), statusVar.TEXT_) = '4'
+            )
+            <if test="reqVO.name != null and reqVO.name != ''"> AND t.NAME_ LIKE CONCAT('%', #{reqVO.name}, '%') </if>
+            <if test="reqVO.status != null">
+                AND EXISTS (
+                    SELECT 1 FROM ACT_HI_VARINST statusVar
+                    WHERE statusVar.TASK_ID_ = t.ID_
+                      AND statusVar.NAME_ = #{TASK_STATUS}
+                      AND COALESCE(CAST(statusVar.LONG_ AS VARCHAR), statusVar.TEXT_) = CAST(#{reqVO.status} AS VARCHAR)
+                )
+            </if>
+            <if test="reqVO.category != null and reqVO.category != ''"> AND t.CATEGORY_ = #{reqVO.category} </if>
+            <if test="reqVO.processDefinitionKey != null and reqVO.processDefinitionKey != ''"> AND def.KEY_ = #{reqVO.processDefinitionKey} </if>
+            <if test="reqVO.createTime != null and reqVO.createTime.length > 0">
+                AND t.CREATE_TIME_ BETWEEN #{reqVO.createTime[0]} AND #{reqVO.createTime[1]}
+            </if>
+            <if test="reqVO.processInstanceName != null and reqVO.processInstanceName != ''"> AND p.NAME_ LIKE CONCAT('%', #{reqVO.processInstanceName}, '%') </if>
+            <if test="reqVO.processInstanceId != null and reqVO.processInstanceId != ''"> AND t.PROC_INST_ID_ = #{reqVO.processInstanceId} </if>
+            <if test="reqVO.urgencyDegree != null"> AND COALESCE(CAST(urgency.LONG_ AS VARCHAR), urgency.TEXT_) = CAST(#{reqVO.urgencyDegree} AS VARCHAR) </if>
+            <if test="reqVO.sendingUnit != null and reqVO.sendingUnit != ''"> AND LOWER(sourceUnit.TEXT_) LIKE LOWER(CONCAT('%', #{reqVO.sendingUnit}, '%')) </if>
+            <if test="reqVO.dueDate != null and reqVO.dueDate.length > 0">
+                AND t.DUE_DATE_ BETWEEN #{reqVO.dueDate[0]} AND #{reqVO.dueDate[1]}
+            </if>
+            <if test="reqVO.processDeadline != null and reqVO.processDeadline.length > 0">
+                AND deadline.LONG_ IS NOT NULL
+                AND to_timestamp(deadline.LONG_ / 1000) BETWEEN #{reqVO.processDeadline[0]} AND #{reqVO.processDeadline[1]}
+            </if>
+        </where>
+    </sql>
+
+    <sql id="TodoOrderBy">
+        ORDER BY
+        <choose>
+            <when test="reqVO.orderField == 'processInstanceName' and reqVO.orderDirection == 'asc'">p.NAME_ ASC</when>
+            <when test="reqVO.orderField == 'processInstanceName' and reqVO.orderDirection == 'desc'">p.NAME_ DESC</when>
+            <when test="reqVO.orderField == 'processInstance.name' and reqVO.orderDirection == 'asc'">p.NAME_ ASC</when>
+            <when test="reqVO.orderField == 'processInstance.name' and reqVO.orderDirection == 'desc'">p.NAME_ DESC</when>
+            <when test="reqVO.orderField == 'urgencyDegree' and reqVO.orderDirection == 'asc'">COALESCE(CAST(urgency.LONG_ AS VARCHAR), urgency.TEXT_) ASC</when>
+            <when test="reqVO.orderField == 'urgencyDegree' and reqVO.orderDirection == 'desc'">COALESCE(CAST(urgency.LONG_ AS VARCHAR), urgency.TEXT_) DESC</when>
+            <when test="reqVO.orderField == 'deadlineDate' and reqVO.orderDirection == 'asc'">deadline.LONG_ ASC</when>
+            <when test="reqVO.orderField == 'deadlineDate' and reqVO.orderDirection == 'desc'">deadline.LONG_ DESC</when>
+            <when test="reqVO.orderField == 'processInstance.createTime' and reqVO.orderDirection == 'asc'">p.START_TIME_ ASC</when>
+            <when test="reqVO.orderField == 'processInstance.createTime' and reqVO.orderDirection == 'desc'">p.START_TIME_ DESC</when>
+            <otherwise>t.CREATE_TIME_ DESC</otherwise>
+        </choose>
+        , t.ID_ DESC
+    </sql>
+
+    <sql id="DoneOrderBy">
+        ORDER BY
+        <choose>
+            <when test="reqVO.orderField == 'processInstanceName' and reqVO.orderDirection == 'asc'">p.NAME_ ASC</when>
+            <when test="reqVO.orderField == 'processInstanceName' and reqVO.orderDirection == 'desc'">p.NAME_ DESC</when>
+            <when test="reqVO.orderField == 'processInstance.name' and reqVO.orderDirection == 'asc'">p.NAME_ ASC</when>
+            <when test="reqVO.orderField == 'processInstance.name' and reqVO.orderDirection == 'desc'">p.NAME_ DESC</when>
+            <when test="reqVO.orderField == 'urgencyDegree' and reqVO.orderDirection == 'asc'">COALESCE(CAST(urgency.LONG_ AS VARCHAR), urgency.TEXT_) ASC</when>
+            <when test="reqVO.orderField == 'urgencyDegree' and reqVO.orderDirection == 'desc'">COALESCE(CAST(urgency.LONG_ AS VARCHAR), urgency.TEXT_) DESC</when>
+            <when test="reqVO.orderField == 'deadlineDate' and reqVO.orderDirection == 'asc'">deadline.LONG_ ASC</when>
+            <when test="reqVO.orderField == 'deadlineDate' and reqVO.orderDirection == 'desc'">deadline.LONG_ DESC</when>
+            <when test="reqVO.orderField == 'processInstance.createTime' and reqVO.orderDirection == 'asc'">p.START_TIME_ ASC</when>
+            <when test="reqVO.orderField == 'processInstance.createTime' and reqVO.orderDirection == 'desc'">p.START_TIME_ DESC</when>
+            <otherwise>t.END_TIME_ DESC</otherwise>
+        </choose>
+        , t.ID_ DESC
+    </sql>
+
+    <select id="selectTodoTaskIds" resultType="java.lang.String">
+        <bind name="VAR_URGENCY" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_URGENCY_DEGREE" />
+        <bind name="VAR_SOURCE_UNIT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_SOURCE_UNIT" />
+        <bind name="VAR_DEADLINE" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_DEADLINE_DATE" />
+        SELECT t.ID_
+        <include refid="TodoFrom" />
+        <include refid="TodoWhere" />
+        <include refid="TodoOrderBy" />
+        LIMIT #{reqVO.pageSize} OFFSET (#{reqVO.pageNo} - 1) * #{reqVO.pageSize}
+    </select>
+
+    <select id="selectTodoTaskCount" resultType="java.lang.Long">
+        <bind name="VAR_URGENCY" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_URGENCY_DEGREE" />
+        <bind name="VAR_SOURCE_UNIT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_SOURCE_UNIT" />
+        <bind name="VAR_DEADLINE" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_DEADLINE_DATE" />
+        SELECT COUNT(1)
+        <include refid="TodoFrom" />
+        <include refid="TodoWhere" />
+    </select>
+
+    <select id="selectDoneTaskIds" resultType="java.lang.String">
+        <bind name="VAR_URGENCY" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_URGENCY_DEGREE" />
+        <bind name="VAR_SOURCE_UNIT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_SOURCE_UNIT" />
+        <bind name="VAR_DEADLINE" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_DEADLINE_DATE" />
+        <bind name="TASK_STATUS" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@TASK_VARIABLE_STATUS" />
+        <bind name="START_USER_NODE_ID" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnModelConstants@START_USER_NODE_ID" />
+        SELECT t.ID_
+        <include refid="DoneFrom" />
+        <include refid="DoneWhere" />
+        <include refid="DoneOrderBy" />
+        LIMIT #{reqVO.pageSize} OFFSET (#{reqVO.pageNo} - 1) * #{reqVO.pageSize}
+    </select>
+
+    <select id="selectDoneTaskCount" resultType="java.lang.Long">
+        <bind name="VAR_URGENCY" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_URGENCY_DEGREE" />
+        <bind name="VAR_SOURCE_UNIT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_SOURCE_UNIT" />
+        <bind name="VAR_DEADLINE" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_DEADLINE_DATE" />
+        <bind name="TASK_STATUS" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@TASK_VARIABLE_STATUS" />
+        <bind name="START_USER_NODE_ID" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnModelConstants@START_USER_NODE_ID" />
+        SELECT COUNT(1)
+        <include refid="DoneFrom" />
+        <include refid="DoneWhere" />
+    </select>
+
+</mapper>

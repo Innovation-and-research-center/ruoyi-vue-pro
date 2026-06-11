@@ -25,12 +25,16 @@ import org.flowable.task.service.impl.persistence.entity.TaskEntityImpl;
 import org.mapstruct.Mapper;
 import org.mapstruct.factory.Mappers;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList;
 import static cn.iocoder.yudao.framework.common.util.collection.MapUtils.findAndThen;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_DEADLINE_DATE;
 import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_FINISH_TIME;
 import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_URGENCY_DEGREE;
 
@@ -58,6 +62,7 @@ public interface BpmTaskConvert {
             taskVO.setUrgencyDegree(cn.hutool.core.map.MapUtil.getStr(processInstance.getProcessVariables(), PROCESS_URGENCY_DEGREE));
             //这里获得的是小时数   前端还需要转换下
             taskVO.setCompletionTime(cn.hutool.core.map.MapUtil.getStr(processInstance.getProcessVariables(), PROCESS_FINISH_TIME));
+            taskVO.setDeadlineDate(getProcessDeadlineDate(processInstance.getProcessVariables()));
             taskVO.setProcessInstance(BeanUtils.toBean(processInstance, BpmTaskRespVO.ProcessInstance.class));
             AdminUserRespDTO startUser = userMap.get(NumberUtils.parseLong(processInstance.getStartUserId()));
             taskVO.getProcessInstance().setStartUser(BeanUtils.toBean(startUser, UserSimpleBaseVO.class));
@@ -103,6 +108,7 @@ public interface BpmTaskConvert {
                     taskVO.setUrgencyDegree(cn.hutool.core.map.MapUtil.getStr(processInstance.getProcessVariables(), PROCESS_URGENCY_DEGREE));
                     // 如果还需要完成时间，也可以一并设置
                     taskVO.setCompletionTime(cn.hutool.core.map.MapUtil.getStr(processInstance.getProcessVariables(), PROCESS_FINISH_TIME));
+                    taskVO.setDeadlineDate(getProcessDeadlineDate(processInstance.getProcessVariables()));
                 }
                 // 摘要
                 taskVO.getProcessInstance().setSummary(FlowableUtils.getSummary(processDefinitionInfoMap.get(processInstance.getProcessDefinitionId()),
@@ -111,6 +117,31 @@ public interface BpmTaskConvert {
             return taskVO;
         });
         return new PageResult<>(taskVOList, pageResult.getTotal());
+    }
+
+    default LocalDateTime getProcessDeadlineDate(Map<String, Object> processVariables) {
+        Object value = MapUtil.get(processVariables, PROCESS_DEADLINE_DATE, Object.class);
+        if (value instanceof LocalDateTime) {
+            return (LocalDateTime) value;
+        }
+        if (value instanceof Date) {
+            return DateUtils.of((Date) value);
+        }
+        if (value instanceof Number) {
+            return LocalDateTime.ofInstant(Instant.ofEpochMilli(((Number) value).longValue()), ZoneId.systemDefault());
+        }
+        if (value instanceof CharSequence) {
+            String text = value.toString();
+            if (cn.hutool.core.util.StrUtil.isBlank(text)) {
+                return null;
+            }
+            try {
+                return LocalDateTime.parse(text.replace(" ", "T"));
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     default List<BpmTaskRespVO> buildTaskListByProcessInstanceId(List<HistoricTaskInstance> taskList,

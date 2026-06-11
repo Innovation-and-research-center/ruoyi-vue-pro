@@ -42,7 +42,6 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
         wrapper.eqIfPresent(ReceiveDocDO::getUrgencyDegree, reqVO.getUrgencyDegree());
         likeDictValueOrLabel(wrapper, ReceiveDocDO::getDocSecondClass, reqVO.getDocSecondClass(), DICT_TYPE_DOC_CLASS);
         wrapper.eqIfPresent(ReceiveDocDO::getStatus, reqVO.getStatus());
-        wrapper.orderByDesc(ReceiveDocDO::getId);
 
         if (StrUtil.isNotBlank(reqVO.getSource())) {
             if (WEB_CREATE_SOURCE.equals(reqVO.getSource())) {
@@ -56,6 +55,7 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
                 wrapper.eq(FileExchangeDO::getOperationInformation, reqVO.getSource());
             }
         }
+        orderBy(reqVO, wrapper);
 
         PageResult<ReceiveDocDO> pageResult = selectJoinPage(reqVO, ReceiveDocDO.class, wrapper);
         pageResult.getList().forEach(item -> {
@@ -83,6 +83,54 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
                 w.or().like(column, value);
             }
         });
+    }
+
+    default void orderBy(ReceiveDocPageReqVO reqVO, MPJLambdaWrapperX<ReceiveDocDO> wrapper) {
+        if (StrUtil.isBlank(reqVO.getOrderField()) || StrUtil.isBlank(reqVO.getOrderDirection())) {
+            wrapper.orderByDesc(ReceiveDocDO::getId);
+            return;
+        }
+        boolean asc = "asc".equalsIgnoreCase(reqVO.getOrderDirection());
+        switch (reqVO.getOrderField()) {
+            case "subject":
+                if (asc) wrapper.orderByAsc(ReceiveDocDO::getSubject);
+                else wrapper.orderByDesc(ReceiveDocDO::getSubject);
+                break;
+            case "docClass":
+                if (asc) wrapper.orderByAsc(ReceiveDocDO::getDocClass);
+                else wrapper.orderByDesc(ReceiveDocDO::getDocClass);
+                break;
+            case "receiveDocNumber":
+                if (asc) wrapper.orderByAsc(ReceiveDocDO::getReceiveDocNumber);
+                else wrapper.orderByDesc(ReceiveDocDO::getReceiveDocNumber);
+                break;
+            case "source":
+                if (asc) wrapper.orderByAsc(FileExchangeDO::getOperationInformation);
+                else wrapper.orderByDesc(FileExchangeDO::getOperationInformation);
+                break;
+            case "sendDept":
+                if (asc) wrapper.orderByAsc(ReceiveDocDO::getSendDept);
+                else wrapper.orderByDesc(ReceiveDocDO::getSendDept);
+                break;
+            case "sendDocNumber":
+                if (asc) wrapper.orderByAsc(ReceiveDocDO::getSendDocNumber);
+                else wrapper.orderByDesc(ReceiveDocDO::getSendDocNumber);
+                break;
+            case "docSecondClass":
+                if (asc) wrapper.orderByAsc(ReceiveDocDO::getDocSecondClass);
+                else wrapper.orderByDesc(ReceiveDocDO::getDocSecondClass);
+                break;
+            case "urgencyDegree":
+                if (asc) wrapper.orderByAsc(ReceiveDocDO::getUrgencyDegree);
+                else wrapper.orderByDesc(ReceiveDocDO::getUrgencyDegree);
+                break;
+            case "receiveTime":
+                if (asc) wrapper.orderByAsc(ReceiveDocDO::getReceiveTime);
+                else wrapper.orderByDesc(ReceiveDocDO::getReceiveTime);
+                break;
+            default:
+                wrapper.orderByDesc(ReceiveDocDO::getId);
+        }
     }
 
 }

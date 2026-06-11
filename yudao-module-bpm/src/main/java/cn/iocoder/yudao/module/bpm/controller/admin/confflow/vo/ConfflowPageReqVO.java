@@ -57,4 +57,10 @@ public class ConfflowPageReqVO extends PageParam {
     @Schema(description = "审批状态")
     private Short status;
 
+    @Schema(description = "排序字段")
+    private String orderField;
+
+    @Schema(description = "排序方向，asc 或 desc")
+    private String orderDirection;
+
 }

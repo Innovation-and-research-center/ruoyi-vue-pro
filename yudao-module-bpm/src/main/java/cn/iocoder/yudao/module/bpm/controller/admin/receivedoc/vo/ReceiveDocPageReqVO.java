@@ -44,4 +44,10 @@ public class ReceiveDocPageReqVO extends PageParam {
     @Schema(description = "来源")
     private String source;
 
+    @Schema(description = "排序字段")
+    private String orderField;
+
+    @Schema(description = "排序方向，asc 或 desc")
+    private String orderDirection;
+
 }

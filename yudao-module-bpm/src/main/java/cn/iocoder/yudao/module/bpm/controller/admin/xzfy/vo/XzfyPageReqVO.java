@@ -41,4 +41,10 @@ public class XzfyPageReqVO extends PageParam {
     @Schema(description = "办理状态")
     private Short status;
 
+    @Schema(description = "排序字段")
+    private String orderField;
+
+    @Schema(description = "排序方向，asc 或 desc")
+    private String orderDirection;
+
 }
