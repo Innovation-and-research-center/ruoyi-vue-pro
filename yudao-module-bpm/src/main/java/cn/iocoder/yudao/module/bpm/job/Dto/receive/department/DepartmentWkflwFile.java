@@ -21,6 +21,11 @@ public class DepartmentWkflwFile {
     private String wkfileExtention;
 
     /**
+     * 文件类型
+     */
+    private String wkfileContentType;
+
+    /**
      * 文件 UUID
      */
     private String wkfileUuid;

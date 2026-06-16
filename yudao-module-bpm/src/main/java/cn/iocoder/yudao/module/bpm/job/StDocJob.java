@@ -153,6 +153,7 @@ public class StDocJob implements JobHandler {
 
         // 收文类型默认是 41
         receiveDocDO.setDocClass("41");
+        receiveDocDO.setDocSecondClass(ReceiveDocClassParser.parse(receiveDocDO.getSubject()));
         Long numberReceiveNumber = receiveDocService.generateDocumentSequence("41");
         receiveDocDO.setDocSequence(numberReceiveNumber);
         receiveDocDO.setYear(String.valueOf(LocalDateTime.now().getYear()));

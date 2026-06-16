@@ -7,8 +7,6 @@ import cn.hutool.core.lang.TypeReference;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.http.HttpUtil;
 import cn.hutool.json.JSONUtil;
-import cn.iocoder.yudao.framework.common.biz.system.dict.dto.DictDataRespDTO;
-import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.framework.quartz.core.handler.JobHandler;
 import cn.iocoder.yudao.framework.tenant.core.context.TenantContextHolder;
 import cn.iocoder.yudao.framework.tenant.core.job.TenantJob;
@@ -150,10 +148,12 @@ public class CityDocJob implements JobHandler {
         ReceiveDocSaveReqVO receiveDocDO  =  new ReceiveDocSaveReqVO();
         receiveDocDO.setDocClass("7");
         receiveDocDO.setYear(detail.getSourceData().getOafdFileyear());
-        Long numberReceiveNumber = receiveDocService.generateDocumentSequence("7",receiveDocDO.getYear());
+        String receiveYear = String.valueOf(DateTime.now().year());
+        Long numberReceiveNumber = receiveDocService.generateDocumentSequence(receiveDocDO.getDocClass(), receiveYear);
         receiveDocDO.setDocSequence(numberReceiveNumber);
 
-        receiveDocDO.setReceiveDocNumber(DateTime.now().year() + "-" +receiveDocDO.getDocClass()+ "-" + numberReceiveNumber);
+        String sequenceStr = String.format("%04d", Integer.parseInt(String.valueOf(numberReceiveNumber)));
+        receiveDocDO.setReceiveDocNumber(receiveYear + "-" + receiveDocDO.getDocClass() + "-" + sequenceStr);
         String urgency = "0";
         String remoteUrgency = sourceData.getOafdFileremergency();
         if (StrUtil.isNotEmpty(remoteUrgency)) {
@@ -165,14 +165,16 @@ public class CityDocJob implements JobHandler {
         if (StrUtil.isNotEmpty(fileCode) && fileCode.contains("/")) {
             fileCode = fileCode.substring(fileCode.lastIndexOf('/') + 1);
         }
-        receiveDocDO.setSendDocNumber(fileCode + "[" + sourceData.getOafdFileyear() + "]" + sourceData.getOafdFileno() + "号");
+        receiveDocDO.setSendDocNumber(StrUtil.nullToEmpty(fileCode)
+                + "[" + StrUtil.nullToEmpty(sourceData.getOafdFileyear()) + "]"
+                + StrUtil.nullToEmpty(sourceData.getOafdFileno()) + "号");
         receiveDocDO.setSubject(bean.getCeadTitle());
         if(StrUtil.isNotEmpty(receiveDocDO.getSubject())){
             receiveDocDO.setSubject(receiveDocDO.getSubject().trim());
         }
         receiveDocDO.setSendDept(sourceData.getOafdFileoragnise());
         //先写死
-        receiveDocDO.setDocSecondClass(getDocClass(receiveDocDO.getSubject()));
+        receiveDocDO.setDocSecondClass(ReceiveDocClassParser.parse(receiveDocDO.getSubject()));
         try {
             receiveDocDO.setSendTime(DateUtil.parse(bean.getCeadCreateTime()).toLocalDateTime());
         } catch (Exception e) {
@@ -297,36 +299,6 @@ public class CityDocJob implements JobHandler {
                 }
             }
         }
-    }
-
-    private String getDocClass(String title) {
-        // 1. 防御性判断
-        if (StrUtil.isEmpty(title)) {
-            return "";
-        }
-
-        // 2. 只有长度大于 4 才进行截取判断 (保持 C# 逻辑)
-        if (title.length() > 4) {
-            // 3. 获取字典数据列表
-            // 注意：请将 "doc_second_class" 替换为你实际在 RuoYi 字典管理中配置的 字典类型
-            List<DictDataRespDTO> dictList = DictFrameworkUtils.getDictDataList("doc_class");
-
-            if (dictList == null || dictList.isEmpty()) {
-                return "";
-            }
-
-            // 4. 截取最后四个字
-            String suffix = title.substring(title.length() - 4);
-
-            // 5. 遍历字典进行匹配
-            for (DictDataRespDTO dict : dictList) {
-                if (suffix.contains(dict.getLabel())) {
-                    return dict.getLabel();
-                }
-            }
-        }
-
-        return "";
     }
 
 }

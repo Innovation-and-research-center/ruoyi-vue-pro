@@ -8,8 +8,6 @@ import cn.hutool.core.lang.TypeReference;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.http.HttpUtil;
 import cn.hutool.json.JSONUtil;
-import cn.iocoder.yudao.framework.common.biz.system.dict.dto.DictDataRespDTO;
-import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.framework.quartz.core.handler.JobHandler;
 import cn.iocoder.yudao.framework.tenant.core.context.TenantContextHolder;
 import cn.iocoder.yudao.framework.tenant.core.job.TenantJob;
@@ -177,7 +175,7 @@ public class CityNoticeJob implements JobHandler {
         }
 
         receiveDocDO.setSendDept(notice.getOanoDepName()); // 发文单位
-        receiveDocDO.setDocSecondClass(getDocClass(receiveDocDO.getSubject())); // 根据标题解析二级分类
+        receiveDocDO.setDocSecondClass(ReceiveDocClassParser.parse(receiveDocDO.getSubject())); // 根据标题解析二级分类
 
         receiveDocDO.setSendTime(sendDate);
         receiveDocDO.setReceiveTime(LocalDateTime.now().withNano(0));
@@ -340,21 +338,4 @@ public class CityNoticeJob implements JobHandler {
         }
     }
 
-    /**
-     * 复用之前的分类解析逻辑
-     */
-    private String getDocClass(String title) {
-        if (StrUtil.isEmpty(title)) return "";
-        if (title.length() > 4) {
-            List<DictDataRespDTO> dictList = DictFrameworkUtils.getDictDataList("doc_class");
-            if (dictList == null || dictList.isEmpty()) return "";
-            String suffix = title.substring(title.length() - 4);
-            for (DictDataRespDTO dict : dictList) {
-                if (suffix.contains(dict.getLabel())) {
-                    return dict.getLabel();
-                }
-            }
-        }
-        return "";
-    }
 }

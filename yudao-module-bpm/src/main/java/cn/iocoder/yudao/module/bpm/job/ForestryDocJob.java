@@ -11,8 +11,6 @@ import cn.hutool.http.HttpRequest;
 import cn.hutool.http.HttpResponse;
 import cn.hutool.http.HttpUtil;
 import cn.hutool.json.JSONUtil;
-import cn.iocoder.yudao.framework.common.biz.system.dict.dto.DictDataRespDTO;
-import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.framework.quartz.core.handler.JobHandler;
 import cn.iocoder.yudao.framework.tenant.core.context.TenantContextHolder;
 import cn.iocoder.yudao.framework.tenant.core.job.TenantJob;
@@ -172,8 +170,6 @@ public class ForestryDocJob implements JobHandler {
         // 4. 创建新收文
         ReceiveDocSaveReqVO receiveDocDO = new ReceiveDocSaveReqVO();
         receiveDocDO.setDocClass("7"); // 县市来文
-        Long numberReceiveNumber = receiveDocService.generateDocumentSequence("7");
-        receiveDocDO.setDocSequence(numberReceiveNumber);
 
         // 处理时间
         LocalDateTime sendDate = LocalDateTime.now();
@@ -186,12 +182,15 @@ public class ForestryDocJob implements JobHandler {
         }
 
         receiveDocDO.setYear(String.valueOf(LocalDateTime.now().getYear()));
-        receiveDocDO.setReceiveDocNumber(LocalDateTime.now().getYear() + "-" + receiveDocDO.getDocClass() + "-" + numberReceiveNumber);
+        Long numberReceiveNumber = receiveDocService.generateDocumentSequence(receiveDocDO.getDocClass(), receiveDocDO.getYear());
+        receiveDocDO.setDocSequence(numberReceiveNumber);
+        String sequenceStr = String.format("%04d", Integer.parseInt(String.valueOf(numberReceiveNumber)));
+        receiveDocDO.setReceiveDocNumber(receiveDocDO.getYear() + "-" + receiveDocDO.getDocClass() + "-" + sequenceStr);
         receiveDocDO.setUrgencyDegree("1");
         receiveDocDO.setSendDocNumber(doc.getWenH());
         receiveDocDO.setSubject(StrUtil.trim(doc.getTitle()));
         receiveDocDO.setSendDept(doc.getDept());
-        receiveDocDO.setDocSecondClass(getDocClass(receiveDocDO.getSubject()));
+        receiveDocDO.setDocSecondClass(ReceiveDocClassParser.parse(receiveDocDO.getSubject()));
         receiveDocDO.setSendTime(sendDate);
         receiveDocDO.setReceiveTime(LocalDateTime.now());
         receiveDocDO.setDocRange("PT");
@@ -333,24 +332,5 @@ public class ForestryDocJob implements JobHandler {
             log.warn("更新林业局远程状态失败: {}", id, e);
         }
     }
-
-    /**
-     * 解析二级分类 (逻辑复用)
-     */
-    private String getDocClass(String title) {
-        if (StrUtil.isEmpty(title)) return "";
-        if (title.length() > 4) {
-            List<DictDataRespDTO> dictList = DictFrameworkUtils.getDictDataList("doc_class");
-            if (dictList == null || dictList.isEmpty()) return "";
-            String suffix = title.substring(title.length() - 4);
-            for (DictDataRespDTO dict : dictList) {
-                if (suffix.contains(dict.getLabel())) {
-                    return dict.getLabel();
-                }
-            }
-        }
-        return "";
-    }
-
 
 }
