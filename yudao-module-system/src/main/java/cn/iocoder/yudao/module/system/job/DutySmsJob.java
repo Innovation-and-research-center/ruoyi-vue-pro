@@ -3,6 +3,7 @@ package cn.iocoder.yudao.module.system.job;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.biz.system.dict.dto.DictDataRespDTO;
+import cn.iocoder.yudao.framework.datapermission.core.util.DataPermissionUtils;
 import cn.iocoder.yudao.framework.dict.core.DictFrameworkUtils;
 import cn.iocoder.yudao.framework.quartz.core.handler.JobHandler;
 import cn.iocoder.yudao.framework.tenant.core.context.TenantContextHolder;
@@ -81,9 +82,10 @@ public class DutySmsJob implements JobHandler {
             if (staff.getUserId() == null) {
                 continue;
             }
-            AdminUserDO user = adminUserMapper.selectById(staff.getUserId());
+            AdminUserDO user = DataPermissionUtils.executeIgnore(() -> adminUserMapper.selectById(staff.getUserId()));
 
             if (user == null) {
+                log.warn("值班人员 {} (ID:{}) 对应用户不存在或已删除，跳过发送", staff.getStaffName(), staff.getUserId());
                 continue;
             }
 

@@ -29,6 +29,9 @@ public class XzfyPageReqVO extends PageParam {
     @Schema(description = "第三人")
     private String dsr;
 
+    @Schema(description = "土地坐落")
+    private String tdZl;
+
     @Schema(description = "类别一")
     private String lb1;
 

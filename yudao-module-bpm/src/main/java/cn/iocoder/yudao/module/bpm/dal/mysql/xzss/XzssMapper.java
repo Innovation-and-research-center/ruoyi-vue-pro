@@ -26,6 +26,7 @@ public interface XzssMapper extends BaseMapperX<XzssDO> {
                 .likeIfPresent(XzssDO::getSqr, reqVO.getSqr())
                 .likeIfPresent(XzssDO::getBsqr, reqVO.getBsqr())
                 .likeIfPresent(XzssDO::getDsr, reqVO.getDsr())
+                .likeIfPresent(XzssDO::getTdZl, reqVO.getTdZl())
                 .eqIfPresent(XzssDO::getSsLx, reqVO.getSsLx())
                 .eqIfPresent(XzssDO::getLb1, reqVO.getLb1())
                 .eqIfPresent(XzssDO::getLb2, reqVO.getLb2())

@@ -32,6 +32,9 @@ public class XzssPageReqVO extends PageParam {
     @Schema(description = "第三人")
     private String dsr;
 
+    @Schema(description = "土地坐落")
+    private String tdZl;
+
     @Schema(description = "诉讼类型：1一审，2二审，3再审，如果多次，继续记录")
     private Short ssLx;
 
