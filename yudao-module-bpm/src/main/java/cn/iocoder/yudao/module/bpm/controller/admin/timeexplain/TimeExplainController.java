@@ -36,6 +36,8 @@ import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUti
 
 import cn.iocoder.yudao.module.bpm.controller.admin.timeexplain.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.timeexplain.TimeExplainDO;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.timeexplain.TimeExplainService;
 
 @Tag(name = "管理后台 - 外出请假补假")
@@ -46,6 +48,12 @@ public class TimeExplainController {
 
     @Resource
     private TimeExplainService timeExplainService;
+
+    @Resource
+    private BpmDeleteOperateLogService bpmDeleteOperateLogService;
+
+    @Resource
+    private BpmUpdateOperateLogService bpmUpdateOperateLogService;
 
     @Resource
     private AdminUserApi adminUserApi;
@@ -70,7 +78,13 @@ public class TimeExplainController {
     @PutMapping("/update")
     @Operation(summary = "更新外出请假补假")
     public CommonResult<Boolean> updateTimeExplain(@Valid @RequestBody TimeExplainSaveReqVO updateReqVO) {
+        TimeExplainDO oldData = timeExplainService.getTimeExplain(updateReqVO.getId());
+        List<TimeExplainAttachRespVO> oldAttachments = timeExplainService.getTimeExplainAttachListByTimeExplainId(updateReqVO.getId());
         timeExplainService.updateTimeExplain(updateReqVO);
+        TimeExplainDO newData = timeExplainService.getTimeExplain(updateReqVO.getId());
+        List<TimeExplainAttachRespVO> newAttachments = timeExplainService.getTimeExplainAttachListByTimeExplainId(updateReqVO.getId());
+        bpmUpdateOperateLogService.recordUpdate("外出请假补假", updateReqVO.getId(), oldData, newData,
+                oldAttachments, newAttachments);
         return success(true);
     }
 
@@ -78,10 +92,11 @@ public class TimeExplainController {
     @Operation(summary = "删除外出请假补假")
     @Parameters({
             @Parameter(name = "id", description = "编号", required = true),
-            @Parameter(name = "reason", description = "作废原因", required = true)
+            @Parameter(name = "reason", description = "删除原因", required = true)
     })
     public CommonResult<Boolean> deleteTimeExplain(@RequestParam("id") Long id,@RequestParam("reason") String reason) {
         timeExplainService.deleteTimeExplain(id,reason);
+        bpmDeleteOperateLogService.recordDelete("外出请假补假", id, reason);
         return success(true);
     }
 
@@ -89,10 +104,11 @@ public class TimeExplainController {
     @Parameter(name = "ids", description = "编号", required = true)
     @Parameters({
             @Parameter(name = "ids", description = "编号列表", required = true),
-            @Parameter(name = "reason", description = "作废原因", required = true)
+            @Parameter(name = "reason", description = "删除原因", required = true)
     })
     public CommonResult<Boolean> deleteTimeExplainList(@RequestParam("ids") List<Long> ids,@RequestParam("reason") String reason) {
         timeExplainService.deleteTimeExplainListByIds(ids,reason);
+        bpmDeleteOperateLogService.recordDeleteBatch("外出请假补假", ids, reason);
         return success(true);
     }
 

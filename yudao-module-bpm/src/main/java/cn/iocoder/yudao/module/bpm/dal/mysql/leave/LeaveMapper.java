@@ -8,6 +8,7 @@ import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.mybatis.core.mapper.BaseMapperX;
 import cn.iocoder.yudao.framework.mybatis.core.query.MPJLambdaWrapperX;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import org.apache.ibatis.annotations.Mapper;
 import cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.*;
@@ -41,7 +42,8 @@ public interface LeaveMapper extends BaseMapperX<LeaveDO> {
                 .eqIfPresent(LeaveDO::getFilepath, reqVO.getFilepath())
                 .eqIfPresent(LeaveDO::getUserid, reqVO.getUserId())
                 .likeIfPresent(AdminUserDO::getNickname, reqVO.getNickName())
-                .eqIfPresent(LeaveDO::getSpzt, reqVO.getSpzt());
+                .eqIfPresent(LeaveDO::getSpzt, reqVO.getSpzt())
+                .neIfPresent(LeaveDO::getSpzt, BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue());
         orderBy(reqVO, wrapper);
         return selectJoinPage(reqVO, LeaveDO.class, wrapper);
     }

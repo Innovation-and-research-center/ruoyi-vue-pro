@@ -31,6 +31,8 @@ import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUti
 
 import cn.iocoder.yudao.module.bpm.controller.admin.senddoc.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.senddoc.SendDocDO;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.senddoc.SendDocService;
 
 @Tag(name = "管理后台 - 发文")
@@ -41,6 +43,12 @@ public class SendDocController {
 
     @Resource
     private SendDocService sendDocService;
+
+    @Resource
+    private BpmDeleteOperateLogService bpmDeleteOperateLogService;
+
+    @Resource
+    private BpmUpdateOperateLogService bpmUpdateOperateLogService;
 
     @PostMapping("/create")
     @Operation(summary = "创建发文")
@@ -56,7 +64,12 @@ public class SendDocController {
     @Operation(summary = "更新发文")
     @PreAuthorize("@ss.hasPermission('bpm:send-doc:update')")
     public CommonResult<Boolean> updateSendDoc(@Valid @RequestBody SendDocSaveReqVO updateReqVO) {
+        SendDocDO oldData = sendDocService.getSendDoc(updateReqVO.getId());
         sendDocService.updateSendDoc(updateReqVO);
+        SendDocDO newData = sendDocService.getSendDoc(updateReqVO.getId());
+        bpmUpdateOperateLogService.recordUpdate("发文", updateReqVO.getId(), oldData, newData,
+                oldData != null ? oldData.getAttachFilePath() : null,
+                newData != null ? newData.getAttachFilePath() : null);
         return success(true);
     }
 
@@ -66,10 +79,11 @@ public class SendDocController {
     @PreAuthorize("@ss.hasPermission('bpm:send-doc:delete')")
     @Parameters({
             @Parameter(name = "id", description = "编号", required = true),
-            @Parameter(name = "reason", description = "作废原因", required = true)
+            @Parameter(name = "reason", description = "删除原因", required = true)
     })
     public CommonResult<Boolean> deleteSendDoc(@RequestParam("id") Long id,@RequestParam("reason") String reason) {
         sendDocService.deleteSendDoc(id, reason);
+        bpmDeleteOperateLogService.recordDelete("发文", id, reason);
         return success(true);
     }
 
@@ -79,10 +93,11 @@ public class SendDocController {
                 @PreAuthorize("@ss.hasPermission('bpm:send-doc:delete')")
     @Parameters({
             @Parameter(name = "ids", description = "编号列表", required = true),
-            @Parameter(name = "reason", description = "作废原因", required = true)
+            @Parameter(name = "reason", description = "删除原因", required = true)
     })
     public CommonResult<Boolean> deleteSendDocList(@RequestParam("ids") List<Long> ids,@RequestParam("reason") String reason) {
         sendDocService.deleteSendDocListByIds(ids,reason);
+        bpmDeleteOperateLogService.recordDeleteBatch("发文", ids, reason);
         return success(true);
     }
 

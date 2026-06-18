@@ -46,6 +46,7 @@ import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.SimpleModelUtils
 import cn.iocoder.yudao.module.bpm.service.definition.BpmProcessDefinitionService;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmUserGroupService;
 import cn.iocoder.yudao.module.bpm.service.message.BpmMessageService;
+import cn.iocoder.yudao.module.bpm.util.BpmQueryUtils;
 import cn.iocoder.yudao.module.system.api.dept.DeptApi;
 import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
@@ -708,7 +709,11 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             processInstanceQuery.startedBy(String.valueOf(pageReqVO.getStartUserId()));
         }
         if (StrUtil.isNotEmpty(pageReqVO.getName())) {
-            processInstanceQuery.processInstanceNameLike("%" + pageReqVO.getName() + "%");
+            Set<String> processInstanceIds = getHistoricProcessInstanceIdsByNameKeywords(pageReqVO.getName());
+            if (CollUtil.isEmpty(processInstanceIds)) {
+                return PageResult.empty();
+            }
+            processInstanceQuery.processInstanceIds(processInstanceIds);
         }
         if (StrUtil.isNotEmpty(pageReqVO.getProcessDefinitionKey())) {
             processInstanceQuery.processDefinitionKey(pageReqVO.getProcessDefinitionKey());
@@ -749,6 +754,32 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         List<HistoricProcessInstance> processInstanceList = processInstanceQuery.listPage(PageUtils.getStart(pageReqVO),
                 pageReqVO.getPageSize());
         return new PageResult<>(processInstanceList, processInstanceCount);
+    }
+
+    private Set<String> getHistoricProcessInstanceIdsByNameKeywords(String name) {
+        List<String> keywords = BpmQueryUtils.splitKeywords(name);
+        if (CollUtil.isEmpty(keywords)) {
+            return null;
+        }
+        Set<String> result = null;
+        for (String keyword : keywords) {
+            List<HistoricProcessInstance> processInstances = historyService.createHistoricProcessInstanceQuery()
+                    .processInstanceNameLike("%" + keyword + "%")
+                    .list();
+            if (CollUtil.isEmpty(processInstances)) {
+                return Collections.emptySet();
+            }
+            Set<String> ids = convertSet(processInstances, HistoricProcessInstance::getId);
+            if (result == null) {
+                result = new HashSet<>(ids);
+            } else {
+                result.retainAll(ids);
+                if (CollUtil.isEmpty(result)) {
+                    return Collections.emptySet();
+                }
+            }
+        }
+        return result;
     }
 
     /**

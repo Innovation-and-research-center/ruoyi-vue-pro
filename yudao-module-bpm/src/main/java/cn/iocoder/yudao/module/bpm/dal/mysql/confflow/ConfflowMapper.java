@@ -7,6 +7,9 @@ import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.mybatis.core.query.LambdaQueryWrapperX;
 import cn.iocoder.yudao.framework.mybatis.core.mapper.BaseMapperX;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.confflow.ConfflowDO;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.util.BpmQueryUtils;
+import com.baomidou.mybatisplus.core.toolkit.support.SFunction;
 import org.apache.ibatis.annotations.Mapper;
 import cn.iocoder.yudao.module.bpm.controller.admin.confflow.vo.*;
 
@@ -26,16 +29,25 @@ public interface ConfflowMapper extends BaseMapperX<ConfflowDO> {
                 .likeIfPresent(ConfflowDO::getDeptName, reqVO.getDeptName())
                 .betweenIfPresent(ConfflowDO::getApplyDate, reqVO.getApplyDate())
                 .betweenIfPresent(ConfflowDO::getStartDate, reqVO.getStartDate())
-                .likeIfPresent(ConfflowDO::getTitle, reqVO.getTitle())
                 .likeIfPresent(ConfflowDO::getContent, reqVO.getContent())
                 .likeIfPresent(ConfflowDO::getRemark, reqVO.getRemark())
                 .likeIfPresent(ConfflowDO::getVenue, reqVO.getVenue())
                 .likeIfPresent(ConfflowDO::getJoinUnit, reqVO.getJoinUnit())
                 .likeIfPresent(ConfflowDO::getOfferUnit, reqVO.getOfferUnit())
                 .likeIfPresent(ConfflowDO::getOfferPerson, reqVO.getOfferPerson())
-                .eqIfPresent(ConfflowDO::getStatus, reqVO.getStatus());
+                .eqIfPresent(ConfflowDO::getStatus, reqVO.getStatus())
+                .neIfPresent(ConfflowDO::getStatus, BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue());
+        likeKeywords(wrapper, ConfflowDO::getTitle, reqVO.getTitle());
         orderBy(reqVO, wrapper);
         return selectPage(reqVO, wrapper);
+    }
+
+    default void likeKeywords(LambdaQueryWrapperX<ConfflowDO> wrapper, SFunction<ConfflowDO, ?> column, String keyword) {
+        List<String> keywords = BpmQueryUtils.splitKeywords(keyword);
+        if (keywords.isEmpty()) {
+            return;
+        }
+        wrapper.and(w -> keywords.forEach(item -> w.like(column, item)));
     }
 
     default void orderBy(ConfflowPageReqVO reqVO, LambdaQueryWrapperX<ConfflowDO> wrapper) {

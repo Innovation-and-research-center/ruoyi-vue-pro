@@ -33,6 +33,9 @@ import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUti
 import cn.iocoder.yudao.module.bpm.controller.admin.xzss.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssKzDO;
+import cn.iocoder.yudao.module.bpm.service.commentattach.CommentAttachService;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.xzss.XzssService;
 
 @Tag(name = "管理后台 - 行政诉讼")
@@ -43,6 +46,15 @@ public class XzssController {
 
     @Resource
     private XzssService xzssService;
+
+    @Resource
+    private BpmDeleteOperateLogService bpmDeleteOperateLogService;
+
+    @Resource
+    private BpmUpdateOperateLogService bpmUpdateOperateLogService;
+
+    @Resource
+    private CommentAttachService commentAttachService;
 
     @Resource
     private XzfyService xzfyService;
@@ -58,8 +70,23 @@ public class XzssController {
     @Operation(summary = "更新行政诉讼")
     @PreAuthorize("@ss.hasPermission('bpm:xzss:update')")
     public CommonResult<Boolean> updateXzss(@Valid @RequestBody XzssSaveReqVO updateReqVO) {
+        XzssDO oldXzss = xzssService.getXzss(updateReqVO.getId());
+        Map<String, Object> oldData = buildXzssSnapshot(oldXzss);
+        List<?> oldAttachments = oldXzss != null ? commentAttachService.getCommentAttachList(oldXzss.getXmGuid(), "XZSS") : Collections.emptyList();
         xzssService.updateXzss(updateReqVO);
+        XzssDO newXzss = xzssService.getXzss(updateReqVO.getId());
+        Map<String, Object> newData = buildXzssSnapshot(newXzss);
+        List<?> newAttachments = newXzss != null ? commentAttachService.getCommentAttachList(newXzss.getXmGuid(), "XZSS") : Collections.emptyList();
+        bpmUpdateOperateLogService.recordUpdate("行政诉讼", updateReqVO.getId(), oldData, newData,
+                oldAttachments, newAttachments);
         return success(true);
+    }
+
+    private Map<String, Object> buildXzssSnapshot(XzssDO xzss) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("主表", xzss);
+        snapshot.put("扩展表", xzss != null ? xzssService.getXzssKzByXmGuid(xzss.getXmGuid()) : null);
+        return snapshot;
     }
 
     @DeleteMapping("/delete")
@@ -68,10 +95,11 @@ public class XzssController {
     @PreAuthorize("@ss.hasPermission('bpm:xzss:delete')")
     @Parameters({
             @Parameter(name = "id", description = "编号", required = true),
-            @Parameter(name = "reason", description = "作废原因", required = true)
+            @Parameter(name = "reason", description = "删除原因", required = true)
     })
     public CommonResult<Boolean> deleteXzss(@RequestParam("id") Long id,@RequestParam("reason") String reason) {
         xzssService.deleteXzss(id,reason);
+        bpmDeleteOperateLogService.recordDelete("行政诉讼", id, reason);
         return success(true);
     }
 
@@ -81,10 +109,11 @@ public class XzssController {
     @PreAuthorize("@ss.hasPermission('bpm:xzss:delete')")
     @Parameters({
             @Parameter(name = "ids", description = "编号列表", required = true),
-            @Parameter(name = "reason", description = "作废原因", required = true)
+            @Parameter(name = "reason", description = "删除原因", required = true)
     })
     public CommonResult<Boolean> deleteXzssList(@RequestParam("ids") List<Long> ids,@RequestParam("reason") String reason) {
         xzssService.deleteXzssListByIds(ids,reason);
+        bpmDeleteOperateLogService.recordDeleteBatch("行政诉讼", ids, reason);
         return success(true);
     }
 

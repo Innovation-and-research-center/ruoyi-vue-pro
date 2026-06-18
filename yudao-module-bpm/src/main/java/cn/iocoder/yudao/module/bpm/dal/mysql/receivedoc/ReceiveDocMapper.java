@@ -9,6 +9,8 @@ import cn.iocoder.yudao.framework.mybatis.core.mapper.BaseMapperX;
 import cn.iocoder.yudao.framework.mybatis.core.query.MPJLambdaWrapperX;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.fileexchange.FileExchangeDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocDO;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.util.BpmQueryUtils;
 import com.baomidou.mybatisplus.core.toolkit.support.SFunction;
 import org.apache.ibatis.annotations.Mapper;
 import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.*;
@@ -38,9 +40,10 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
         wrapper.likeIfPresent(ReceiveDocDO::getSendDocNumber, reqVO.getSendDocNumber());
         wrapper.likeIfPresent(ReceiveDocDO::getReceiveDocNumber, reqVO.getReceiveDocNumber());
         wrapper.betweenIfPresent(ReceiveDocDO::getReceiveTime, reqVO.getReceiveTime());
-        wrapper.likeIfPresent(ReceiveDocDO::getSubject, reqVO.getSubject());
+        likeSubjectKeywords(wrapper, reqVO.getSubject());
         wrapper.eqIfPresent(ReceiveDocDO::getUrgencyDegree, reqVO.getUrgencyDegree());
         likeDictValueOrLabel(wrapper, ReceiveDocDO::getDocSecondClass, reqVO.getDocSecondClass(), DICT_TYPE_DOC_CLASS);
+        wrapper.neIfPresent(ReceiveDocDO::getStatus, BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue());
         wrapper.eqIfPresent(ReceiveDocDO::getStatus, reqVO.getStatus());
 
         if (StrUtil.isNotBlank(reqVO.getSource())) {
@@ -83,6 +86,17 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
                 w.or().like(column, value);
             }
         });
+    }
+
+    default void likeSubjectKeywords(MPJLambdaWrapperX<ReceiveDocDO> wrapper, String subject) {
+        if (StrUtil.isBlank(subject)) {
+            return;
+        }
+        List<String> keywords = BpmQueryUtils.splitKeywords(subject);
+        if (keywords.isEmpty()) {
+            return;
+        }
+        wrapper.and(w -> keywords.forEach(keyword -> w.like(ReceiveDocDO::getSubject, keyword)));
     }
 
     default void orderBy(ReceiveDocPageReqVO reqVO, MPJLambdaWrapperX<ReceiveDocDO> wrapper) {

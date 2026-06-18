@@ -49,6 +49,14 @@ public class XzssRespVO {
     @ExcelProperty("诉讼类型：1一审，2二审，3再审，如果多次，继续记录")
     private Short ssLx;
 
+    @Schema(description = "复议案号")
+    @ExcelProperty("复议案号")
+    private String fyAh;
+
+    @Schema(description = "上一审案号")
+    @ExcelProperty("上一审案号")
+    private String ssAh;
+
     @Schema(description = "类别一")
     @ExcelProperty("类别一")
     private String lb1;

@@ -15,13 +15,23 @@
         <where>
             t.ASSIGNEE_ = CAST(#{userId} AS VARCHAR)
             AND t.SUSPENSION_STATE_ = 1
+            AND NOT EXISTS (
+                SELECT 1 FROM ACT_RU_VARIABLE deletedStatus
+                WHERE deletedStatus.PROC_INST_ID_ = t.PROC_INST_ID_
+                  AND deletedStatus.NAME_ = #{VAR_PROCESS_STATUS}
+                  AND COALESCE(CAST(deletedStatus.LONG_ AS VARCHAR), deletedStatus.TEXT_) = '5'
+            )
             <if test="reqVO.name != null and reqVO.name != ''"> AND t.NAME_ LIKE CONCAT('%', #{reqVO.name}, '%') </if>
             <if test="reqVO.category != null and reqVO.category != ''"> AND t.CATEGORY_ = #{reqVO.category} </if>
             <if test="reqVO.processDefinitionKey != null and reqVO.processDefinitionKey != ''"> AND def.KEY_ = #{reqVO.processDefinitionKey} </if>
             <if test="reqVO.createTime != null and reqVO.createTime.length > 0">
                 AND t.CREATE_TIME_ BETWEEN #{reqVO.createTime[0]} AND #{reqVO.createTime[1]}
             </if>
-            <if test="reqVO.processInstanceName != null and reqVO.processInstanceName != ''"> AND p.NAME_ LIKE CONCAT('%', #{reqVO.processInstanceName}, '%') </if>
+            <if test="reqVO.processInstanceNameKeywords != null and reqVO.processInstanceNameKeywords.size() > 0">
+                <foreach collection="reqVO.processInstanceNameKeywords" item="keyword">
+                    AND p.NAME_ LIKE CONCAT('%', #{keyword}, '%')
+                </foreach>
+            </if>
             <if test="reqVO.processInstanceId != null and reqVO.processInstanceId != ''"> AND t.PROC_INST_ID_ = #{reqVO.processInstanceId} </if>
             <if test="reqVO.urgencyDegree != null"> AND COALESCE(CAST(urgency.LONG_ AS VARCHAR), urgency.TEXT_) = CAST(#{reqVO.urgencyDegree} AS VARCHAR) </if>
             <if test="reqVO.sendingUnit != null and reqVO.sendingUnit != ''"> AND LOWER(sourceUnit.TEXT_) LIKE LOWER(CONCAT('%', #{reqVO.sendingUnit}, '%')) </if>
@@ -50,6 +60,12 @@
             AND t.END_TIME_ IS NOT NULL
             AND t.TASK_DEF_KEY_ != #{START_USER_NODE_ID}
             AND NOT EXISTS (
+                SELECT 1 FROM ACT_HI_VARINST deletedStatus
+                WHERE deletedStatus.PROC_INST_ID_ = t.PROC_INST_ID_
+                  AND deletedStatus.NAME_ = #{VAR_PROCESS_STATUS}
+                  AND COALESCE(CAST(deletedStatus.LONG_ AS VARCHAR), deletedStatus.TEXT_) = '5'
+            )
+            AND NOT EXISTS (
                 SELECT 1 FROM ACT_HI_VARINST statusVar
                 WHERE statusVar.TASK_ID_ = t.ID_
                   AND statusVar.NAME_ = #{TASK_STATUS}
@@ -69,7 +85,11 @@
             <if test="reqVO.createTime != null and reqVO.createTime.length > 0">
                 AND t.CREATE_TIME_ BETWEEN #{reqVO.createTime[0]} AND #{reqVO.createTime[1]}
             </if>
-            <if test="reqVO.processInstanceName != null and reqVO.processInstanceName != ''"> AND p.NAME_ LIKE CONCAT('%', #{reqVO.processInstanceName}, '%') </if>
+            <if test="reqVO.processInstanceNameKeywords != null and reqVO.processInstanceNameKeywords.size() > 0">
+                <foreach collection="reqVO.processInstanceNameKeywords" item="keyword">
+                    AND p.NAME_ LIKE CONCAT('%', #{keyword}, '%')
+                </foreach>
+            </if>
             <if test="reqVO.processInstanceId != null and reqVO.processInstanceId != ''"> AND t.PROC_INST_ID_ = #{reqVO.processInstanceId} </if>
             <if test="reqVO.urgencyDegree != null"> AND COALESCE(CAST(urgency.LONG_ AS VARCHAR), urgency.TEXT_) = CAST(#{reqVO.urgencyDegree} AS VARCHAR) </if>
             <if test="reqVO.sendingUnit != null and reqVO.sendingUnit != ''"> AND LOWER(sourceUnit.TEXT_) LIKE LOWER(CONCAT('%', #{reqVO.sendingUnit}, '%')) </if>
@@ -123,6 +143,7 @@
         <bind name="VAR_URGENCY" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_URGENCY_DEGREE" />
         <bind name="VAR_SOURCE_UNIT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_SOURCE_UNIT" />
         <bind name="VAR_DEADLINE" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_DEADLINE_DATE" />
+        <bind name="VAR_PROCESS_STATUS" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_INSTANCE_VARIABLE_STATUS" />
         SELECT t.ID_
         <include refid="TodoFrom" />
         <include refid="TodoWhere" />
@@ -134,6 +155,7 @@
         <bind name="VAR_URGENCY" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_URGENCY_DEGREE" />
         <bind name="VAR_SOURCE_UNIT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_SOURCE_UNIT" />
         <bind name="VAR_DEADLINE" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_DEADLINE_DATE" />
+        <bind name="VAR_PROCESS_STATUS" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_INSTANCE_VARIABLE_STATUS" />
         SELECT COUNT(1)
         <include refid="TodoFrom" />
         <include refid="TodoWhere" />
@@ -143,6 +165,7 @@
         <bind name="VAR_URGENCY" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_URGENCY_DEGREE" />
         <bind name="VAR_SOURCE_UNIT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_SOURCE_UNIT" />
         <bind name="VAR_DEADLINE" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_DEADLINE_DATE" />
+        <bind name="VAR_PROCESS_STATUS" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_INSTANCE_VARIABLE_STATUS" />
         <bind name="TASK_STATUS" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@TASK_VARIABLE_STATUS" />
         <bind name="START_USER_NODE_ID" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnModelConstants@START_USER_NODE_ID" />
         SELECT t.ID_
@@ -156,6 +179,7 @@
         <bind name="VAR_URGENCY" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_URGENCY_DEGREE" />
         <bind name="VAR_SOURCE_UNIT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_SOURCE_UNIT" />
         <bind name="VAR_DEADLINE" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_DEADLINE_DATE" />
+        <bind name="VAR_PROCESS_STATUS" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_INSTANCE_VARIABLE_STATUS" />
         <bind name="TASK_STATUS" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@TASK_VARIABLE_STATUS" />
         <bind name="START_USER_NODE_ID" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnModelConstants@START_USER_NODE_ID" />
         SELECT COUNT(1)

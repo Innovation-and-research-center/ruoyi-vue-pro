@@ -7,6 +7,9 @@ import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.mybatis.core.query.LambdaQueryWrapperX;
 import cn.iocoder.yudao.framework.mybatis.core.mapper.BaseMapperX;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzfy.XzfyDO;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.util.BpmQueryUtils;
+import com.baomidou.mybatisplus.core.toolkit.support.SFunction;
 import org.apache.ibatis.annotations.Mapper;
 import cn.iocoder.yudao.module.bpm.controller.admin.xzfy.vo.*;
 
@@ -23,15 +26,24 @@ public interface XzfyMapper extends BaseMapperX<XzfyDO> {
                 .likeIfPresent(XzfyDO::getSwWh, reqVO.getSwWh())
                 .likeIfPresent(XzfyDO::getSwJg, reqVO.getSwJg())
                 .betweenIfPresent(XzfyDO::getSwRq, reqVO.getSwRq())
-                .likeIfPresent(XzfyDO::getSqr, reqVO.getSqr())
                 .likeIfPresent(XzfyDO::getDsr, reqVO.getDsr())
                 .likeIfPresent(XzfyDO::getTdZl, reqVO.getTdZl())
                 .eqIfPresent(XzfyDO::getLb1, reqVO.getLb1())
                 .eqIfPresent(XzfyDO::getLb2, reqVO.getLb2())
                 .eqIfPresent(XzfyDO::getLb3, reqVO.getLb3())
-                .eqIfPresent(XzfyDO::getStatus, reqVO.getStatus());
+                .eqIfPresent(XzfyDO::getStatus, reqVO.getStatus())
+                .neIfPresent(XzfyDO::getStatus, BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue());
+        likeKeywords(wrapper, XzfyDO::getSqr, reqVO.getSqr());
         orderBy(reqVO, wrapper);
         return selectPage(reqVO, wrapper);
+    }
+
+    default void likeKeywords(LambdaQueryWrapperX<XzfyDO> wrapper, SFunction<XzfyDO, ?> column, String keyword) {
+        List<String> keywords = BpmQueryUtils.splitKeywords(keyword);
+        if (keywords.isEmpty()) {
+            return;
+        }
+        wrapper.and(w -> keywords.forEach(item -> w.like(column, item)));
     }
 
     default void orderBy(XzfyPageReqVO reqVO, LambdaQueryWrapperX<XzfyDO> wrapper) {

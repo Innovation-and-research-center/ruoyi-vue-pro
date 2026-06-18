@@ -22,6 +22,7 @@ import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmProcessDefinitio
 import cn.iocoder.yudao.module.bpm.dal.mysql.task.BpmTaskSortMapper;
 import cn.iocoder.yudao.module.bpm.enums.definition.*;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmCommentTypeEnum;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmReasonEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskSignTypeEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
@@ -36,6 +37,7 @@ import cn.iocoder.yudao.module.bpm.service.definition.BpmProcessDefinitionServic
 import cn.iocoder.yudao.module.bpm.service.message.BpmMessageService;
 import cn.iocoder.yudao.module.bpm.service.message.dto.BpmMessageSendWhenTaskCreatedReqDTO;
 import cn.iocoder.yudao.module.bpm.service.message.dto.BpmMessageSendWhenTaskTimeoutReqDTO;
+import cn.iocoder.yudao.module.bpm.util.BpmQueryUtils;
 import cn.iocoder.yudao.module.system.api.dept.DeptApi;
 import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
@@ -151,16 +153,11 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         }
         Set<String> candidateProcessInstanceIds = null;
         if (StrUtil.isNotBlank(pageVO.getProcessInstanceName())) {
-            // 5.1 先去流程实例表查匹配名称的 ID
-            List<ProcessInstance> processInstances = runtimeService.createProcessInstanceQuery()
-                    .processInstanceNameLike("%" + pageVO.getProcessInstanceName() + "%")
-                    .list();
-
-            if (CollUtil.isEmpty(processInstances)) {
+            candidateProcessInstanceIds = getRuntimeProcessInstanceIdsByNameKeywords(pageVO.getProcessInstanceName());
+            if (CollUtil.isEmpty(candidateProcessInstanceIds)) {
                 // 如果连流程实例都搜不到，那肯定没有对应的任务，直接返回空
                 return PageResult.empty();
             }
-            candidateProcessInstanceIds = convertSet(processInstances, ProcessInstance::getId);
         }
         if (ArrayUtil.isNotEmpty(pageVO.getProcessDeadline())) {
             Date startTime = DateUtils.of(pageVO.getProcessDeadline()[0]);
@@ -323,6 +320,8 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 .finished() // 已完成
                 .taskAssignee(String.valueOf(userId)) // 分配给自己
                 .includeTaskLocalVariables()
+                .processVariableValueNotEquals(PROCESS_INSTANCE_VARIABLE_STATUS,
+                        BpmProcessInstanceStatusEnum.INVALID.getStatus())
                 .taskVariableValueNotEquals(BpmnVariableConstants.TASK_VARIABLE_STATUS, BpmTaskStatusEnum.CANCEL.getStatus());
         if (StrUtil.isNotBlank(pageVO.getName())) {
             taskQuery.taskNameLike("%" + pageVO.getName() + "%");
@@ -348,13 +347,10 @@ public class BpmTaskServiceImpl implements BpmTaskService {
 
         // 2.1 办件名称过滤
         if (StrUtil.isNotBlank(pageVO.getProcessInstanceName())) {
-            List<HistoricProcessInstance> processInstances = historyService.createHistoricProcessInstanceQuery()
-                    .processInstanceNameLike("%" + pageVO.getProcessInstanceName() + "%")
-                    .list();
-            if (CollUtil.isEmpty(processInstances)) {
+            candidateProcessInstanceIds = getHistoricProcessInstanceIdsByNameKeywords(pageVO.getProcessInstanceName());
+            if (CollUtil.isEmpty(candidateProcessInstanceIds)) {
                 return PageResult.empty();
             }
-            candidateProcessInstanceIds = convertSet(processInstances, HistoricProcessInstance::getId);
         }
 
         // 2.2 办结时限过滤 (PROCESS_DEADLINE_DATE)
@@ -383,6 +379,9 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         // 2.4 办件编号
         if (StrUtil.isNotBlank(pageVO.getProcessInstanceId())) {
             taskQuery.processInstanceId(pageVO.getProcessInstanceId());
+        }
+        if (candidateProcessInstanceIds != null) {
+            taskQuery.processInstanceIdIn(candidateProcessInstanceIds);
         }
 
         // 2.5 环节时限 (任务 DueDate)
@@ -437,6 +436,58 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toList());
         return new PageResult<>(tasks, count);
+    }
+
+    private Set<String> getRuntimeProcessInstanceIdsByNameKeywords(String processInstanceName) {
+        List<String> keywords = BpmQueryUtils.splitKeywords(processInstanceName);
+        if (CollUtil.isEmpty(keywords)) {
+            return null;
+        }
+        Set<String> result = null;
+        for (String keyword : keywords) {
+            List<ProcessInstance> processInstances = runtimeService.createProcessInstanceQuery()
+                    .processInstanceNameLike("%" + keyword + "%")
+                    .list();
+            if (CollUtil.isEmpty(processInstances)) {
+                return Collections.emptySet();
+            }
+            Set<String> ids = convertSet(processInstances, ProcessInstance::getId);
+            if (result == null) {
+                result = new HashSet<>(ids);
+            } else {
+                result.retainAll(ids);
+                if (CollUtil.isEmpty(result)) {
+                    return Collections.emptySet();
+                }
+            }
+        }
+        return result;
+    }
+
+    private Set<String> getHistoricProcessInstanceIdsByNameKeywords(String processInstanceName) {
+        List<String> keywords = BpmQueryUtils.splitKeywords(processInstanceName);
+        if (CollUtil.isEmpty(keywords)) {
+            return null;
+        }
+        Set<String> result = null;
+        for (String keyword : keywords) {
+            List<HistoricProcessInstance> processInstances = historyService.createHistoricProcessInstanceQuery()
+                    .processInstanceNameLike("%" + keyword + "%")
+                    .list();
+            if (CollUtil.isEmpty(processInstances)) {
+                return Collections.emptySet();
+            }
+            Set<String> ids = convertSet(processInstances, HistoricProcessInstance::getId);
+            if (result == null) {
+                result = new HashSet<>(ids);
+            } else {
+                result.retainAll(ids);
+                if (CollUtil.isEmpty(result)) {
+                    return Collections.emptySet();
+                }
+            }
+        }
+        return result;
     }
 
     private boolean isProcessSortField(String orderField) {
@@ -3750,6 +3801,8 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         long doneCount = historyService.createHistoricTaskInstanceQuery()
                 .taskAssignee(String.valueOf(userId))
                 .finished()
+                .processVariableValueNotEquals(PROCESS_INSTANCE_VARIABLE_STATUS,
+                        BpmProcessInstanceStatusEnum.INVALID.getStatus())
                 .count();
 
         // 3. 组装返回

@@ -7,6 +7,9 @@ import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.mybatis.core.query.LambdaQueryWrapperX;
 import cn.iocoder.yudao.framework.mybatis.core.mapper.BaseMapperX;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.util.BpmQueryUtils;
+import com.baomidou.mybatisplus.core.toolkit.support.SFunction;
 import org.apache.ibatis.annotations.Mapper;
 import cn.iocoder.yudao.module.bpm.controller.admin.xzss.vo.*;
 
@@ -23,8 +26,6 @@ public interface XzssMapper extends BaseMapperX<XzssDO> {
                 .likeIfPresent(XzssDO::getSwWh, reqVO.getSwWh())
                 .likeIfPresent(XzssDO::getSwJg, reqVO.getSwJg())
                 .betweenIfPresent(XzssDO::getSwRq, reqVO.getSwRq())
-                .likeIfPresent(XzssDO::getSqr, reqVO.getSqr())
-                .likeIfPresent(XzssDO::getBsqr, reqVO.getBsqr())
                 .likeIfPresent(XzssDO::getDsr, reqVO.getDsr())
                 .likeIfPresent(XzssDO::getTdZl, reqVO.getTdZl())
                 .eqIfPresent(XzssDO::getSsLx, reqVO.getSsLx())
@@ -40,9 +41,20 @@ public interface XzssMapper extends BaseMapperX<XzssDO> {
                 .eqIfPresent(XzssDO::getIssupervise, reqVO.getIssupervise())
                 .eqIfPresent(XzssDO::getMailTip, reqVO.getMailTip())
                 .eqIfPresent(XzssDO::getStatus, reqVO.getStatus())
-                .betweenIfPresent(XzssDO::getCreateTime, reqVO.getCreateTime());
+                .betweenIfPresent(XzssDO::getCreateTime, reqVO.getCreateTime())
+                .neIfPresent(XzssDO::getStatus, BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue());
+        likeKeywords(wrapper, XzssDO::getSqr, reqVO.getSqr());
+        likeKeywords(wrapper, XzssDO::getBsqr, reqVO.getBsqr());
         orderBy(reqVO, wrapper);
         return selectPage(reqVO, wrapper);
+    }
+
+    default void likeKeywords(LambdaQueryWrapperX<XzssDO> wrapper, SFunction<XzssDO, ?> column, String keyword) {
+        List<String> keywords = BpmQueryUtils.splitKeywords(keyword);
+        if (keywords.isEmpty()) {
+            return;
+        }
+        wrapper.and(w -> keywords.forEach(item -> w.like(column, item)));
     }
 
     default void orderBy(XzssPageReqVO reqVO, LambdaQueryWrapperX<XzssDO> wrapper) {

@@ -33,6 +33,9 @@ import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUti
 import cn.iocoder.yudao.module.bpm.controller.admin.xzfy.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzfy.XzfyDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzfy.XzfyKzDO;
+import cn.iocoder.yudao.module.bpm.service.commentattach.CommentAttachService;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.xzfy.XzfyService;
 
 @Tag(name = "管理后台 - 行政复议")
@@ -43,6 +46,15 @@ public class XzfyController {
 
     @Resource
     private XzfyService xzfyService;
+
+    @Resource
+    private BpmDeleteOperateLogService bpmDeleteOperateLogService;
+
+    @Resource
+    private BpmUpdateOperateLogService bpmUpdateOperateLogService;
+
+    @Resource
+    private CommentAttachService commentAttachService;
 
     @Resource
     private XzssService xzssService;
@@ -58,8 +70,23 @@ public class XzfyController {
     @Operation(summary = "更新行政复议")
     @PreAuthorize("@ss.hasPermission('bpm:xzfy:update')")
     public CommonResult<Boolean> updateXzfy(@Valid @RequestBody XzfySaveReqVO updateReqVO) {
+        XzfyDO oldXzfy = xzfyService.getXzfy(updateReqVO.getId());
+        Map<String, Object> oldData = buildXzfySnapshot(oldXzfy);
+        List<?> oldAttachments = oldXzfy != null ? commentAttachService.getCommentAttachList(oldXzfy.getXmGuid(), "XZFY") : Collections.emptyList();
         xzfyService.updateXzfy(updateReqVO);
+        XzfyDO newXzfy = xzfyService.getXzfy(updateReqVO.getId());
+        Map<String, Object> newData = buildXzfySnapshot(newXzfy);
+        List<?> newAttachments = newXzfy != null ? commentAttachService.getCommentAttachList(newXzfy.getXmGuid(), "XZFY") : Collections.emptyList();
+        bpmUpdateOperateLogService.recordUpdate("行政复议", updateReqVO.getId(), oldData, newData,
+                oldAttachments, newAttachments);
         return success(true);
+    }
+
+    private Map<String, Object> buildXzfySnapshot(XzfyDO xzfy) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("主表", xzfy);
+        snapshot.put("扩展表", xzfy != null ? xzfyService.getXzfyKzByXmGuid(xzfy.getXmGuid()) : null);
+        return snapshot;
     }
 
     @DeleteMapping("/delete")
@@ -68,10 +95,11 @@ public class XzfyController {
     @PreAuthorize("@ss.hasPermission('bpm:xzfy:delete')")
     @Parameters({
             @Parameter(name = "id", description = "编号", required = true),
-            @Parameter(name = "reason", description = "作废原因", required = true)
+            @Parameter(name = "reason", description = "删除原因", required = true)
     })
     public CommonResult<Boolean> deleteXzfy(@RequestParam("id") Long id,@RequestParam("reason") String reason) {
         xzfyService.deleteXzfy(id,reason);
+        bpmDeleteOperateLogService.recordDelete("行政复议", id, reason);
         return success(true);
     }
 
@@ -81,10 +109,11 @@ public class XzfyController {
     @PreAuthorize("@ss.hasPermission('bpm:xzfy:delete')")
     @Parameters({
             @Parameter(name = "ids", description = "编号列表", required = true),
-            @Parameter(name = "reason", description = "作废原因", required = true)
+            @Parameter(name = "reason", description = "删除原因", required = true)
     })
     public CommonResult<Boolean> deleteXzfyList(@RequestParam("ids") List<Long> ids,@RequestParam("reason") String reason) {
         xzfyService.deleteXzfyListByIds(ids,reason);
+        bpmDeleteOperateLogService.recordDeleteBatch("行政复议", ids, reason);
         return success(true);
     }
 

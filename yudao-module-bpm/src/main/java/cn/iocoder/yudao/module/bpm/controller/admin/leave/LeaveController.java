@@ -34,6 +34,8 @@ import static cn.iocoder.yudao.framework.apilog.core.enums.OperateTypeEnum.*;
 
 import cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.leave.LeaveService;
 
 @Slf4j
@@ -45,6 +47,12 @@ public class LeaveController {
 
     @Resource
     private LeaveService leaveService;
+
+    @Resource
+    private BpmDeleteOperateLogService bpmDeleteOperateLogService;
+
+    @Resource
+    private BpmUpdateOperateLogService bpmUpdateOperateLogService;
 
     @Resource
     private AdminUserApi adminUserApi;
@@ -61,33 +69,41 @@ public class LeaveController {
     @PutMapping("/update")
     @Operation(summary = "更新假期申请审批")
     public CommonResult<Boolean> updateLeave(@Valid @RequestBody LeaveSaveReqVO updateReqVO) {
+        LeaveDO oldData = leaveService.getLeave(updateReqVO.getId());
+        List<LeaveAttachRespVO> oldAttachments = leaveService.getLeaveAttachListByLeaveId(updateReqVO.getId());
         leaveService.updateLeave(updateReqVO);
+        LeaveDO newData = leaveService.getLeave(updateReqVO.getId());
+        List<LeaveAttachRespVO> newAttachments = leaveService.getLeaveAttachListByLeaveId(updateReqVO.getId());
+        bpmUpdateOperateLogService.recordUpdate("假期申请审批", updateReqVO.getId(), oldData, newData,
+                oldAttachments, newAttachments);
         return success(true);
     }
 
     @DeleteMapping("/delete")
-    @Operation(summary = "作废假期申请审批")
+    @Operation(summary = "删除假期申请审批")
     @Parameters({
             @Parameter(name = "id", description = "编号", required = true),
-            @Parameter(name = "reason", description = "作废原因", required = true)
+            @Parameter(name = "reason", description = "删除原因", required = true)
     })
     public CommonResult<Boolean> deleteLeave(@RequestParam("id") Long id,
                                              @RequestParam("reason") String reason) {
         // 注意：这里需要你同步修改 LeaveService 层，让它能接收并处理 reason 参数
         leaveService.deleteLeave(id, reason);
+        bpmDeleteOperateLogService.recordDelete("假期申请审批", id, reason);
         return success(true);
     }
 
     @DeleteMapping("/delete-list")
-    @Operation(summary = "批量作废假期申请审批")
+    @Operation(summary = "批量删除假期申请审批")
     @Parameters({
             @Parameter(name = "ids", description = "编号列表", required = true),
-            @Parameter(name = "reason", description = "作废原因", required = true)
+            @Parameter(name = "reason", description = "删除原因", required = true)
     })
     public CommonResult<Boolean> deleteLeaveList(@RequestParam("ids") List<Long> ids,
                                                  @RequestParam("reason") String reason) {
         // 注意：同步修改 LeaveService 层的批量删除逻辑
         leaveService.deleteLeaveListByIds(ids, reason);
+        bpmDeleteOperateLogService.recordDeleteBatch("假期申请审批", ids, reason);
         return success(true);
     }
 

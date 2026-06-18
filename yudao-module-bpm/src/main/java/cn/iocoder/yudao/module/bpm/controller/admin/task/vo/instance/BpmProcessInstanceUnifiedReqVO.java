@@ -1,11 +1,13 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance;
 
 import cn.iocoder.yudao.framework.common.pojo.PageParam;
+import cn.iocoder.yudao.module.bpm.util.BpmQueryUtils;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import org.springframework.format.annotation.DateTimeFormat;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 import static cn.iocoder.yudao.framework.common.util.date.DateUtils.FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND;
 
@@ -14,6 +16,10 @@ import static cn.iocoder.yudao.framework.common.util.date.DateUtils.FORMAT_YEAR_
 public class BpmProcessInstanceUnifiedReqVO extends PageParam {
     @Schema(description = "办件名称 (模糊查询)", example = "关于xxx的通知")
     private String name;
+
+    public List<String> getNameKeywords() {
+        return BpmQueryUtils.splitKeywords(name);
+    }
 
     @Schema(description = "办件编号 (精准/模糊)", example = "260203-8287-0010")
     private String processInstanceId;

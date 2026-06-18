@@ -70,8 +70,18 @@
 
         <where>
             (res.START_USER_ID_ = CAST(#{userId} AS VARCHAR) OR EXISTS (SELECT 1 FROM ACT_HI_TASKINST t WHERE t.PROC_INST_ID_ = res.ID_ AND t.ASSIGNEE_ = CAST(#{userId} AS VARCHAR)))
+            AND NOT EXISTS (
+                SELECT 1 FROM ACT_HI_VARINST deletedStatus
+                WHERE deletedStatus.PROC_INST_ID_ = res.ID_
+                  AND deletedStatus.NAME_ = #{VAR_PROCESS_STATUS}
+                  AND COALESCE(CAST(deletedStatus.LONG_ AS VARCHAR), deletedStatus.TEXT_) = '5'
+            )
 
-            <if test="reqVO.name != null and reqVO.name != ''"> AND res.NAME_ LIKE CONCAT('%', #{reqVO.name}, '%') </if>
+            <if test="reqVO.nameKeywords != null and reqVO.nameKeywords.size() > 0">
+                <foreach collection="reqVO.nameKeywords" item="keyword">
+                    AND res.NAME_ LIKE CONCAT('%', #{keyword}, '%')
+                </foreach>
+            </if>
             <if test="reqVO.processInstanceId != null and reqVO.processInstanceId != ''"> AND res.ID_ LIKE CONCAT('%', #{reqVO.processInstanceId}, '%') </if>
             <if test="reqVO.processDefinitionKey != null and reqVO.processDefinitionKey != ''"> AND def.KEY_ = #{reqVO.processDefinitionKey} </if>
             <if test="reqVO.startUserNickname != null and reqVO.startUserNickname != ''"> AND u.nickname LIKE CONCAT('%', #{reqVO.startUserNickname}, '%') </if>
@@ -129,6 +139,7 @@
         <bind name="VAR_SOURCE_UNIT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_SOURCE_UNIT" />
         <bind name="VAR_DEADLINE" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_DEADLINE_DATE" />
         <bind name="VAR_PROCESS_RESULT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_INSTANCE_VARIABLE_RESULT" />
+        <bind name="VAR_PROCESS_STATUS" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_INSTANCE_VARIABLE_STATUS" />
 
         SELECT COUNT(1) FROM ACT_HI_PROCINST res
         LEFT JOIN ACT_RE_PROCDEF def ON res.PROC_DEF_ID_ = def.ID_
@@ -136,8 +147,18 @@
 
         <where>
             (res.START_USER_ID_ = CAST(#{userId} AS VARCHAR) OR EXISTS (SELECT 1 FROM ACT_HI_TASKINST t WHERE t.PROC_INST_ID_ = res.ID_ AND t.ASSIGNEE_ = CAST(#{userId} AS VARCHAR)))
+            AND NOT EXISTS (
+                SELECT 1 FROM ACT_HI_VARINST deletedStatus
+                WHERE deletedStatus.PROC_INST_ID_ = res.ID_
+                  AND deletedStatus.NAME_ = #{VAR_PROCESS_STATUS}
+                  AND COALESCE(CAST(deletedStatus.LONG_ AS VARCHAR), deletedStatus.TEXT_) = '5'
+            )
 
-            <if test="reqVO.name != null and reqVO.name != ''"> AND res.NAME_ LIKE CONCAT('%', #{reqVO.name}, '%') </if>
+            <if test="reqVO.nameKeywords != null and reqVO.nameKeywords.size() > 0">
+                <foreach collection="reqVO.nameKeywords" item="keyword">
+                    AND res.NAME_ LIKE CONCAT('%', #{keyword}, '%')
+                </foreach>
+            </if>
             <if test="reqVO.processInstanceId != null and reqVO.processInstanceId != ''"> AND res.ID_ LIKE CONCAT('%', #{reqVO.processInstanceId}, '%') </if>
             <if test="reqVO.processDefinitionKey != null and reqVO.processDefinitionKey != ''"> AND def.KEY_ = #{reqVO.processDefinitionKey} </if>
             <if test="reqVO.startUserNickname != null and reqVO.startUserNickname != ''"> AND u.nickname LIKE CONCAT('%', #{reqVO.startUserNickname}, '%') </if>

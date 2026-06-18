@@ -33,6 +33,8 @@ import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUti
 
 import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocDO;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.receivedoc.ReceiveDocService;
 
 @Tag(name = "管理后台 - 收文")
@@ -43,6 +45,12 @@ public class ReceiveDocController {
 
     @Resource
     private ReceiveDocService receiveDocService;
+
+    @Resource
+    private BpmDeleteOperateLogService bpmDeleteOperateLogService;
+
+    @Resource
+    private BpmUpdateOperateLogService bpmUpdateOperateLogService;
 
     @PostMapping("/create")
     @Operation(summary = "创建收文")
@@ -83,7 +91,13 @@ public class ReceiveDocController {
     @Operation(summary = "更新收文")
     @PreAuthorize("@ss.hasPermission('bpm:receive-doc:update')")
     public CommonResult<Boolean> updateReceiveDoc(@Valid @RequestBody ReceiveDocSaveReqVO updateReqVO) {
+        ReceiveDocDO oldData = receiveDocService.getReceiveDoc(updateReqVO.getId());
+        List<ReceiveFileRespVO> oldAttachments = receiveDocService.getReceiveDocAttachListByReceiveDocId(updateReqVO.getId());
         receiveDocService.updateReceiveDoc(updateReqVO);
+        ReceiveDocDO newData = receiveDocService.getReceiveDoc(updateReqVO.getId());
+        List<ReceiveFileRespVO> newAttachments = receiveDocService.getReceiveDocAttachListByReceiveDocId(updateReqVO.getId());
+        bpmUpdateOperateLogService.recordUpdate("收文", updateReqVO.getId(), oldData, newData,
+                oldAttachments, newAttachments);
         return success(true);
     }
 
@@ -93,10 +107,11 @@ public class ReceiveDocController {
     @PreAuthorize("@ss.hasPermission('bpm:receive-doc:delete')")
     @Parameters({
             @Parameter(name = "id", description = "编号", required = true),
-            @Parameter(name = "reason", description = "作废原因", required = true)
+            @Parameter(name = "reason", description = "删除原因", required = true)
     })
     public CommonResult<Boolean> deleteReceiveDoc(@RequestParam("id") Long id,@RequestParam("reason") String reason) {
         receiveDocService.deleteReceiveDoc(id,reason);
+        bpmDeleteOperateLogService.recordDelete("收文", id, reason);
         return success(true);
     }
 
@@ -106,10 +121,11 @@ public class ReceiveDocController {
     @PreAuthorize("@ss.hasPermission('bpm:receive-doc:delete')")
     @Parameters({
             @Parameter(name = "ids", description = "编号列表", required = true),
-            @Parameter(name = "reason", description = "作废原因", required = true)
+            @Parameter(name = "reason", description = "删除原因", required = true)
     })
     public CommonResult<Boolean> deleteReceiveDocList(@RequestParam("ids") List<Long> ids,@RequestParam("reason") String reason) {
         receiveDocService.deleteReceiveDocListByIds(ids,reason);
+        bpmDeleteOperateLogService.recordDeleteBatch("收文", ids, reason);
         return success(true);
     }
 

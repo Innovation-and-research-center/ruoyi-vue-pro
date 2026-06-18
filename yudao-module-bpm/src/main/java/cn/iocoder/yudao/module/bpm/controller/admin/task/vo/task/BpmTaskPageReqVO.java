@@ -4,11 +4,13 @@ import cn.iocoder.yudao.framework.common.pojo.PageParam;
 import cn.iocoder.yudao.framework.common.util.date.DateUtils;
 import cn.iocoder.yudao.framework.common.validation.InEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
+import cn.iocoder.yudao.module.bpm.util.BpmQueryUtils;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import org.springframework.format.annotation.DateTimeFormat;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Schema(description = "管理后台 - 流程任务的的分页 Request VO") // 待办、已办，都使用该分页
 @Data
@@ -33,6 +35,10 @@ public class BpmTaskPageReqVO extends PageParam {
 
     @Schema(description = "流程实例名称(办件名称)", example = "请假申请-张三")
     private String processInstanceName; // 对应前端 queryParams.processInstanceName
+
+    public List<String> getProcessInstanceNameKeywords() {
+        return BpmQueryUtils.splitKeywords(processInstanceName);
+    }
 
     @Schema(description = "流程实例编号(办件编号)", example = "782301")
     private String processInstanceId; // 对应前端 queryParams.processInstanceId

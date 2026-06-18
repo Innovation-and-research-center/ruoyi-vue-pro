@@ -38,6 +38,8 @@ import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUti
 import cn.iocoder.yudao.module.bpm.controller.admin.confflow.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.confflow.ConfflowDO;
 import cn.iocoder.yudao.module.bpm.service.confflow.ConfflowService;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
 
 @Tag(name = "管理后台 - 会议报告单")
 @RestController
@@ -47,6 +49,12 @@ public class ConfflowController {
 
     @Resource
     private ConfflowService confflowService;
+
+    @Resource
+    private BpmDeleteOperateLogService bpmDeleteOperateLogService;
+
+    @Resource
+    private BpmUpdateOperateLogService bpmUpdateOperateLogService;
 
     @Resource
     private AdminUserApi adminUserApi;
@@ -86,7 +94,13 @@ public class ConfflowController {
     @Operation(summary = "更新会议报告单")
 //    @PreAuthorize("@ss.hasPermission('bpm:confflow:update')")
     public CommonResult<Boolean> updateConfflow(@Valid @RequestBody ConfflowSaveReqVO updateReqVO) {
+        ConfflowDO oldData = confflowService.getConfflow(updateReqVO.getId());
+        List<ConfflowAttachRespVO> oldAttachments = confflowService.getConfflowAttachListByCommId(updateReqVO.getId());
         confflowService.updateConfflow(updateReqVO);
+        ConfflowDO newData = confflowService.getConfflow(updateReqVO.getId());
+        List<ConfflowAttachRespVO> newAttachments = confflowService.getConfflowAttachListByCommId(updateReqVO.getId());
+        bpmUpdateOperateLogService.recordUpdate("会议报告单", updateReqVO.getId(), oldData, newData,
+                oldAttachments, newAttachments);
         return success(true);
     }
 
@@ -96,10 +110,11 @@ public class ConfflowController {
     @PreAuthorize("@ss.hasPermission('bpm:confflow:delete')")
     @Parameters({
             @Parameter(name = "id", description = "编号", required = true),
-            @Parameter(name = "reason", description = "作废原因", required = true)
+            @Parameter(name = "reason", description = "删除原因", required = true)
     })
     public CommonResult<Boolean> deleteConfflow(@RequestParam("id") Long id,@RequestParam("reason") String reason) {
         confflowService.deleteConfflow(id,reason);
+        bpmDeleteOperateLogService.recordDelete("会议报告单", id, reason);
         return success(true);
     }
 
@@ -108,11 +123,12 @@ public class ConfflowController {
     @Operation(summary = "批量删除会议报告单")
     @Parameters({
             @Parameter(name = "ids", description = "编号列表", required = true),
-            @Parameter(name = "reason", description = "作废原因", required = true)
+            @Parameter(name = "reason", description = "删除原因", required = true)
     })
     @PreAuthorize("@ss.hasPermission('bpm:confflow:delete')")
     public CommonResult<Boolean> deleteConfflowList(@RequestParam("ids") List<Long> ids,@RequestParam("reason") String reason) {
         confflowService.deleteConfflowListByIds(ids,reason);
+        bpmDeleteOperateLogService.recordDeleteBatch("会议报告单", ids, reason);
         return success(true);
     }
 

@@ -57,6 +57,10 @@ public class XzfyRespVO {
     @ExcelProperty("类别三")
     private String lb3;
 
+    @Schema(description = "复议请求")
+    @ExcelProperty("复议请求")
+    private String fyNr;
+
     @Schema(description = "承办人")
     @ExcelProperty("承办人")
     private String cbr;

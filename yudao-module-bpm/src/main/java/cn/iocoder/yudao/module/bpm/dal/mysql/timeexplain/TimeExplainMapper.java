@@ -7,6 +7,7 @@ import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.mybatis.core.mapper.BaseMapperX;
 import cn.iocoder.yudao.framework.mybatis.core.query.MPJLambdaWrapperX;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.timeexplain.TimeExplainDO;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import org.apache.ibatis.annotations.Mapper;
 import cn.iocoder.yudao.module.bpm.controller.admin.timeexplain.vo.*;
@@ -36,7 +37,8 @@ public interface TimeExplainMapper extends BaseMapperX<TimeExplainDO> {
                 .eqIfPresent(TimeExplainDO::getStatus, reqVO.getStatus())
                 .eqIfPresent(TimeExplainDO::getDays, reqVO.getDays())
                 .eqIfPresent(TimeExplainDO::getYear, reqVO.getYear())
-                .betweenIfPresent(TimeExplainDO::getCreateTime, reqVO.getCreateTime());
+                .betweenIfPresent(TimeExplainDO::getCreateTime, reqVO.getCreateTime())
+                .neIfPresent(TimeExplainDO::getStatus, BpmProcessInstanceStatusEnum.INVALID.getStatus().longValue());
         orderBy(reqVO, wrapper);
         return selectJoinPage(reqVO, TimeExplainDO.class, wrapper);
     }

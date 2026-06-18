@@ -6,6 +6,7 @@ import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.mybatis.core.query.LambdaQueryWrapperX;
 import cn.iocoder.yudao.framework.mybatis.core.mapper.BaseMapperX;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.senddoc.SendDocDO;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import org.apache.ibatis.annotations.Mapper;
 import cn.iocoder.yudao.module.bpm.controller.admin.senddoc.vo.*;
 
@@ -130,6 +131,7 @@ public interface SendDocMapper extends BaseMapperX<SendDocDO> {
                 .eqIfPresent(SendDocDO::getProcessInstanceId, reqVO.getProcessInstanceId())
                 .eqIfPresent(SendDocDO::getStatus, reqVO.getStatus())
                 .betweenIfPresent(SendDocDO::getCreateTime, reqVO.getCreateTime())
+                .neIfPresent(SendDocDO::getStatus, BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue())
                 .orderByDesc(SendDocDO::getId));
     }
 

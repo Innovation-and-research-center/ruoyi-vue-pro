@@ -3,11 +3,13 @@ package cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance;
 import cn.iocoder.yudao.framework.common.pojo.PageParam;
 import cn.iocoder.yudao.framework.common.validation.InEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.util.BpmQueryUtils;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import org.springframework.format.annotation.DateTimeFormat;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 import static cn.iocoder.yudao.framework.common.util.date.DateUtils.FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND;
 
@@ -17,6 +19,10 @@ public class BpmProcessInstancePageReqVO extends PageParam {
 
     @Schema(description = "流程名称", example = "芋道")
     private String name;
+
+    public List<String> getNameKeywords() {
+        return BpmQueryUtils.splitKeywords(name);
+    }
 
     @Schema(description = "流程定义的标识", example = "2048")
     private String processDefinitionKey; // 精准匹配
