@@ -101,6 +101,14 @@ public interface BpmTaskService {
     Task validateTask(Long userId, String taskId);
 
     /**
+     * 认领候选任务
+     *
+     * @param userId 用户编号
+     * @param taskId 任务编号
+     */
+    void claimTask(Long userId, String taskId);
+
+    /**
      * 获取任务
      *
      * @param id 任务编号

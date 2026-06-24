@@ -239,6 +239,7 @@ public class DepartmentDocJob implements JobHandler {
         receiveDocDO.setFileList(attachList);
 
         Long receiveDocId = saveReceiveDocWithRetry(userId, receiveDocDO, receiveTime);
+        receiveDocService.startFlowReceiveDoc(userId, receiveDocId, receiveDocDO);
 
         FileExchangeSaveReqVO exchangeVO = new FileExchangeSaveReqVO();
         exchangeVO.setOperationDate(LocalDateTime.now().withNano(0));

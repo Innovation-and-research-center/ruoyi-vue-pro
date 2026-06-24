@@ -13,7 +13,15 @@
 
     <sql id="TodoWhere">
         <where>
-            t.ASSIGNEE_ = CAST(#{userId} AS VARCHAR)
+            (
+                t.ASSIGNEE_ = CAST(#{userId} AS VARCHAR)
+                OR EXISTS (
+                    SELECT 1 FROM ACT_RU_IDENTITYLINK candidateLink
+                    WHERE candidateLink.TASK_ID_ = t.ID_
+                      AND candidateLink.TYPE_ = 'candidate'
+                      AND candidateLink.USER_ID_ = CAST(#{userId} AS VARCHAR)
+                )
+            )
             AND t.SUSPENSION_STATE_ = 1
             AND NOT EXISTS (
                 SELECT 1 FROM ACT_RU_VARIABLE deletedStatus
@@ -186,5 +194,14 @@
         <include refid="DoneFrom" />
         <include refid="DoneWhere" />
     </select>
+
+    <update id="updateHistoricTaskLongVariable">
+        UPDATE ACT_HI_VARINST
+        SET LONG_ = #{value},
+            TEXT_ = NULL,
+            TEXT2_ = NULL
+        WHERE TASK_ID_ = #{taskId}
+          AND NAME_ = #{name}
+    </update>
 
 </mapper>

@@ -204,6 +204,7 @@ public class StDocJob implements JobHandler {
         // 4. 统一保存收文记录并启动流程
         Long userId = Long.valueOf(configApi.getConfigValueByKey(DEFAULT_USER_ID));
         Long receiveDocId = receiveDocService.saveReceiveDoc(userId, receiveDocDO);
+        receiveDocService.startFlowReceiveDoc(userId, receiveDocId, receiveDocDO);
         // ===============================================
 
         // 5. 创建交换记录 (系统自动/OperationType=2)

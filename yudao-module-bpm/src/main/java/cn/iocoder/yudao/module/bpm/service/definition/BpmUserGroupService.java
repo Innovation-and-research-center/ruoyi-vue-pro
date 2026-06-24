@@ -63,6 +63,14 @@ public interface BpmUserGroupService {
     List<BpmUserGroupDO> getUserGroupListByStatus(Integer status);
 
     /**
+     * 获得指定名称的用户组列表
+     *
+     * @param name 名称
+     * @return 用户组列表
+     */
+    List<BpmUserGroupDO> getUserGroupListByName(String name);
+
+    /**
      * 获得用户组分页
      *
      * @param pageReqVO 分页查询

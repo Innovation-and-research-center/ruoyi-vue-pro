@@ -29,4 +29,8 @@ public interface BpmUserGroupMapper extends BaseMapperX<BpmUserGroupDO> {
         return selectList(BpmUserGroupDO::getStatus, status);
     }
 
+    default List<BpmUserGroupDO> selectListByName(String name) {
+        return selectList(BpmUserGroupDO::getName, name);
+    }
+
 }

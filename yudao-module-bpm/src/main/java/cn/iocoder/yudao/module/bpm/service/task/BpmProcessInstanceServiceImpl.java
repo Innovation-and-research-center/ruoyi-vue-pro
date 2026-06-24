@@ -40,6 +40,7 @@ import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnModelConsta
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.event.BpmProcessInstanceEventPublisher;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmHttpRequestUtils;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmReceiveRegisterTaskUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.SimpleModelUtils;
@@ -388,10 +389,15 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         Task task = null; // 提取到外部声明，便于获取实例 ID
 
         if (reqVO.getTaskId() == null) {
-            Process process = bpmnModel.getMainProcess();
-            sourceElement = process.getFlowElements().stream()
-                    .filter(e -> e instanceof StartEvent)
-                    .findFirst().orElse(null);
+            if (StrUtil.isNotBlank(reqVO.getActivityId())) {
+                sourceElement = bpmnModel.getFlowElement(reqVO.getActivityId());
+            }
+            if (sourceElement == null) {
+                Process process = bpmnModel.getMainProcess();
+                sourceElement = process.getFlowElements().stream()
+                        .filter(e -> e instanceof StartEvent)
+                        .findFirst().orElse(null);
+            }
         } else {
             // 1.1 校验任务存在，且是当前用户的
             task = taskService.validateTask(loginUserId, reqVO.getTaskId());
@@ -1409,7 +1415,10 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
     private List<Long> getTaskCandidateUserList(BpmnModel bpmnModel, String activityId,
                                                 Long startUserId, String processDefinitionId, Map<String, Object> processVariables) {
-        Set<Long> userIds = taskCandidateInvoker.calculateUsersByActivity(bpmnModel, activityId,
+        Set<Long> userIds = BpmReceiveRegisterTaskUtils.isReceiveRegisterTask(activityId)
+                ? BpmReceiveRegisterTaskUtils.calculateCandidateUserIds(bpmnModel, activityId, taskCandidateInvoker,
+                startUserId, processDefinitionId, processVariables)
+                : taskCandidateInvoker.calculateUsersByActivity(bpmnModel, activityId,
                 startUserId, processDefinitionId, processVariables);
         return new ArrayList<>(userIds);
     }

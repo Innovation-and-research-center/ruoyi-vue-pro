@@ -80,6 +80,11 @@ public class BpmUserGroupServiceImpl implements BpmUserGroupService {
     }
 
     @Override
+    public List<BpmUserGroupDO> getUserGroupListByName(String name) {
+        return userGroupMapper.selectListByName(name);
+    }
+
+    @Override
     public PageResult<BpmUserGroupDO> getUserGroupPage(BpmUserGroupPageReqVO pageReqVO) {
         return userGroupMapper.selectPage(pageReqVO);
     }

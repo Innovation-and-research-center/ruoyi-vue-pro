@@ -81,6 +81,8 @@ public interface ErrorCodeConstants {
     ErrorCode TASK_WITHDRAW_FAIL_NOT_ALLOW = new ErrorCode(1_009_005_019, "撤回失败，此流程不允许撤回操作！");
     ErrorCode TASK_WITHDRAW_FAIL_NEXT_TASK_NOT_ALLOW = new ErrorCode(1_009_005_020, "撤回失败，下一节点不满足撤回条件！");
     ErrorCode TASK_WITHDRAW_FAIL_NEXT_TASK_NOT_DOUBLE= new ErrorCode(1_009_005_021, "同环节加签表示当前环节尚未结束，不能同时选择【向下一环节流转】！");
+    ErrorCode TASK_CLAIM_FAIL_ASSIGNED = new ErrorCode(1_009_005_022, "认领失败，该任务已被其他人认领");
+    ErrorCode TASK_CLAIM_FAIL_NOT_CANDIDATE = new ErrorCode(1_009_005_023, "认领失败，你不是该任务的候选办理人");
 
     // ========== 动态表单模块 1-009-010-000 ==========
     ErrorCode FORM_NOT_EXISTS = new ErrorCode(1_009_010_000, "动态表单不存在");

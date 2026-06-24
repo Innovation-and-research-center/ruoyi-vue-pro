@@ -3,6 +3,7 @@ package cn.iocoder.yudao.module.bpm.framework.flowable.core.behavior;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.candidate.BpmTaskCandidateInvoker;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmReceiveRegisterTaskUtils;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.bpmn.model.UserTask;
@@ -20,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 自定义的【单个】流程任务的 assignee 负责人的分配
@@ -43,6 +45,14 @@ public class BpmUserTaskActivityBehavior extends UserTaskActivityBehavior {
     protected void handleAssignments(TaskService taskService, String assignee, String owner,
         List<String> candidateUsers, List<String> candidateGroups, TaskEntity task, ExpressionManager expressionManager,
         DelegateExecution execution, ProcessEngineConfigurationImpl processEngineConfiguration) {
+        if (BpmReceiveRegisterTaskUtils.isReceiveRegisterTask(task.getTaskDefinitionKey())) {
+            Set<Long> candidateUserIds = BpmReceiveRegisterTaskUtils.calculateCandidateUserIds(execution, taskCandidateInvoker);
+            if (CollUtil.isNotEmpty(candidateUserIds)) {
+                task.setAssignee(null);
+                task.addCandidateUsers(candidateUserIds.stream().map(String::valueOf).collect(Collectors.toList()));
+            }
+            return;
+        }
         // 第一步，获得任务的候选用户
         Long assigneeUserId = calculateTaskCandidateUsers(execution);
         // 第二步，设置作为负责人

@@ -21,4 +21,8 @@ public interface BpmTaskSortMapper {
     Long selectDoneTaskCount(@Param("userId") Long userId,
                              @Param("reqVO") BpmTaskPageReqVO reqVO);
 
+    int updateHistoricTaskLongVariable(@Param("taskId") String taskId,
+                                       @Param("name") String name,
+                                       @Param("value") Integer value);
+
 }

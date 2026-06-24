@@ -135,7 +135,10 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             return getTaskTodoPageBySql(userId, pageVO);
         }
         TaskQuery taskQuery = taskService.createTaskQuery()
+                .or()
                 .taskAssignee(String.valueOf(userId)) // 分配给自己
+                .taskCandidateUser(String.valueOf(userId)) // 收文登记等候选任务
+                .endOr()
                 .active()
                 .includeProcessVariables();
         if (StrUtil.isNotBlank(pageVO.getName())) {
@@ -622,6 +625,27 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             throw exception(TASK_OPERATE_FAIL_ASSIGN_NOT_SELF);
         }
         return task;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void claimTask(Long userId, String taskId) {
+        Task task = validateTaskExist(taskId);
+        String userIdStr = String.valueOf(userId);
+        if (StrUtil.isNotBlank(task.getAssignee())) {
+            if (StrUtil.equals(task.getAssignee(), userIdStr)) {
+                return;
+            }
+            throw exception(TASK_CLAIM_FAIL_ASSIGNED);
+        }
+        Task candidateTask = taskService.createTaskQuery()
+                .taskId(taskId)
+                .taskCandidateUser(userIdStr)
+                .singleResult();
+        if (candidateTask == null) {
+            throw exception(TASK_CLAIM_FAIL_NOT_CANDIDATE);
+        }
+        taskService.claim(taskId, userIdStr);
     }
 
     private Task validateTaskExist(String id) {
@@ -3393,6 +3417,9 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 .processVariable(miCollectionVarName, singleUserList)
                 .changeState();
 
+        taskSortMapper.updateHistoricTaskLongVariable(taskId, BpmnVariableConstants.TASK_VARIABLE_STATUS,
+                BpmTaskStatusEnum.CANCEL.getStatus());
+
         // =================================================================================
         // 【收尾】：强制覆盖重置办理人，重新夺回任务控制权
         // =================================================================================
@@ -3401,6 +3428,15 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 .taskDefinitionKey(taskInstance.getTaskDefinitionKey())
                 .active()
                 .list();
+        if (CollUtil.isEmpty(revertedTasks)) {
+            revertedTasks = taskService.createTaskQuery()
+                    .processInstanceId(processInstance.getProcessInstanceId())
+                    .active()
+                    .list()
+                    .stream()
+                    .filter(task -> StrUtil.containsAny(task.getName(), "收文登记", "来文登记"))
+                    .collect(Collectors.toList());
+        }
 
         if (CollUtil.isNotEmpty(revertedTasks)) {
             for (Task revertedTask : revertedTasks) {
@@ -3793,7 +3829,10 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     public BpmTaskCountRespVO getTaskCount(long userId){
         // 1. 查询待办数量 (Active 的任务)
         long todoCount = taskService.createTaskQuery()
+                .or()
                 .taskAssignee(String.valueOf(userId)) // 指派给自己
+                .taskCandidateUser(String.valueOf(userId)) // 收文登记等候选任务
+                .endOr()
                 .active()
                 .count();
 
