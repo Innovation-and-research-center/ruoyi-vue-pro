@@ -204,8 +204,7 @@ public class CityDocJob implements JobHandler {
 
         // 4. 创建收文 (这一步会插入数据库并启动流程)
         Long userId = Long.valueOf(configApi.getConfigValueByKey(DEFAULT_USER_ID));
-        Long receiveDocId = receiveDocService.saveReceiveDoc(userId, receiveDocDO);
-        receiveDocService.startFlowReceiveDoc(userId, receiveDocId, receiveDocDO);
+        Long receiveDocId = receiveDocService.saveJobReceiveDoc(userId, receiveDocDO);
 
         // 5. 记录到 FileExchange 表 (建立映射关系)
         FileExchangeSaveReqVO exchangeVO = new FileExchangeSaveReqVO();

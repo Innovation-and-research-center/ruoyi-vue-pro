@@ -94,6 +94,42 @@ import static cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModel
 @Service
 public class BpmTaskServiceImpl implements BpmTaskService {
 
+    /**
+     * 退回批次上下文：key 为审批流出节点 id，value 为该节点本次流出的批次 id。
+     * 该变量必须放在 execution local 里，避免并行分支之间互相覆盖。
+     */
+    private static final String RETURN_BRANCH_CONTEXT_VARIABLE = "RETURN_BRANCH_CONTEXT";
+
+    /**
+     * 当前任务真实可退回路径：按执行实例实际走过的用户任务 key 顺序保存。
+     * 该变量只放在 execution local，避免退回选项被其它并行分支或历史轮次污染。
+     */
+    private static final String RETURNABLE_TASK_PATH_VARIABLE = "RETURNABLE_TASK_PATH";
+
+    private static final ThreadLocal<ReturnBranchContextCarrier> RETURN_BRANCH_CONTEXT_CARRIER = new ThreadLocal<>();
+
+    private static final ThreadLocal<ReturnableTaskPathCarrier> RETURNABLE_TASK_PATH_CARRIER = new ThreadLocal<>();
+
+    private static class ReturnBranchContextCarrier {
+        private final String processInstanceId;
+        private final Map<String, String> context;
+
+        private ReturnBranchContextCarrier(String processInstanceId, Map<String, String> context) {
+            this.processInstanceId = processInstanceId;
+            this.context = context;
+        }
+    }
+
+    private static class ReturnableTaskPathCarrier {
+        private final String processInstanceId;
+        private final List<String> path;
+
+        private ReturnableTaskPathCarrier(String processInstanceId, List<String> path) {
+            this.processInstanceId = processInstanceId;
+            this.path = path;
+        }
+    }
+
     @Resource
     private TaskService taskService;
     @Resource
@@ -720,6 +756,13 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         List<HistoricTaskInstance> finishedTasks = getFinishedTaskListByProcessInstanceIdWithoutCancel(task.getProcessInstanceId());
         Set<String> finishedTaskDefinitionKeys = convertSet(finishedTasks, HistoricTaskInstance::getTaskDefinitionKey);
         previousUserList.removeIf(userTask -> !finishedTaskDefinitionKeys.contains(userTask.getId()));
+
+        // 新实例优先按真实运行路径过滤，避免历史轮次或兄弟分支节点混入退回选项。
+        List<String> returnableTaskPath = getReturnableTaskPath(task.getProcessInstanceId(), task.getExecutionId());
+        if (CollUtil.isNotEmpty(returnableTaskPath)) {
+            Set<String> returnableTaskKeys = buildReturnableTaskKeySet(bpmnModel, returnableTaskPath, finishedTaskDefinitionKeys);
+            previousUserList.removeIf(userTask -> !returnableTaskKeys.contains(userTask.getId()));
+        }
         return previousUserList;
     }
 
@@ -1095,6 +1138,13 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         // =================================================================================
         // 【第 5 道防线】：双轨数据写入！
         // =================================================================================
+        Map<String, String> returnBranchContext = buildReturnBranchContextForApproval(task.getProcessInstanceId(),
+                task.getExecutionId(), localVariableExecutionId, task.getTaskDefinitionKey());
+        List<String> returnableTaskPath = buildReturnableTaskPathForApproval(task.getProcessInstanceId(),
+                task.getExecutionId(), localVariableExecutionId, task.getTaskDefinitionKey());
+        taskService.setVariableLocal(task.getId(), RETURN_BRANCH_CONTEXT_VARIABLE, new LinkedHashMap<>(returnBranchContext));
+        taskService.setVariableLocal(task.getId(), RETURNABLE_TASK_PATH_VARIABLE, new ArrayList<>(returnableTaskPath));
+
         // 5.1 全局写入：只保留真正的纯业务变量（表单填的数据等）
         runtimeService.setVariables(task.getProcessInstanceId(), variables);
 
@@ -1243,6 +1293,8 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                     taskService.setAssignee(newTask.getId(), userIdStr);
                     taskService.setOwner(newTask.getId(), userIdStr);
                     taskService.setVariableLocal(newTask.getId(), "internal_source_task_id", task.getId());
+                    runtimeService.setVariableLocal(newExecution.getId(), RETURNABLE_TASK_PATH_VARIABLE,
+                            new ArrayList<>(getReturnableTaskPath(task.getProcessInstanceId(), task.getExecutionId())));
                 }
             }
 
@@ -1296,7 +1348,24 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         }
 
         // 7. 调用 BPM complete 去完成任务 (此时的 variables 已经完全脱敏剥离，绝对纯净安全！)
-        taskService.complete(task.getId(), variables, localIsolatedVariables);
+        ReturnBranchContextCarrier previousCarrier = RETURN_BRANCH_CONTEXT_CARRIER.get();
+        ReturnableTaskPathCarrier previousPathCarrier = RETURNABLE_TASK_PATH_CARRIER.get();
+        RETURN_BRANCH_CONTEXT_CARRIER.set(new ReturnBranchContextCarrier(task.getProcessInstanceId(), returnBranchContext));
+        RETURNABLE_TASK_PATH_CARRIER.set(new ReturnableTaskPathCarrier(task.getProcessInstanceId(), returnableTaskPath));
+        try {
+            taskService.complete(task.getId(), variables, localIsolatedVariables);
+        } finally {
+            if (previousCarrier == null) {
+                RETURN_BRANCH_CONTEXT_CARRIER.remove();
+            } else {
+                RETURN_BRANCH_CONTEXT_CARRIER.set(previousCarrier);
+            }
+            if (previousPathCarrier == null) {
+                RETURNABLE_TASK_PATH_CARRIER.remove();
+            } else {
+                RETURNABLE_TASK_PATH_CARRIER.set(previousPathCarrier);
+            }
+        }
 
         // 【加签专属】处理加签任务
         handleParentTaskIfSign(task.getParentTaskId());
@@ -1385,11 +1454,15 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                         BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
                 if (finalAssigneeMap == null) {
                     finalAssigneeMap = new HashMap<>();
+                } else {
+                    finalAssigneeMap = new HashMap<>(finalAssigneeMap);
                 }
                 Map<String, Long> updateDateMap = (Map<String, Long>) variables.get(
                         BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_UPDATE_TIME);
                 if (updateDateMap == null) {
                     updateDateMap = new HashMap<>();
+                } else {
+                    updateDateMap = new HashMap<>(updateDateMap);
                 }
 
                 // newAssignees: 前端本次提交新选择的人员名单 (例如：[张三, 李四])
@@ -1543,6 +1616,242 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             }
         }
     }
+
+    /**
+     * 提取当前节点出线条件里使用的流程变量。
+     * 退回后重新审批时，需要先清理这些变量的旧值，否则普通 UserTask 多出线会把旧走向和新走向一起触发。
+     */
+    private Set<String> getOutgoingConditionVariableNames(FlowElement flowElement) {
+        if (!(flowElement instanceof FlowNode)) {
+            return Collections.emptySet();
+        }
+        Set<String> result = new LinkedHashSet<>();
+        for (SequenceFlow flow : ((FlowNode) flowElement).getOutgoingFlows()) {
+            String condition = flow.getConditionExpression();
+            if (StrUtil.isBlank(condition)) {
+                continue;
+            }
+            java.util.regex.Matcher variablesGetMatcher = java.util.regex.Pattern
+                    .compile("variables:get\\(\\s*['\\\"]?([a-zA-Z_][a-zA-Z0-9_]*)['\\\"]?\\s*\\)")
+                    .matcher(condition);
+            boolean foundVariableGet = false;
+            while (variablesGetMatcher.find()) {
+                foundVariableGet = true;
+                result.add(variablesGetMatcher.group(1));
+            }
+            // 兼容 ${foo == 'bar'} 这种没有 variables:get(...) 的表达式。
+            if (!foundVariableGet) {
+                java.util.regex.Matcher identifierMatcher = java.util.regex.Pattern
+                        .compile("(?<!['\\\"])(?<![a-zA-Z0-9_])([a-zA-Z_][a-zA-Z0-9_]*)(?![a-zA-Z0-9_])(?!['\\\"])")
+                        .matcher(condition);
+                while (identifierMatcher.find()) {
+                    String name = identifierMatcher.group(1);
+                    if (!StrUtil.equalsAny(name, "variables", "get", "null", "empty", "true", "false")) {
+                        result.add(name);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    private void clearReturnTargetOutgoingVariables(String processInstanceId, List<String> executionIdsToMove,
+                                                    FlowElement targetElement) {
+        Set<String> variableNames = getOutgoingConditionVariableNames(targetElement);
+        if (CollUtil.isEmpty(variableNames)) {
+            return;
+        }
+        // 全局只清退回目标节点自身的出线变量。这些变量如果留在流程实例级，会污染重新进入目标节点后的路径判断。
+        for (String variableName : variableNames) {
+            runtimeService.removeVariable(processInstanceId, variableName);
+        }
+
+        // local 只清本次被退回 execution 的血统，不扫描全流程，避免影响其它并行分支自己的局部路由选择。
+        Set<String> executionIdsToClean = new LinkedHashSet<>();
+        if (CollUtil.isNotEmpty(executionIdsToMove)) {
+            for (String executionId : executionIdsToMove) {
+                String currentExecutionId = executionId;
+                while (StrUtil.isNotBlank(currentExecutionId) && !StrUtil.equals(currentExecutionId, processInstanceId)
+                        && executionIdsToClean.add(currentExecutionId)) {
+                    Execution execution = runtimeService.createExecutionQuery().executionId(currentExecutionId).singleResult();
+                    currentExecutionId = execution != null ? execution.getParentId() : null;
+                }
+            }
+        }
+        for (String variableName : variableNames) {
+            for (String executionId : executionIdsToClean) {
+                if (runtimeService.hasVariableLocal(executionId, variableName)) {
+                    runtimeService.removeVariableLocal(executionId, variableName);
+                }
+            }
+        }
+    }
+
+    private Map<String, String> getReturnBranchContext(String processInstanceId, String executionId) {
+        return getReturnBranchContext(processInstanceId, executionId, false);
+    }
+
+    private Map<String, String> getReturnBranchContext(String processInstanceId, String executionId, boolean includeProcessInstanceRoot) {
+        String currentExecutionId = executionId;
+        while (StrUtil.isNotBlank(currentExecutionId)) {
+            if (StrUtil.equals(currentExecutionId, processInstanceId) && !includeProcessInstanceRoot) {
+                break;
+            }
+            Object value = runtimeService.getVariableLocal(currentExecutionId, RETURN_BRANCH_CONTEXT_VARIABLE);
+            Map<String, String> context = convertReturnBranchContext(value);
+            if (CollUtil.isNotEmpty(context)) {
+                return context;
+            }
+            if (StrUtil.equals(currentExecutionId, processInstanceId)) {
+                break;
+            }
+            Execution execution = runtimeService.createExecutionQuery().executionId(currentExecutionId).singleResult();
+            currentExecutionId = execution != null ? execution.getParentId() : null;
+        }
+        return new LinkedHashMap<>();
+    }
+
+    private Map<String, String> convertReturnBranchContext(Object value) {
+        Map<String, String> result = new LinkedHashMap<>();
+        if (!(value instanceof Map)) {
+            return result;
+        }
+        Map<?, ?> map = (Map<?, ?>) value;
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (entry.getKey() != null && entry.getValue() != null) {
+                result.put(String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
+            }
+        }
+        return result;
+    }
+
+    private Map<String, String> getHistoricTaskReturnBranchContext(String taskId) {
+        HistoricVariableInstance variable = historyService.createHistoricVariableInstanceQuery()
+                .taskId(taskId)
+                .variableName(RETURN_BRANCH_CONTEXT_VARIABLE)
+                .singleResult();
+        return variable != null ? convertReturnBranchContext(variable.getValue()) : new LinkedHashMap<>();
+    }
+
+    private String inferUniqueReturnBatchIdFromRunningTasks(String processInstanceId, String sourceTaskKey,
+                                                           List<Task> runningTasks) {
+        Set<String> batchIds = new LinkedHashSet<>();
+        if (CollUtil.isEmpty(runningTasks)) {
+            return null;
+        }
+        for (Task runningTask : runningTasks) {
+            Map<String, String> context = getReturnBranchContext(processInstanceId, runningTask.getExecutionId());
+            String batchId = context.get(sourceTaskKey);
+            if (StrUtil.isNotBlank(batchId)) {
+                batchIds.add(batchId);
+            }
+        }
+        return batchIds.size() == 1 ? batchIds.iterator().next() : null;
+    }
+
+    private Map<String, String> buildReturnBranchContextForApproval(String processInstanceId, String taskExecutionId,
+                                                                    String localVariableExecutionId, String taskDefinitionKey) {
+        Map<String, String> context = getReturnBranchContext(processInstanceId, taskExecutionId);
+        if (CollUtil.isEmpty(context)) {
+            context = getReturnBranchContext(processInstanceId, localVariableExecutionId);
+        }
+        // 兼容已经落到流程实例 root 上的历史数据。只在审批流出构造上下文时读取，不用于退回判断，避免并行分支污染。
+        if (CollUtil.isEmpty(context)) {
+            context = getReturnBranchContext(processInstanceId, localVariableExecutionId, true);
+        }
+        context = new LinkedHashMap<>(context);
+        context.put(taskDefinitionKey, IdUtil.fastSimpleUUID());
+        return context;
+    }
+
+    private List<String> getReturnableTaskPath(String processInstanceId, String executionId) {
+        List<String> path = findReturnableTaskPath(processInstanceId, executionId);
+        return path != null ? path : new ArrayList<>();
+    }
+
+    private List<String> findReturnableTaskPath(String processInstanceId, String executionId) {
+        String currentExecutionId = executionId;
+        while (StrUtil.isNotBlank(currentExecutionId) && !StrUtil.equals(currentExecutionId, processInstanceId)) {
+            if (runtimeService.hasVariableLocal(currentExecutionId, RETURNABLE_TASK_PATH_VARIABLE)) {
+                Object value = runtimeService.getVariableLocal(currentExecutionId, RETURNABLE_TASK_PATH_VARIABLE);
+                return convertReturnableTaskPath(value);
+            }
+            Execution execution = runtimeService.createExecutionQuery().executionId(currentExecutionId).singleResult();
+            currentExecutionId = execution != null ? execution.getParentId() : null;
+        }
+        return null;
+    }
+
+    private List<String> convertReturnableTaskPath(Object value) {
+        List<String> result = new ArrayList<>();
+        if (!(value instanceof Collection)) {
+            return result;
+        }
+        for (Object item : (Collection<?>) value) {
+            if (item != null) {
+                String taskDefinitionKey = String.valueOf(item);
+                if (StrUtil.isNotBlank(taskDefinitionKey) && !result.contains(taskDefinitionKey)) {
+                    result.add(taskDefinitionKey);
+                }
+            }
+        }
+        return result;
+    }
+
+    private List<String> buildReturnableTaskPathForApproval(String processInstanceId, String taskExecutionId,
+                                                            String localVariableExecutionId, String taskDefinitionKey) {
+        List<String> path = findReturnableTaskPath(processInstanceId, taskExecutionId);
+        if (path == null) {
+            path = findReturnableTaskPath(processInstanceId, localVariableExecutionId);
+        }
+        if (path == null) {
+            path = new ArrayList<>();
+        }
+        path = new ArrayList<>(path);
+        if (!path.contains(taskDefinitionKey)) {
+            path.add(taskDefinitionKey);
+        }
+        return path;
+    }
+
+    private Set<String> buildReturnableTaskKeySet(BpmnModel bpmnModel, List<String> returnableTaskPath,
+                                                  Set<String> finishedTaskDefinitionKeys) {
+        Set<String> result = new LinkedHashSet<>(returnableTaskPath);
+        if (CollUtil.isEmpty(returnableTaskPath)) {
+            return result;
+        }
+
+        // 兼容半路开始记录路径的实例：路径首节点之前的已办祖先节点仍然允许退回。
+        // 例如路径只有 [主任拟办] 时，需要把主任拟办之前的 [来文登记] 补回来。
+        FlowElement firstRecordedElement = BpmnModelUtils.getFlowElementById(bpmnModel, returnableTaskPath.get(0));
+        if (firstRecordedElement == null) {
+            return result;
+        }
+        List<UserTask> previousUserTasks = BpmnModelUtils.getPreviousUserTaskList(firstRecordedElement, null, null);
+        if (CollUtil.isEmpty(previousUserTasks)) {
+            return result;
+        }
+        for (UserTask previousUserTask : previousUserTasks) {
+            if (finishedTaskDefinitionKeys.contains(previousUserTask.getId())
+                    && BpmnModelUtils.isSequentialReachable(firstRecordedElement, previousUserTask, null)) {
+                result.add(previousUserTask.getId());
+            }
+        }
+        return result;
+    }
+
+    private List<String> trimReturnableTaskPathForReturn(String processInstanceId, String executionId, String targetTaskKey) {
+        List<String> path = getReturnableTaskPath(processInstanceId, executionId);
+        if (CollUtil.isEmpty(path)) {
+            return new ArrayList<>();
+        }
+        int targetIndex = path.indexOf(targetTaskKey);
+        if (targetIndex < 0) {
+            return new ArrayList<>(path);
+        }
+        return new ArrayList<>(path.subList(0, targetIndex));
+    }
+
     /**
      * 审批通过存在“后加签”的任务。
      * <p>
@@ -1901,6 +2210,8 @@ public class BpmTaskServiceImpl implements BpmTaskService {
 
         // 3.3 过滤出真正需要被撤销的 Task（仅限当前分支及其下游衍生的分支，绝对防误杀平行分支）
         List<Task> tasksToCancel = new ArrayList<>();
+        Map<String, String> currentReturnBranchContext = getReturnBranchContext(processInstanceId, currentTask.getExecutionId());
+        String targetReturnBatchId = currentReturnBranchContext.get(targetTaskKey);
         for (Task activeTask : allActiveTasks) {
             if (!returnTaskKeyList.contains(activeTask.getTaskDefinitionKey())) {
                 continue;
@@ -1912,12 +2223,31 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 continue;
             }
 
+            // 新流转数据优先按退回批次判断：同一个目标节点、同一个批次的下游活跃任务必须一起退回。
+            if (StrUtil.isNotBlank(targetReturnBatchId)) {
+                Map<String, String> activeReturnBranchContext = getReturnBranchContext(processInstanceId, activeTask.getExecutionId());
+                String activeTargetBatchId = activeReturnBranchContext.get(targetTaskKey);
+                if (StrUtil.equals(targetReturnBatchId, activeTargetBatchId)) {
+                    tasksToCancel.add(activeTask);
+                    continue;
+                }
+                if (StrUtil.isNotBlank(activeTargetBatchId)) {
+                    continue;
+                }
+            }
+
             // 【核心防御 1：时间戳物理防误杀】
             // 如果活跃任务(主办/协办)的创建时间，早于目标节点(局长)的办结时间
             // 证明它们是之前并行网关同时派发出来的【平行兄弟】，直接护盾放过！
             if (targetTaskEndTime != null) {
                 long timeDiff = activeTask.getCreateTime().getTime() - targetTaskEndTime.getTime();
                 if (timeDiff < -1000) { // 容忍 2000ms 事务并发延迟
+                    continue;
+                }
+                // 同一个任务节点多条出线时，多个兄弟分支不是 execution 父子关系，血统判断抓不到。
+                // 只要它是目标节点本次流出后同批创建的下游活跃任务，就应该随当前分支一起退回。
+                if (timeDiff <= 2000) {
+                    tasksToCancel.add(activeTask);
                     continue;
                 }
             }
@@ -2112,15 +2442,31 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             }
         }
 
+        // 退回到目标节点前，清理目标节点上一轮审批遗留的出线条件变量。
+        // 否则重新审批目标节点时，旧走向和新走向会同时满足，导致退回前的分支再次进入。
+        clearReturnTargetOutgoingVariables(processInstanceId, executionIdsToMove, targetElement);
+        List<String> targetReturnableTaskPath = trimReturnableTaskPathForReturn(processInstanceId,
+                currentTask.getExecutionId(), targetTaskKey);
+
         // =========================================================================
         // 6. 执行精确驳回（防裂变核心）：移动根 Execution 而不是 ActivityId
         // =========================================================================
-        runtimeService.createChangeActivityStateBuilder()
-                .processInstanceId(processInstanceId)
-                .moveExecutionsToSingleActivityId(executionIdsToMove, targetTaskKey)
-                .processVariable(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEED_SIMULATE_TASK_IDS, needSimulateTaskDefinitionKeys)
-                .localVariable(targetTaskKey, String.format(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_RETURN_FLAG, targetTaskKey), Boolean.TRUE)
-                .changeState();
+        ReturnableTaskPathCarrier previousPathCarrier = RETURNABLE_TASK_PATH_CARRIER.get();
+        RETURNABLE_TASK_PATH_CARRIER.set(new ReturnableTaskPathCarrier(processInstanceId, targetReturnableTaskPath));
+        try {
+            runtimeService.createChangeActivityStateBuilder()
+                    .processInstanceId(processInstanceId)
+                    .moveExecutionsToSingleActivityId(executionIdsToMove, targetTaskKey)
+                    .processVariable(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEED_SIMULATE_TASK_IDS, needSimulateTaskDefinitionKeys)
+                    .localVariable(targetTaskKey, String.format(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_RETURN_FLAG, targetTaskKey), Boolean.TRUE)
+                    .changeState();
+        } finally {
+            if (previousPathCarrier == null) {
+                RETURNABLE_TASK_PATH_CARRIER.remove();
+            } else {
+                RETURNABLE_TASK_PATH_CARRIER.set(previousPathCarrier);
+            }
+        }
 
         // 7. 强行覆盖引擎触发监听器分配的默认人 (适用于单节点)
         if (CollUtil.isNotEmpty(actualReturnAssignees)) {
@@ -3186,6 +3532,8 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         if (CollUtil.isEmpty(nextUserTaskKeys)) {
             throw exception(TASK_WITHDRAW_FAIL_NEXT_TASK_NOT_ALLOW);
         }
+        Map<String, String> sourceReturnBranchContext = getHistoricTaskReturnBranchContext(taskId);
+        String sourceReturnBatchId = sourceReturnBranchContext.get(taskInstance.getTaskDefinitionKey());
 
         long sourceTaskCreateTime = taskInstance.getCreateTime().getTime();
 
@@ -3269,6 +3617,14 @@ public class BpmTaskServiceImpl implements BpmTaskService {
 
         if (CollUtil.isNotEmpty(finishedDownstreamTasks)) {
             for (HistoricTaskInstance ht : finishedDownstreamTasks) {
+                if (StrUtil.isNotBlank(sourceReturnBatchId)) {
+                    Map<String, String> downstreamContext = getHistoricTaskReturnBranchContext(ht.getId());
+                    String downstreamBatchId = downstreamContext.get(taskInstance.getTaskDefinitionKey());
+                    if (StrUtil.equals(sourceReturnBatchId, downstreamBatchId)) {
+                        throw new RuntimeException("撤回失败：下游已有节点完成审批，流程已部分流转，禁止撤回！");
+                    }
+                    continue;
+                }
                 long timeDiff = Math.abs(ht.getCreateTime().getTime() - realNodeOutflowTime);
                 if (timeDiff <= 1000) {
                     throw new RuntimeException("撤回失败：下游已有节点完成审批，流程已部分流转，禁止撤回！");
@@ -3287,7 +3643,19 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         }
 
         List<Task> targetRunningTasks = new ArrayList<>();
+        if (StrUtil.isBlank(sourceReturnBatchId)) {
+            sourceReturnBatchId = inferUniqueReturnBatchIdFromRunningTasks(processInstance.getProcessInstanceId(),
+                    taskInstance.getTaskDefinitionKey(), allRunningTasks);
+        }
         for (Task task : allRunningTasks) {
+            if (StrUtil.isNotBlank(sourceReturnBatchId)) {
+                Map<String, String> runningContext = getReturnBranchContext(processInstance.getProcessInstanceId(), task.getExecutionId());
+                String runningBatchId = runningContext.get(taskInstance.getTaskDefinitionKey());
+                if (StrUtil.equals(sourceReturnBatchId, runningBatchId)) {
+                    targetRunningTasks.add(task);
+                }
+                continue;
+            }
             long targetCreateTime = task.getCreateTime().getTime();
             long timeDiff = Math.abs(targetCreateTime - realNodeOutflowTime);
 
@@ -3471,6 +3839,26 @@ public class BpmTaskServiceImpl implements BpmTaskService {
 
     @Override
     public void processTaskCreated(Task task) {
+        ReturnBranchContextCarrier returnBranchContextCarrier = RETURN_BRANCH_CONTEXT_CARRIER.get();
+        if (returnBranchContextCarrier != null
+                && StrUtil.equals(returnBranchContextCarrier.processInstanceId, task.getProcessInstanceId())
+                && CollUtil.isNotEmpty(returnBranchContextCarrier.context)
+                && StrUtil.isNotBlank(task.getExecutionId())) {
+            runtimeService.setVariableLocal(task.getExecutionId(), RETURN_BRANCH_CONTEXT_VARIABLE,
+                    new LinkedHashMap<>(returnBranchContextCarrier.context));
+            taskService.setVariableLocal(task.getId(), RETURN_BRANCH_CONTEXT_VARIABLE,
+                    new LinkedHashMap<>(returnBranchContextCarrier.context));
+        }
+        ReturnableTaskPathCarrier returnableTaskPathCarrier = RETURNABLE_TASK_PATH_CARRIER.get();
+        if (returnableTaskPathCarrier != null
+                && StrUtil.equals(returnableTaskPathCarrier.processInstanceId, task.getProcessInstanceId())
+                && StrUtil.isNotBlank(task.getExecutionId())) {
+            runtimeService.setVariableLocal(task.getExecutionId(), RETURNABLE_TASK_PATH_VARIABLE,
+                    returnableTaskPathCarrier.path != null ? new ArrayList<>(returnableTaskPathCarrier.path) : new ArrayList<>());
+            taskService.setVariableLocal(task.getId(), RETURNABLE_TASK_PATH_VARIABLE,
+                    returnableTaskPathCarrier.path != null ? new ArrayList<>(returnableTaskPathCarrier.path) : new ArrayList<>());
+        }
+
         // 1. 设置为待办中
         Integer status = (Integer) task.getTaskLocalVariables().get(BpmnVariableConstants.TASK_VARIABLE_STATUS);
         if (status != null) {
@@ -3525,8 +3913,9 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                     }
                     // 特殊情况一：【人工审核】审批人为空，根据配置是否要自动通过、自动拒绝
                     if (ObjectUtil.equal(approveType, BpmUserTaskApproveTypeEnum.USER.getType())) {
-                        // 如果有审批人、或者拥有人，则说明不满足情况一，不自动通过、不自动拒绝
-                        if (!ObjectUtil.isAllEmpty(task.getAssignee(), task.getOwner())) {
+                        // 如果有审批人、拥有人、候选人，则说明不满足情况一，不自动通过、不自动拒绝
+                        if (!ObjectUtil.isAllEmpty(task.getAssignee(), task.getOwner())
+                                || hasCandidateUsers(task.getId())) {
                             return;
                         }
                         if (ObjectUtil.equal(assignEmptyHandlerType, BpmUserTaskAssignEmptyHandlerTypeEnum.APPROVE.getType())) {
@@ -3551,6 +3940,11 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             }
 
         });
+    }
+
+    private boolean hasCandidateUsers(String taskId) {
+        return taskService.getIdentityLinksForTask(taskId).stream()
+                .anyMatch(link -> "candidate".equals(link.getType()) && StrUtil.isNotBlank(link.getUserId()));
     }
 
     /**

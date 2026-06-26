@@ -207,8 +207,7 @@ public class ForestryDocJob implements JobHandler {
 
         // 6. 保存并启动流程
         Long userId = Long.valueOf(configApi.getConfigValueByKey(DEFAULT_USER_ID));
-        Long receiveDocId = receiveDocService.saveReceiveDoc(userId, receiveDocDO);
-        receiveDocService.startFlowReceiveDoc(userId, receiveDocId, receiveDocDO);
+        Long receiveDocId = receiveDocService.saveJobReceiveDoc(userId, receiveDocDO);
 
         // 7. 创建 FileExchange 记录
         FileExchangeSaveReqVO exchangeVO = new FileExchangeSaveReqVO();

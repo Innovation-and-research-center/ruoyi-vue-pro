@@ -55,3 +55,6 @@ application-my.yaml
 yudao-module-bpm/src/main/resources/mock/
 yudao-module-bpm/src/main/resources/templates/
 
+/db
+/db/old
+/.m2

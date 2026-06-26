@@ -5,6 +5,7 @@ import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocAttachDO;
 import io.swagger.v3.oas.annotations.Parameters;
 import jodd.util.StringUtil;
+import org.springframework.core.env.Environment;
 import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -16,14 +17,20 @@ import io.swagger.v3.oas.annotations.Operation;
 import javax.validation.constraints.*;
 import javax.validation.*;
 import javax.servlet.http.*;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.io.IOException;
+import java.util.stream.Collectors;
 
 import cn.iocoder.yudao.framework.common.pojo.PageParam;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
+import org.flowable.identitylink.api.IdentityLink;
+import org.flowable.task.api.Task;
+
 import static cn.iocoder.yudao.framework.common.pojo.CommonResult.success;
+import static cn.iocoder.yudao.module.bpm.enums.BpmTaskKeyConstants.RECEIVE_REGISTER_TASK;
 
 import cn.iocoder.yudao.framework.excel.core.util.ExcelUtils;
 
@@ -33,6 +40,7 @@ import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUti
 
 import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocDO;
+import cn.iocoder.yudao.module.bpm.job.CityNoticeJob;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.receivedoc.ReceiveDocService;
@@ -52,6 +60,15 @@ public class ReceiveDocController {
     @Resource
     private BpmUpdateOperateLogService bpmUpdateOperateLogService;
 
+    @Resource
+    private org.flowable.engine.TaskService flowableTaskService;
+
+    @Resource
+    private Environment environment;
+
+    @Resource
+    private CityNoticeJob cityNoticeJob;
+
     @PostMapping("/create")
     @Operation(summary = "创建收文")
     @PreAuthorize("@ss.hasPermission('bpm:receive-doc:create')")
@@ -65,8 +82,14 @@ public class ReceiveDocController {
     @PostMapping("/save")
     @Operation(summary = "保存收文")
     @PreAuthorize("@ss.hasPermission('bpm:receive-doc:create')")
-    public CommonResult<Long> saveReceiveDoc(@Valid @RequestBody ReceiveDocSaveReqVO createReqVO) {
-        return success(receiveDocService.saveReceiveDoc(getLoginUserId(),createReqVO));
+    public CommonResult<ReceiveDocSaveRespVO> saveReceiveDoc(@Valid @RequestBody ReceiveDocSaveReqVO createReqVO) {
+        Long userId = getLoginUserId();
+        Long receiveDocId = receiveDocService.saveReceiveDoc(userId,createReqVO);
+        ReceiveDocDO receiveDoc = receiveDocService.getReceiveDoc(receiveDocId);
+        return success(new ReceiveDocSaveRespVO()
+                .setId(receiveDocId)
+                .setProcessInstanceId(receiveDoc != null ? receiveDoc.getProcessInstanceId() : null)
+                .setTaskId(getReceiveRegisterTaskId(userId, receiveDoc)));
     }
 
     @PostMapping("/create-flow")
@@ -78,6 +101,164 @@ public class ReceiveDocController {
         }
         receiveDocService.createFlowReceiveDoc(getLoginUserId(),createReqVO);
         return success(true);
+    }
+
+    private String getReceiveRegisterTaskId(Long userId, ReceiveDocDO receiveDoc) {
+        if (receiveDoc == null || StrUtil.isBlank(receiveDoc.getProcessInstanceId())) {
+            return null;
+        }
+        String userIdStr = String.valueOf(userId);
+        List<Task> tasks = flowableTaskService.createTaskQuery()
+                .processInstanceId(receiveDoc.getProcessInstanceId())
+                .taskDefinitionKey(RECEIVE_REGISTER_TASK)
+                .active()
+                .list();
+        Task receiveRegisterTask = tasks.stream()
+                .filter(item -> StrUtil.equals(userIdStr, item.getAssignee()))
+                .findFirst()
+                .orElse(tasks.isEmpty() ? null : tasks.get(0));
+        return receiveRegisterTask != null ? receiveRegisterTask.getId() : null;
+    }
+
+    @PostMapping("/local/mock-job-create")
+    @Operation(summary = "本地模拟定时任务创建收文")
+    @ApiAccessLog(enable = false)
+    @PreAuthorize("@ss.hasPermission('bpm:receive-doc:create')")
+    public CommonResult<Map<String, Object>> mockJobCreateReceiveDoc(
+            @RequestParam(value = "docClass", defaultValue = "7") String docClass,
+            @RequestParam(value = "startUserId", required = false) Long startUserId) {
+        List<String> activeProfiles = Arrays.asList(environment.getActiveProfiles());
+        if (!activeProfiles.contains("local") && !activeProfiles.contains("dev")) {
+            throw new IllegalStateException("仅 local/dev 环境允许模拟定时任务创建收文");
+        }
+
+        try {
+        ReceiveDocCreateNumberVO numberReqVO = new ReceiveDocCreateNumberVO();
+        numberReqVO.setDocClass(docClass);
+        numberReqVO.setYear(String.valueOf(LocalDateTime.now().getYear()));
+
+        ReceiveDocSaveReqVO reqVO = new ReceiveDocSaveReqVO();
+        reqVO.setDocClass(docClass);
+        reqVO.setYear(numberReqVO.getYear());
+        reqVO.setReceiveDocNumber(receiveDocService.generateDocumentSequence(numberReqVO));
+        reqVO.setReceiveTime(LocalDateTime.now());
+        reqVO.setSendDept("本地模拟定时任务");
+        reqVO.setSendDocNumber("LOCAL-JOB-" + System.currentTimeMillis());
+        reqVO.setSubject("本地模拟定时任务收文-" + System.currentTimeMillis());
+        reqVO.setUrgencyDegree("1");
+        reqVO.setDocSecondClass("测试");
+        reqVO.setRemark("本地模拟定时任务创建，用于验证收文登记候选待办");
+
+        Long userId = startUserId != null ? startUserId : getLoginUserId();
+        Long receiveDocId = receiveDocService.saveJobReceiveDoc(userId, reqVO);
+        ReceiveDocDO receiveDoc = receiveDocService.getReceiveDoc(receiveDocId);
+        List<Task> activeTasks = flowableTaskService.createTaskQuery()
+                .processInstanceId(receiveDoc.getProcessInstanceId())
+                .active()
+                .list();
+        List<String> candidateUserIds = activeTasks.stream()
+                .flatMap(task -> flowableTaskService.getIdentityLinksForTask(task.getId()).stream())
+                .filter(link -> "candidate".equals(link.getType()))
+                .map(IdentityLink::getUserId)
+                .filter(StrUtil::isNotBlank)
+                .distinct()
+                .collect(Collectors.toList());
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("receiveDocId", receiveDocId);
+        result.put("processInstanceId", receiveDoc.getProcessInstanceId());
+        result.put("receiveDocNumber", receiveDoc.getReceiveDocNumber());
+        result.put("activeTaskNames", activeTasks.stream().map(Task::getName).collect(Collectors.toList()));
+        result.put("activeTaskDefinitionKeys",
+                activeTasks.stream().map(Task::getTaskDefinitionKey).collect(Collectors.toList()));
+        result.put("activeTaskAssignees", activeTasks.stream().map(Task::getAssignee).collect(Collectors.toList()));
+        result.put("candidateUserIds", candidateUserIds);
+        return success(result);
+        } catch (Throwable ex) {
+            Map<String, Object> result = new HashMap<>();
+            result.put("errorClass", ex.getClass().getName());
+            result.put("errorMessage", ex.getMessage());
+            result.put("stackTrace", Arrays.stream(ex.getStackTrace())
+                    .limit(12)
+                    .map(StackTraceElement::toString)
+                    .collect(Collectors.toList()));
+            return success(result);
+        }
+    }
+
+    @PostMapping("/local/mock-city-notice")
+    @Operation(summary = "本地模拟市局公告定时任务创建收文")
+    @ApiAccessLog(enable = false)
+    @PreAuthorize("@ss.hasPermission('bpm:receive-doc:create')")
+    public CommonResult<Map<String, Object>> mockCityNoticeReceiveDoc(
+            @RequestParam(value = "uuid", required = false) String uuid,
+            @RequestParam(value = "limit", defaultValue = "5") Integer limit,
+            @RequestParam(value = "repeat", defaultValue = "true") Boolean repeat) {
+        List<String> activeProfiles = Arrays.asList(environment.getActiveProfiles());
+        if (!activeProfiles.contains("local") && !activeProfiles.contains("dev")) {
+            throw new IllegalStateException("仅 local/dev 环境允许模拟定时任务创建收文");
+        }
+
+        if (StrUtil.isBlank(uuid)) {
+            List<Map<String, Object>> items = new ArrayList<>();
+            for (String noticeUuid : cityNoticeJob.getMockNoticeUuids(limit)) {
+                try {
+                    Long receiveDocId = cityNoticeJob.syncSingleMockNotice(noticeUuid, Boolean.TRUE.equals(repeat));
+                    items.add(buildMockCityNoticeResult(noticeUuid, receiveDocId));
+                } catch (Exception ex) {
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("noticeUuid", noticeUuid);
+                    item.put("created", false);
+                    item.put("errorClass", ex.getClass().getName());
+                    item.put("errorMessage", ex.getMessage());
+                    items.add(item);
+                }
+            }
+            Map<String, Object> result = new HashMap<>();
+            result.put("limit", limit);
+            result.put("repeat", repeat);
+            result.put("total", items.size());
+            result.put("createdCount", items.stream()
+                    .filter(item -> Boolean.TRUE.equals(item.get("created")))
+                    .count());
+            result.put("items", items);
+            return success(result);
+        }
+
+        Long receiveDocId = cityNoticeJob.syncSingleMockNotice(uuid, Boolean.TRUE.equals(repeat));
+        return success(buildMockCityNoticeResult(uuid, receiveDocId));
+    }
+
+    private Map<String, Object> buildMockCityNoticeResult(String noticeUuid, Long receiveDocId) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("noticeUuid", noticeUuid);
+        result.put("created", receiveDocId != null);
+        result.put("receiveDocId", receiveDocId);
+        if (receiveDocId == null) {
+            result.put("message", "mock 公告已同步过，未重复创建");
+            return result;
+        }
+
+        ReceiveDocDO receiveDoc = receiveDocService.getReceiveDoc(receiveDocId);
+        result.put("processInstanceId", receiveDoc.getProcessInstanceId());
+        result.put("receiveDocNumber", receiveDoc.getReceiveDocNumber());
+        result.put("subject", receiveDoc.getSubject());
+        List<Task> activeTasks = flowableTaskService.createTaskQuery()
+                .processInstanceId(receiveDoc.getProcessInstanceId())
+                .active()
+                .list();
+        result.put("activeTaskNames", activeTasks.stream().map(Task::getName).collect(Collectors.toList()));
+        result.put("activeTaskDefinitionKeys",
+                activeTasks.stream().map(Task::getTaskDefinitionKey).collect(Collectors.toList()));
+        result.put("activeTaskAssignees", activeTasks.stream().map(Task::getAssignee).collect(Collectors.toList()));
+        result.put("candidateUserIds", activeTasks.stream()
+                .flatMap(task -> flowableTaskService.getIdentityLinksForTask(task.getId()).stream())
+                .filter(link -> "candidate".equals(link.getType()))
+                .map(IdentityLink::getUserId)
+                .filter(StrUtil::isNotBlank)
+                .distinct()
+                .collect(Collectors.toList()));
+        return result;
     }
 
 

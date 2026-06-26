@@ -115,6 +115,11 @@ public class BpmnVariableConstants {
 
     public static final String PROCESS_DEADLINE_DATE = "PROCESS_DEADLINE_DATE";
 
+    /**
+     * 流程实例的变量 - 收文是否由定时任务创建。
+     */
+    public static final String PROCESS_RECEIVE_JOB_CREATED = "PROCESS_RECEIVE_JOB_CREATED";
+
     public static final String PROCESS_SOURCE_UNIT = "PROCESS_SOURCE_UNIT";
 
     /**

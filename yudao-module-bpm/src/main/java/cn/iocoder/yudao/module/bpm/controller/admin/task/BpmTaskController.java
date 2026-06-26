@@ -45,6 +45,7 @@ import java.util.stream.Stream;
 
 import static cn.iocoder.yudao.framework.common.pojo.CommonResult.success;
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.*;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_RECEIVE_JOB_CREATED;
 import static cn.iocoder.yudao.framework.web.core.util.WebFrameworkUtils.getLoginUserId;
 
 @Tag(name = "管理后台 - 流程任务实例")
@@ -152,6 +153,7 @@ public class BpmTaskController {
 
         HistoricProcessInstance processInstance = historyService.createHistoricProcessInstanceQuery()
                 .processInstanceId(processInstanceId)
+                .includeProcessVariables()
                 .singleResult();
         if (CollUtil.isEmpty(taskList)) {
             return success(Collections.emptyList());
@@ -212,7 +214,16 @@ public class BpmTaskController {
             // 设置处理人信息 (利用之前查出来的 userMap)
             Long startUserId = NumberUtils.parseLong(processInstance.getStartUserId());
             AdminUserRespDTO startUser = userMap.get(startUserId);
-            if (startUser != null) {
+            Map<String, Object> processVariables = processInstance.getProcessVariables();
+            boolean receiveJobCreated = processVariables != null
+                    && Boolean.TRUE.equals(processVariables.get(PROCESS_RECEIVE_JOB_CREATED));
+            if (receiveJobCreated) {
+                startNode.setName("系统接收");
+                UserSimpleBaseVO userVO = new UserSimpleBaseVO();
+                userVO.setId(0L);
+                userVO.setNickname("系统自动");
+                startNode.setAssigneeUser(userVO);
+            } else if (startUser != null) {
                 // 根据 BpmTaskRespVO 的结构设置用户
                 // 假设你的 VO 里有 assigneeUser 对象
                 UserSimpleBaseVO userVO = new UserSimpleBaseVO();

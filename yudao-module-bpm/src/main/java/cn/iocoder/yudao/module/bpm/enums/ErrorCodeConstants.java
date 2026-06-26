@@ -17,6 +17,7 @@ public interface ErrorCodeConstants {
     ErrorCode RECEIVE_DOC_NOT_EXISTS = new ErrorCode(1_009_021_001,"收文不存在");
     ErrorCode RECEIVE_DOC_EXISTS = new ErrorCode(1_009_021_002,"收文编号重复");
     ErrorCode RECEIVE_DOC_ERROR= new ErrorCode(1_009_021_003,"收文编号格式不正确");
+    ErrorCode RECEIVE_DOC_REGISTER_TASK_NOT_ACTIVE = new ErrorCode(1_009_021_004,"当前流程不在来文登记环节，不能发送");
     ErrorCode CONFFLOW_NOT_EXISTS = new ErrorCode(1_009_022_001, "会议报告单不存在");
     ErrorCode CONFFLOW_SUBMIT_REQUIRED = new ErrorCode(1_009_022_002, "会议名称、会议时间、会议地点不能为空");
     ErrorCode CONFFLOW_ALREADY_SUBMITTED = new ErrorCode(1_009_022_003, "会议报告单已发起流程，不能重复提交");

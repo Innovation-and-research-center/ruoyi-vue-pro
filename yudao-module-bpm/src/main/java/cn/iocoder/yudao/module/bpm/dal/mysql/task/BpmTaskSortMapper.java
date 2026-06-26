@@ -25,4 +25,10 @@ public interface BpmTaskSortMapper {
                                        @Param("name") String name,
                                        @Param("value") Integer value);
 
+    int updateRuntimeProcessInstanceName(@Param("processInstanceId") String processInstanceId,
+                                         @Param("name") String name);
+
+    int updateHistoricProcessInstanceName(@Param("processInstanceId") String processInstanceId,
+                                          @Param("name") String name);
+
 }

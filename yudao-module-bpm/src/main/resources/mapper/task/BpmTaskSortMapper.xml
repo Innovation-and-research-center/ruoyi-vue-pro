@@ -204,4 +204,16 @@
           AND NAME_ = #{name}
     </update>
 
+    <update id="updateRuntimeProcessInstanceName">
+        UPDATE ACT_RU_EXECUTION
+        SET NAME_ = #{name}
+        WHERE ID_ = #{processInstanceId}
+    </update>
+
+    <update id="updateHistoricProcessInstanceName">
+        UPDATE ACT_HI_PROCINST
+        SET NAME_ = #{name}
+        WHERE ID_ = #{processInstanceId}
+    </update>
+
 </mapper>

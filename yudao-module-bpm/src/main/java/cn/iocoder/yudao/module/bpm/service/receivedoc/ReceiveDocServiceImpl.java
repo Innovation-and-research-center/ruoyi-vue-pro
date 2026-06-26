@@ -13,9 +13,11 @@ import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmProcessI
 import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocAttachDO;
 import cn.iocoder.yudao.module.bpm.dal.mysql.receivedoc.ReceiveDocAttachMapper;
+import cn.iocoder.yudao.module.bpm.dal.mysql.task.BpmTaskSortMapper;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmReceiveRegisterTaskUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
 import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import cn.iocoder.yudao.module.bpm.service.task.BpmTaskService;
@@ -84,6 +86,9 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
     private ReceiveDocAttachMapper receiveDocAttachMapper;
 
     @Resource
+    private BpmTaskSortMapper taskSortMapper;
+
+    @Resource
     private BpmProcessInstanceApi processInstanceApi;
 
     @Resource
@@ -130,12 +135,7 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         if (CollUtil.isNotEmpty(createReqVO.getProcessVariables())) {
             processInstanceVariables.putAll(createReqVO.getProcessVariables());
         }
-        String realKey=PROCESS_KEY;
         String processName = "收文";
-        if (!StringUtil.isEmpty(createReqVO.getDocRange())){
-            realKey=PROCESS_KEY_CHANGE;
-            processName="电子公告";
-        }
 
 //        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEXT_NODE, createReqVO.getSelectNode());
         //自定义标题
@@ -155,10 +155,13 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
 
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
         String processInstanceId = processInstanceApi.createProcessInstance(userId,
-                new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(realKey)
+                new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(resolveReceiveDocProcessKey(createReqVO))
                         .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(receiveDoc.getId()))
                         .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
-        completeManualReceiveRegisterTask(userId, processInstanceId, processInstanceVariables);
+        int completedCount = completeManualReceiveRegisterTask(userId, processInstanceId, processInstanceVariables);
+        if (completedCount == 0) {
+            throw exception(RECEIVE_DOC_REGISTER_TASK_NOT_ACTIVE);
+        }
         receiveDocMapper.updateById(new ReceiveDocDO().setId(receiveDoc.getId()).setProcessInstanceId(processInstanceId).setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
 
 
@@ -168,7 +171,35 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
 
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Long saveReceiveDoc(Long userId,ReceiveDocSaveReqVO createReqVO) {
+        return saveReceiveDocInternal(userId, createReqVO, true);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Long saveJobReceiveDoc(Long userId, ReceiveDocSaveReqVO createReqVO) {
+        if (CollUtil.isEmpty(createReqVO.getNextNodeAssignees())
+                || CollUtil.isEmpty(createReqVO.getNextNodeAssignees().get(RECEIVE_REGISTER_TASK))) {
+            Set<Long> candidateUserIds = BpmReceiveRegisterTaskUtils.calculateDefaultCandidateUserIds();
+            Map<String, List<Long>> nextNodeAssignees = new HashMap<>();
+            nextNodeAssignees.put(RECEIVE_REGISTER_TASK, new ArrayList<>(candidateUserIds));
+            createReqVO.setNextNodeAssignees(nextNodeAssignees);
+        }
+        if (CollUtil.isEmpty(createReqVO.getStartUserSelectAssignees())
+                || CollUtil.isEmpty(createReqVO.getStartUserSelectAssignees().get(RECEIVE_REGISTER_TASK))) {
+            createReqVO.setStartUserSelectAssignees(new HashMap<>(createReqVO.getNextNodeAssignees()));
+        }
+        Map<String, Object> processVariables = createReqVO.getProcessVariables();
+        if (processVariables == null) {
+            processVariables = new HashMap<>();
+            createReqVO.setProcessVariables(processVariables);
+        }
+        processVariables.put(PROCESS_RECEIVE_JOB_CREATED, true);
+        return saveReceiveDocInternal(userId, createReqVO, false);
+    }
+
+    private Long saveReceiveDocInternal(Long userId, ReceiveDocSaveReqVO createReqVO, boolean claimRegisterTask) {
 
         if (checkReceiveDocNumberExists(createReqVO.getReceiveDocNumber())) {
             throw exception(RECEIVE_DOC_EXISTS);
@@ -186,6 +217,15 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
 
         receiveDocMapper.insert(receiveDoc);
         createReceiveDocAttachList(receiveDoc.getId(), createReqVO.getFileList());
+        Map<String, Object> processInstanceVariables = buildReceiveDocProcessVariables(createReqVO, "收文");
+        String processInstanceId = createReceiveDocProcessInstance(userId, receiveDoc.getId(), createReqVO,
+                processInstanceVariables);
+        if (claimRegisterTask) {
+            claimManualReceiveRegisterTask(userId, processInstanceId);
+        }
+        receiveDocMapper.updateById(new ReceiveDocDO().setId(receiveDoc.getId())
+                .setProcessInstanceId(processInstanceId)
+                .setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
         // 返回
         return receiveDoc.getId();
     }
@@ -193,36 +233,20 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void startFlowReceiveDoc(Long userId, Long receiveDocId, ReceiveDocSaveReqVO createReqVO) {
-        validateReceiveDocExists(receiveDocId);
+        ReceiveDocDO receiveDoc = receiveDocMapper.selectById(receiveDocId);
+        if (receiveDoc == null) {
+            throw exception(RECEIVE_DOC_NOT_EXISTS);
+        }
 
-        Map<String, Object> processInstanceVariables = new HashMap<>();
-        if (CollUtil.isNotEmpty(createReqVO.getProcessVariables())) {
-            processInstanceVariables.putAll(createReqVO.getProcessVariables());
+        Map<String, Object> processInstanceVariables = buildReceiveDocProcessVariables(createReqVO, "收文");
+        String processInstanceId = receiveDoc.getProcessInstanceId();
+        if (StrUtil.isBlank(processInstanceId)) {
+            processInstanceId = createReceiveDocProcessInstance(userId, receiveDocId, createReqVO, processInstanceVariables);
         }
-        String realKey = PROCESS_KEY;
-        if (!StringUtil.isEmpty(createReqVO.getDocRange())) {
-            realKey = PROCESS_KEY_CHANGE;
+        int completedCount = completeManualReceiveRegisterTask(userId, processInstanceId, processInstanceVariables);
+        if (completedCount == 0) {
+            throw exception(RECEIVE_DOC_REGISTER_TASK_NOT_ACTIVE);
         }
-        processInstanceVariables.put(PROCESS_SOURCE_UNIT, createReqVO.getSendDept());
-        String customName = StringUtil.isEmpty(createReqVO.getSubject()) ? "收文" : createReqVO.getSubject();
-        processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
-        processInstanceVariables.put(PROCESS_URGENCY_DEGREE, createReqVO.getUrgencyDegree());
-        String timeKey = "receive";
-        String timeoutLabel = DictFrameworkUtils.parseDictDataLabel("bpm_process_timeout_config", timeKey);
-        if (StrUtil.isNotBlank(timeoutLabel) && NumberUtil.isNumber(timeoutLabel)) {
-            int hours = Integer.parseInt(timeoutLabel);
-            LocalDateTime deadline = LocalDateTime.now().plusHours(hours);
-
-            processInstanceVariables.put(PROCESS_FINISH_TIME, timeoutLabel);
-            processInstanceVariables.put(PROCESS_DEADLINE_DATE, DateUtils.of(deadline));
-        }
-        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES,
-                createReqVO.getNextNodeAssignees());
-        String processInstanceId = processInstanceApi.createProcessInstance(userId,
-                new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(realKey)
-                        .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(receiveDocId))
-                        .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
-        completeManualReceiveRegisterTask(userId, processInstanceId, processInstanceVariables);
         receiveDocMapper.updateById(new ReceiveDocDO().setId(receiveDocId)
                 .setProcessInstanceId(processInstanceId)
                 .setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
@@ -354,7 +378,10 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
     @Transactional(rollbackFor = Exception.class)
     public void createFlowReceiveDoc(Long userId,ReceiveDocSaveReqVO updateReqVO) {
         // 校验存在
-        validateReceiveDocExists(updateReqVO.getId());
+        ReceiveDocDO oldReceiveDoc = receiveDocMapper.selectById(updateReqVO.getId());
+        if (oldReceiveDoc == null) {
+            throw exception(RECEIVE_DOC_NOT_EXISTS);
+        }
         // 更新
         ReceiveDocDO updateObj = BeanUtils.toBean(updateReqVO, ReceiveDocDO.class);
 
@@ -365,50 +392,79 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         // 更新子表
         updateReceiveDocAttachList(updateReqVO.getId(), updateReqVO.getFileList());
 
-        Map<String, Object> processInstanceVariables = new HashMap<>();
-        if (CollUtil.isNotEmpty(updateReqVO.getProcessVariables())) {
-            processInstanceVariables.putAll(updateReqVO.getProcessVariables());
+        Map<String, Object> processInstanceVariables = buildReceiveDocProcessVariables(updateReqVO, "收文");
+        String processInstanceId = oldReceiveDoc.getProcessInstanceId();
+        if (StrUtil.isBlank(processInstanceId)) {
+            processInstanceId = createReceiveDocProcessInstance(userId, updateObj.getId(), updateReqVO, processInstanceVariables);
         }
-        String realKey=PROCESS_KEY;
-        if (!StringUtil.isEmpty(updateReqVO.getDocRange())){
-            realKey=PROCESS_KEY_CHANGE;
+        syncProcessInstanceTitle(processInstanceId,
+                StrUtil.blankToDefault(updateReqVO.getSubject(), oldReceiveDoc.getSubject()));
+        int completedCount = completeManualReceiveRegisterTask(userId, processInstanceId, processInstanceVariables);
+        if (completedCount == 0) {
+            throw exception(RECEIVE_DOC_REGISTER_TASK_NOT_ACTIVE);
         }
-//        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEXT_NODE, createReqVO.getSelectNode());
-        processInstanceVariables.put(PROCESS_SOURCE_UNIT, updateReqVO.getSendDept());
-        String customName =StringUtil.isEmpty(updateReqVO.getSubject()) ? "收文":updateReqVO.getSubject();
-        processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
-        processInstanceVariables.put(PROCESS_URGENCY_DEGREE, updateReqVO.getUrgencyDegree());
-        String timeKey = "receive";
-        String timeoutLabel = DictFrameworkUtils.parseDictDataLabel("bpm_process_timeout_config", timeKey);
-        if (StrUtil.isNotBlank(timeoutLabel) && NumberUtil.isNumber(timeoutLabel)) {
-            // 2. 将字符串转换为整数小时
-            int hours = Integer.parseInt(timeoutLabel);
-
-            // 3. 计算截止时间：当前时间 + 小时数
-            // 使用 LocalDateTime 计算
-            LocalDateTime now = LocalDateTime.now();
-            LocalDateTime deadline = now.plusHours(hours);
-
-            // 4. 存入流程变量
-            // 方式 B：双变量策略（强烈推荐 ★★★）
-            // 变量1：存字符串 "24"，用于前端展示 "限时：24小时"
-            processInstanceVariables.put(PROCESS_FINISH_TIME, timeoutLabel);
-
-            // 变量2：存具体时间对象 (Date类型)，用于 Flowable 原生查询和后端比对
-            // 注意：Flowable 对 java.util.Date 的查询支持最好，建议转为 Date
-            processInstanceVariables.put(PROCESS_DEADLINE_DATE, DateUtils.of(deadline));
-        }
-        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, updateReqVO.getNextNodeAssignees());
-        String processInstanceId = processInstanceApi.createProcessInstance(userId,
-                new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(realKey)
-                        .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(updateObj.getId()))
-                        .setStartUserSelectAssignees(updateReqVO.getStartUserSelectAssignees()));
-        completeManualReceiveRegisterTask(userId, processInstanceId, processInstanceVariables);
         receiveDocMapper.updateById(new ReceiveDocDO().setId(updateObj.getId()).setProcessInstanceId(processInstanceId).setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
     }
 
-    private void completeManualReceiveRegisterTask(Long userId, String processInstanceId, Map<String, Object> processInstanceVariables) {
+    private Map<String, Object> buildReceiveDocProcessVariables(ReceiveDocSaveReqVO reqVO, String defaultProcessName) {
+        Map<String, Object> processInstanceVariables = new HashMap<>();
+        if (CollUtil.isNotEmpty(reqVO.getProcessVariables())) {
+            processInstanceVariables.putAll(reqVO.getProcessVariables());
+        }
+        processInstanceVariables.put(PROCESS_SOURCE_UNIT, reqVO.getSendDept());
+        String customName = StringUtil.isEmpty(reqVO.getSubject()) ? defaultProcessName : reqVO.getSubject();
+        processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
+        processInstanceVariables.put(PROCESS_URGENCY_DEGREE, reqVO.getUrgencyDegree());
+        String timeKey = "receive";
+        String timeoutLabel = DictFrameworkUtils.parseDictDataLabel("bpm_process_timeout_config", timeKey);
+        if (StrUtil.isNotBlank(timeoutLabel) && NumberUtil.isNumber(timeoutLabel)) {
+            int hours = Integer.parseInt(timeoutLabel);
+            LocalDateTime deadline = LocalDateTime.now().plusHours(hours);
+            processInstanceVariables.put(PROCESS_FINISH_TIME, timeoutLabel);
+            processInstanceVariables.put(PROCESS_DEADLINE_DATE, DateUtils.of(deadline));
+        }
+        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES,
+                reqVO.getNextNodeAssignees());
+        return processInstanceVariables;
+    }
+
+    private String createReceiveDocProcessInstance(Long userId, Long receiveDocId, ReceiveDocSaveReqVO reqVO,
+                                                   Map<String, Object> processInstanceVariables) {
+        return processInstanceApi.createProcessInstance(userId,
+                new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(resolveReceiveDocProcessKey(reqVO))
+                        .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(receiveDocId))
+                        .setStartUserSelectAssignees(reqVO.getStartUserSelectAssignees()));
+    }
+
+    private String resolveReceiveDocProcessKey(ReceiveDocSaveReqVO reqVO) {
+        return PROCESS_KEY;
+    }
+
+    private void claimManualReceiveRegisterTask(Long userId, String processInstanceId) {
         String userIdStr = String.valueOf(userId);
+        List<Task> tasks = flowableTaskService.createTaskQuery()
+                .processInstanceId(processInstanceId)
+                .active()
+                .list()
+                .stream()
+                .filter(task -> StrUtil.equals(RECEIVE_REGISTER_TASK, task.getTaskDefinitionKey())
+                        || StrUtil.containsAny(task.getName(), "收文登记", "来文登记"))
+                .collect(Collectors.toList());
+        if (CollUtil.isEmpty(tasks)) {
+            log.warn("[claimManualReceiveRegisterTask][processInstanceId({}) 未找到收文/来文登记活动任务]", processInstanceId);
+            return;
+        }
+        for (Task task : tasks) {
+            flowableTaskService.setAssignee(task.getId(), userIdStr);
+            flowableTaskService.setOwner(task.getId(), userIdStr);
+            flowableTaskService.setVariableLocal(task.getId(), BpmnVariableConstants.TASK_VARIABLE_STATUS,
+                    BpmTaskStatusEnum.RUNNING.getStatus());
+        }
+    }
+
+    private int completeManualReceiveRegisterTask(Long userId, String processInstanceId, Map<String, Object> processInstanceVariables) {
+        String userIdStr = String.valueOf(userId);
+        int completedCount = 0;
         for (int i = 0; i < 20; i++) {
             List<Task> tasks = flowableTaskService.createTaskQuery()
                     .processInstanceId(processInstanceId)
@@ -422,7 +478,7 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
                 if (i == 0) {
                     log.warn("[completeManualReceiveRegisterTask][processInstanceId({}) 未找到收文/来文登记活动任务]", processInstanceId);
                 }
-                return;
+                return completedCount;
             }
             for (Task task : tasks) {
                 log.info("[completeManualReceiveRegisterTask][processInstanceId({}) 自动完成登记任务 taskId({}) taskKey({}) taskName({})]",
@@ -433,16 +489,22 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
                 flowableTaskService.setVariableLocal(task.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON,
                         "系统自动完成来文登记");
                 flowableTaskService.complete(task.getId(), processInstanceVariables);
+                completedCount++;
             }
         }
         log.warn("[completeManualReceiveRegisterTask][processInstanceId({}) 自动完成登记任务超过上限，可能存在登记节点循环]", processInstanceId);
+        return completedCount;
     }
 
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void updateReceiveDoc(ReceiveDocSaveReqVO updateReqVO) {
         // 校验存在
-        validateReceiveDocExists(updateReqVO.getId());
+        ReceiveDocDO oldReceiveDoc = receiveDocMapper.selectById(updateReqVO.getId());
+        if (oldReceiveDoc == null) {
+            throw exception(RECEIVE_DOC_NOT_EXISTS);
+        }
         // 更新
         ReceiveDocDO updateObj = BeanUtils.toBean(updateReqVO, ReceiveDocDO.class);
 
@@ -452,6 +514,20 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
 
         // 更新子表
         updateReceiveDocAttachList(updateReqVO.getId(), updateReqVO.getFileList());
+        syncProcessInstanceTitle(oldReceiveDoc.getProcessInstanceId(),
+                StrUtil.blankToDefault(updateReqVO.getSubject(), oldReceiveDoc.getSubject()));
+    }
+
+    private void syncProcessInstanceTitle(String processInstanceId, String subject) {
+        if (StrUtil.isBlank(processInstanceId)) {
+            return;
+        }
+        String processName = StrUtil.blankToDefault(subject, "收文");
+        taskSortMapper.updateRuntimeProcessInstanceName(processInstanceId, processName);
+        taskSortMapper.updateHistoricProcessInstanceName(processInstanceId, processName);
+        if (runtimeService.createProcessInstanceQuery().processInstanceId(processInstanceId).singleResult() != null) {
+            runtimeService.setVariable(processInstanceId, PROCESS_CUSTOM_NAME, processName);
+        }
     }
 
     private void createReceiveDocAttachList(Long receiveDocId, List<ReceiveDocAttachDO> list) {

@@ -4,6 +4,7 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.date.DateTime;
 import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.io.resource.ResourceUtil;
 import cn.hutool.core.lang.TypeReference;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.http.HttpUtil;
@@ -110,16 +111,6 @@ public class CityNoticeJob implements JobHandler {
 
     @Transactional(rollbackFor = Exception.class)
     public boolean syncSingleNotice(String noticeUuid) {
-        // 1. 查重 (检查 FileExchange 表)
-        FileExchangeDO existExchange = fileExchangeMapper.selectOne(Wrappers.<FileExchangeDO>lambdaQuery()
-                .eq(FileExchangeDO::getDocunique, noticeUuid));
-
-        if (existExchange != null) {
-            // C# 逻辑中，如果已存在直接返回 false，不做更新
-            return false;
-        }
-
-        // 2. 获取详情 (C# /public/oaNotice/showOaNoticeDetail.do)
         String url = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/showOaNoticeDetail.do?oanoUuid=" + noticeUuid;
         log.info("【市局公告】详情请求 URL: {}", url);
         String result = HttpUtil.get(url, 30000);
@@ -133,7 +124,59 @@ public class CityNoticeJob implements JobHandler {
             return false;
         }
 
-        NoticeDetailDTO detail = resDetail.getData();
+        return syncNoticeDetail(noticeUuid, resDetail.getData(), false) != null;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public Long syncSingleMockNotice(String noticeUuid) {
+        return syncSingleMockNotice(noticeUuid, false);
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public Long syncSingleMockNotice(String noticeUuid, boolean repeatable) {
+        String effectiveUuid = StrUtil.blankToDefault(noticeUuid, getFirstMockNoticeUuid());
+        String result = ResourceUtil.readUtf8Str("mock/detail/" + effectiveUuid + ".json");
+        NoticeResult<NoticeDetailDTO> resDetail = JSONUtil.toBean(result,
+                new TypeReference<NoticeResult<NoticeDetailDTO>>() {}, false);
+        if (!resDetail.isSuccess() || resDetail.getData() == null) {
+            return null;
+        }
+        String docunique = repeatable ? effectiveUuid + "-mock-" + System.currentTimeMillis() : effectiveUuid;
+        return syncNoticeDetail(docunique, resDetail.getData(), true);
+    }
+
+    public String getFirstMockNoticeUuid() {
+        return getMockNoticeUuids(1).get(0);
+    }
+
+    public List<String> getMockNoticeUuids(int limit) {
+        String result = ResourceUtil.readUtf8Str("mock/notice_list.json");
+        NoticeResult<List<OaNoticeDTO>> resList = JSONUtil.toBean(result,
+                new TypeReference<NoticeResult<List<OaNoticeDTO>>>() {}, false);
+        if (!resList.isSuccess() || CollUtil.isEmpty(resList.getData())) {
+            throw new IllegalStateException("mock/notice_list.json 未读取到公告数据");
+        }
+        int actualLimit = Math.max(1, Math.min(limit, resList.getData().size()));
+        List<String> uuids = new ArrayList<>();
+        for (int i = 0; i < actualLimit; i++) {
+            OaNoticeDTO notice = resList.getData().get(i);
+            if (StrUtil.isNotBlank(notice.getOanoUuid())) {
+                uuids.add(notice.getOanoUuid());
+            }
+        }
+        if (CollUtil.isEmpty(uuids)) {
+            throw new IllegalStateException("mock/notice_list.json 未读取到有效公告 UUID");
+        }
+        return uuids;
+    }
+
+    private Long syncNoticeDetail(String noticeUuid, NoticeDetailDTO detail, boolean mockAttachment) {
+        FileExchangeDO existExchange = fileExchangeMapper.selectOne(Wrappers.<FileExchangeDO>lambdaQuery()
+                .eq(FileExchangeDO::getDocunique, noticeUuid));
+        if (existExchange != null) {
+            return null;
+        }
+
         OaNoticeDTO notice = detail.getNotice();
 
         // 3. 准备收文参数
@@ -217,7 +260,7 @@ public class CityNoticeJob implements JobHandler {
                     continue; // 跳过被淘汰的文件
                 }
 
-                ReceiveDocAttachDO attach = downloadAndUploadFile(oaFile.getUuid(), oaFile.getFileName());
+                ReceiveDocAttachDO attach = downloadAndUploadFile(oaFile.getUuid(), oaFile.getFileName(), mockAttachment);
                 if (attach != null) {
                     attachList.add(attach);
                 }
@@ -240,8 +283,7 @@ public class CityNoticeJob implements JobHandler {
         // 5. 创建收文 (入库 + 启动流程)
         // 使用配置的默认用户ID启动
         Long userId = Long.valueOf(configApi.getConfigValueByKey(DEFAULT_USER_ID));
-        Long receiveDocId = receiveDocService.saveReceiveDoc(userId, receiveDocDO);
-        receiveDocService.startFlowReceiveDoc(userId, receiveDocId, receiveDocDO);
+        Long receiveDocId = receiveDocService.saveJobReceiveDoc(userId, receiveDocDO);
 
         // 6. 记录 FileExchange (映射关系)
         FileExchangeSaveReqVO exchangeVO = new FileExchangeSaveReqVO();
@@ -256,19 +298,27 @@ public class CityNoticeJob implements JobHandler {
 
         fileExchangeService.createFileExchange(exchangeVO);
 
-        return true;
+        return receiveDocId;
     }
 
     /**
      * 下载附件
      */
     private ReceiveDocAttachDO downloadAndUploadFile(String fileUuid, String fileName) {
-        try {
-            // C# Url: /public/oaNotice/loadFile.do?CMD=DF&uuid=...
-            String downloadUrl = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/loadFile.do?CMD=DF&uuid=" + fileUuid;
-            log.info("【市局公告】附件下载请求 URL: {}", downloadUrl);
+        return downloadAndUploadFile(fileUuid, fileName, false);
+    }
 
-            byte[] fileBytes = HttpUtil.downloadBytes(downloadUrl);
+    private ReceiveDocAttachDO downloadAndUploadFile(String fileUuid, String fileName, boolean mockAttachment) {
+        try {
+            byte[] fileBytes;
+            if (mockAttachment) {
+                fileBytes = ResourceUtil.readBytes("mock/test.pdf");
+            } else {
+                // C# Url: /public/oaNotice/loadFile.do?CMD=DF&uuid=...
+                String downloadUrl = configApi.getConfigValueByKey(RECEIVE_CITY_KEY) + "/public/oaNotice/loadFile.do?CMD=DF&uuid=" + fileUuid;
+                log.info("【市局公告】附件下载请求 URL: {}", downloadUrl);
+                fileBytes = HttpUtil.downloadBytes(downloadUrl);
+            }
             if (fileBytes == null || fileBytes.length == 0) return null;
 
             // 上传到 FileService

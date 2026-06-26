@@ -36,6 +36,10 @@ public final class BpmReceiveRegisterTaskUtils {
         return StrUtil.equals(RECEIVE_REGISTER_TASK, taskDefinitionKey);
     }
 
+    public static Set<Long> calculateDefaultCandidateUserIds() {
+        return calculateCandidateUserIds((FlowElement) null);
+    }
+
     public static Set<Long> calculateCandidateUserIds(DelegateExecution execution,
                                                       BpmTaskCandidateInvoker taskCandidateInvoker) {
         FlowElement flowElement = execution.getCurrentFlowElement();
@@ -67,6 +71,9 @@ public final class BpmReceiveRegisterTaskUtils {
     }
 
     private static String getRegisterGroupIdsText(FlowElement flowElement) {
+        if (flowElement == null) {
+            return null;
+        }
         Integer strategy = BpmnModelUtils.parseCandidateStrategy(flowElement);
         String param = BpmnModelUtils.parseCandidateParam(flowElement);
         if (BpmTaskCandidateStrategyEnum.USER_GROUP.getStrategy().equals(strategy) && StrUtil.isNotBlank(param)) {

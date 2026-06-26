@@ -25,6 +25,8 @@ public interface ReceiveDocService {
 
     Long saveReceiveDoc(Long userId,@Valid ReceiveDocSaveReqVO createReqVO);
 
+    Long saveJobReceiveDoc(Long userId, @Valid ReceiveDocSaveReqVO createReqVO);
+
     void startFlowReceiveDoc(Long userId, Long receiveDocId, @Valid ReceiveDocSaveReqVO createReqVO);
 
     String generateDocumentSequence(ReceiveDocCreateNumberVO createReqVO);

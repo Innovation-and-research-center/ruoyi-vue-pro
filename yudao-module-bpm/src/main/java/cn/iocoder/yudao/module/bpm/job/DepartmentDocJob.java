@@ -238,8 +238,7 @@ public class DepartmentDocJob implements JobHandler {
         }
         receiveDocDO.setFileList(attachList);
 
-        Long receiveDocId = saveReceiveDocWithRetry(userId, receiveDocDO, receiveTime);
-        receiveDocService.startFlowReceiveDoc(userId, receiveDocId, receiveDocDO);
+        Long receiveDocId = saveJobReceiveDocWithRetry(userId, receiveDocDO, receiveTime);
 
         FileExchangeSaveReqVO exchangeVO = new FileExchangeSaveReqVO();
         exchangeVO.setOperationDate(LocalDateTime.now().withNano(0));
@@ -265,11 +264,11 @@ public class DepartmentDocJob implements JobHandler {
                 receiveTime.getYear(), receiveDocDO.getDocClass(), numberReceiveNumber));
     }
 
-    private Long saveReceiveDocWithRetry(Long userId, ReceiveDocSaveReqVO receiveDocDO, LocalDateTime receiveTime) {
+    private Long saveJobReceiveDocWithRetry(Long userId, ReceiveDocSaveReqVO receiveDocDO, LocalDateTime receiveTime) {
         ServiceException lastException = null;
         for (int i = 1; i <= SAVE_RETRY_COUNT; i++) {
             try {
-                return receiveDocService.saveReceiveDoc(userId, receiveDocDO);
+                return receiveDocService.saveJobReceiveDoc(userId, receiveDocDO);
             } catch (ServiceException e) {
                 if (!StrUtil.equals(e.getMessage(), "收文编号重复")) {
                     throw e;
