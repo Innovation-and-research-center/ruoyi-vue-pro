@@ -15,6 +15,9 @@ public class ConfflowRespVO {
     @ExcelProperty("会议记录 id")
     private Long id;
 
+    @Schema(description = "历史迁移旧工作流项目号")
+    private String projectId;
+
     @Schema(description = "申请人ID", example = "10425")
     @ExcelProperty("申请人ID")
     private Long userId;
@@ -67,7 +70,7 @@ public class ConfflowRespVO {
     @ExcelProperty("创建时间")
     private LocalDateTime createTime;
 
-    private Long creator;
+    private String creator;
 
     @Schema(description = "附件路径")
     private String attachFilePath;

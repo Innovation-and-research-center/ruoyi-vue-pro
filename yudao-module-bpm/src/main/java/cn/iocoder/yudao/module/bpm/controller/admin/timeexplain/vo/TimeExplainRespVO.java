@@ -20,6 +20,9 @@ public class TimeExplainRespVO {
     @ExcelProperty("主键")
     private Long id;
 
+    @Schema(description = "历史迁移旧工作流项目号")
+    private String projectId;
+
     @Schema(description = "人员编号", example = "16761")
     @ExcelProperty("人员编号")
     private Long userId;
@@ -75,7 +78,7 @@ public class TimeExplainRespVO {
 
     private String nickName;
 
-    private Long creator;
+    private String creator;
 
     @Schema(description = "附件列表")
     private List<TimeExplainAttachRespVO> fileList;

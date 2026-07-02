@@ -33,6 +33,7 @@ import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUti
 import cn.iocoder.yudao.module.bpm.controller.admin.xzss.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssKzDO;
+import cn.iocoder.yudao.module.bpm.dal.mysql.historyworkflow.HistoryWorkflowMapper;
 import cn.iocoder.yudao.module.bpm.service.commentattach.CommentAttachService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
@@ -58,6 +59,9 @@ public class XzssController {
 
     @Resource
     private XzfyService xzfyService;
+
+    @Resource
+    private HistoryWorkflowMapper historyWorkflowMapper;
 
     @PostMapping("/create")
     @Operation(summary = "创建行政诉讼")
@@ -127,6 +131,7 @@ public class XzssController {
             return success(null);
         }
         XzssRespVO respVO = BeanUtils.toBean(xzss, XzssRespVO.class);
+        fillProjectId(respVO);
         if (xzss.getFyGuid() != null && !xzss.getFyGuid().isEmpty()) {
             // 需要在 XzfyService 中实现 getXzfyListByXmGuid 方法
             List<XzfyDO> xzfyList = xzfyService.getXzfyListByXmGuid(xzss.getFyGuid());
@@ -151,7 +156,9 @@ public class XzssController {
     @PreAuthorize("@ss.hasPermission('bpm:xzss:query')")
     public CommonResult<PageResult<XzssRespVO>> getXzssPage(@Valid XzssPageReqVO pageReqVO) {
         PageResult<XzssDO> pageResult = xzssService.getXzssPage(pageReqVO);
-        return success(BeanUtils.toBean(pageResult, XzssRespVO.class));
+        PageResult<XzssRespVO> result = BeanUtils.toBean(pageResult, XzssRespVO.class);
+        result.getList().forEach(this::fillProjectId);
+        return success(result);
     }
 
     @GetMapping("/export-excel")
@@ -174,6 +181,13 @@ public class XzssController {
     @Parameter(name = "xmGuid", description = "备用主键")
     public CommonResult<XzssKzDO> getXzssKzByXmGuid(@RequestParam("xmGuid") String xmGuid) {
         return success(xzssService.getXzssKzByXmGuid(xmGuid));
+    }
+
+    private void fillProjectId(XzssRespVO respVO) {
+        if (respVO == null || respVO.getXmGuid() == null) {
+            return;
+        }
+        respVO.setProjectId(historyWorkflowMapper.selectProjectIdByBizinstGuid("xzss", respVO.getXmGuid()));
     }
 
 }

@@ -17,6 +17,9 @@ public class XzssRespVO {
     @ExcelProperty("主键")
     private Long id;
 
+    @Schema(description = "历史迁移旧工作流项目号")
+    private String projectId;
+
     @Schema(description = "来文号")
     @ExcelProperty("来文号")
     private String swWh;

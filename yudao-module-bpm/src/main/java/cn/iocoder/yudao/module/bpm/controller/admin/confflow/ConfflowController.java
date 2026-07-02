@@ -2,7 +2,6 @@ package cn.iocoder.yudao.module.bpm.controller.admin.confflow;
 
 import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
-import cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.LeaveRespVO;
 import cn.iocoder.yudao.module.system.api.dept.DeptApi;
 import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
@@ -21,6 +20,7 @@ import javax.validation.*;
 import javax.servlet.http.*;
 import java.util.*;
 import java.io.IOException;
+import java.util.stream.Collectors;
 
 import cn.iocoder.yudao.framework.common.pojo.PageParam;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
@@ -32,11 +32,12 @@ import cn.iocoder.yudao.framework.excel.core.util.ExcelUtils;
 
 import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import static cn.iocoder.yudao.framework.apilog.core.enums.OperateTypeEnum.*;
-import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertSet;
 import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 
 import cn.iocoder.yudao.module.bpm.controller.admin.confflow.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.confflow.ConfflowDO;
+import cn.iocoder.yudao.module.bpm.dal.mysql.historyworkflow.HistoryWorkflowMapper;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.service.confflow.ConfflowService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
@@ -61,6 +62,9 @@ public class ConfflowController {
 
     @Resource
     private DeptApi deptApi;
+
+    @Resource
+    private HistoryWorkflowMapper historyWorkflowMapper;
 
     @PostMapping("/create")
     @Operation(summary = "创建会议报告单")
@@ -139,6 +143,7 @@ public class ConfflowController {
     public CommonResult<ConfflowRespVO> getConfflow(@RequestParam("id") Long id) {
         ConfflowDO confflow = confflowService.getConfflow(id);
         ConfflowRespVO result = BeanUtils.toBean(confflow, ConfflowRespVO.class);
+        normalizeHistoryStatus(result);
         // 查询附件列表
         List<ConfflowAttachRespVO> attachList = confflowService.getConfflowAttachListByCommId(id);
         result.setFileList(attachList);
@@ -151,10 +156,11 @@ public class ConfflowController {
     public CommonResult<PageResult<ConfflowRespVO>> getConfflowPage(@Valid ConfflowPageReqVO pageReqVO) {
         PageResult<ConfflowDO> pageResult = confflowService.getConfflowPage(pageReqVO);
         PageResult<ConfflowRespVO> result = BeanUtils.toBean(pageResult, ConfflowRespVO.class);
-        Set<Long> userIds = convertSet(result.getList(), ConfflowRespVO::getCreator);
+        normalizeHistoryStatus(result.getList());
+        Set<Long> userIds = collectCreatorUserIds(result.getList());
         Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(userIds);
         result.getList().forEach(vo ->{
-            AdminUserRespDTO user = userMap.get(vo.getCreator());
+            AdminUserRespDTO user = userMap.get(parseCreatorUserId(vo.getCreator()));
 
             if (user != null) {
                 vo.setUserName(user.getNickname());
@@ -164,6 +170,41 @@ public class ConfflowController {
             }
         });
         return success(result);
+    }
+
+    private void normalizeHistoryStatus(List<ConfflowRespVO> confflows) {
+        List<String> projectIds = confflows.stream()
+                .map(ConfflowRespVO::getProjectId)
+                .filter(StrUtil::isNotBlank)
+                .distinct()
+                .collect(Collectors.toList());
+        if (projectIds.isEmpty()) {
+            return;
+        }
+        Map<String, Map<String, Object>> proinstMap = historyWorkflowMapper.selectProinstByProjectIds(projectIds)
+                .stream()
+                .collect(Collectors.toMap(item -> String.valueOf(item.get("projectId")), item -> item, (a, b) -> a));
+        confflows.forEach(confflow -> {
+            if (isFinishedHistoryProcess(proinstMap.get(confflow.getProjectId()))) {
+                confflow.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+            }
+        });
+    }
+
+    private ConfflowRespVO normalizeHistoryStatus(ConfflowRespVO confflow) {
+        if (confflow != null && StrUtil.isNotBlank(confflow.getProjectId())
+                && isFinishedHistoryProcess(historyWorkflowMapper.selectProinstByProjectId(confflow.getProjectId()))) {
+            confflow.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+        }
+        return confflow;
+    }
+
+    private boolean isFinishedHistoryProcess(Map<String, Object> proinst) {
+        if (proinst == null || proinst.isEmpty()) {
+            return false;
+        }
+        String proinstStatus = String.valueOf(proinst.get("proinstStatus"));
+        return "2".equals(proinstStatus) || "8".equals(proinstStatus) || proinst.get("endDate") != null;
     }
 
     @GetMapping("/export-excel")
@@ -184,6 +225,24 @@ public class ConfflowController {
     @Parameter(name = "commId", description = "会议报告单编号(外键t_confflow_attach.comm_id)")
     public CommonResult<List<ConfflowAttachRespVO>> getConfflowAttachListByCommId(@RequestParam("commId") Long commId) {
         return success(confflowService.getConfflowAttachListByCommId(commId));
+    }
+
+    private Set<Long> collectCreatorUserIds(List<ConfflowRespVO> list) {
+        Set<Long> userIds = new HashSet<>();
+        for (ConfflowRespVO vo : list) {
+            Long userId = parseCreatorUserId(vo.getCreator());
+            if (userId != null) {
+                userIds.add(userId);
+            }
+        }
+        return userIds;
+    }
+
+    private Long parseCreatorUserId(String creator) {
+        if (creator == null || !creator.matches("\\d+")) {
+            return null;
+        }
+        return Long.valueOf(creator);
     }
 
 }

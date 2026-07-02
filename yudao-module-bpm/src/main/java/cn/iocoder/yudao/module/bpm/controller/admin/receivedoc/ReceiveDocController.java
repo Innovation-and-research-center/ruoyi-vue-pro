@@ -40,7 +40,9 @@ import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUti
 
 import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocDO;
+import cn.iocoder.yudao.module.bpm.dal.mysql.historyworkflow.HistoryWorkflowMapper;
 import cn.iocoder.yudao.module.bpm.job.CityNoticeJob;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.receivedoc.ReceiveDocService;
@@ -68,6 +70,9 @@ public class ReceiveDocController {
 
     @Resource
     private CityNoticeJob cityNoticeJob;
+
+    @Resource
+    private HistoryWorkflowMapper historyWorkflowMapper;
 
     @PostMapping("/create")
     @Operation(summary = "创建收文")
@@ -316,7 +321,7 @@ public class ReceiveDocController {
 //    @PreAuthorize("@ss.hasPermission('bpm:receive-doc:query')")
     public CommonResult<ReceiveDocRespVO> getReceiveDoc(@RequestParam("id") Long id) {
         ReceiveDocDO receiveDoc = receiveDocService.getReceiveDoc(id);
-        return success(BeanUtils.toBean(receiveDoc, ReceiveDocRespVO.class));
+        return success(normalizeHistoryStatus(BeanUtils.toBean(receiveDoc, ReceiveDocRespVO.class)));
     }
 
     @GetMapping("/page")
@@ -324,7 +329,44 @@ public class ReceiveDocController {
 //    @PreAuthorize("@ss.hasPermission('bpm:receive-doc:query')")
     public CommonResult<PageResult<ReceiveDocRespVO>> getReceiveDocPage(@Valid ReceiveDocPageReqVO pageReqVO) {
         PageResult<ReceiveDocDO> pageResult = receiveDocService.getReceiveDocPage(pageReqVO);
-        return success(BeanUtils.toBean(pageResult, ReceiveDocRespVO.class));
+        PageResult<ReceiveDocRespVO> result = BeanUtils.toBean(pageResult, ReceiveDocRespVO.class);
+        normalizeHistoryStatus(result.getList());
+        return success(result);
+    }
+
+    private void normalizeHistoryStatus(List<ReceiveDocRespVO> receiveDocs) {
+        List<String> projectIds = receiveDocs.stream()
+                .map(ReceiveDocRespVO::getProjectId)
+                .filter(StrUtil::isNotBlank)
+                .distinct()
+                .collect(Collectors.toList());
+        if (projectIds.isEmpty()) {
+            return;
+        }
+        Map<String, Map<String, Object>> proinstMap = historyWorkflowMapper.selectProinstByProjectIds(projectIds)
+                .stream()
+                .collect(Collectors.toMap(item -> String.valueOf(item.get("projectId")), item -> item, (a, b) -> a));
+        receiveDocs.forEach(receiveDoc -> {
+            if (isFinishedHistoryProcess(proinstMap.get(receiveDoc.getProjectId()))) {
+                receiveDoc.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+            }
+        });
+    }
+
+    private ReceiveDocRespVO normalizeHistoryStatus(ReceiveDocRespVO receiveDoc) {
+        if (receiveDoc != null && StrUtil.isNotBlank(receiveDoc.getProjectId())
+                && isFinishedHistoryProcess(historyWorkflowMapper.selectProinstByProjectId(receiveDoc.getProjectId()))) {
+            receiveDoc.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+        }
+        return receiveDoc;
+    }
+
+    private boolean isFinishedHistoryProcess(Map<String, Object> proinst) {
+        if (proinst == null || proinst.isEmpty()) {
+            return false;
+        }
+        String proinstStatus = String.valueOf(proinst.get("proinstStatus"));
+        return "2".equals(proinstStatus) || "8".equals(proinstStatus) || proinst.get("endDate") != null;
     }
 
     @GetMapping("/export-excel")

@@ -31,7 +31,6 @@ import cn.iocoder.yudao.framework.excel.core.util.ExcelUtils;
 
 import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import static cn.iocoder.yudao.framework.apilog.core.enums.OperateTypeEnum.*;
-import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertSet;
 import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 
 import cn.iocoder.yudao.module.bpm.controller.admin.timeexplain.vo.*;
@@ -118,11 +117,14 @@ public class TimeExplainController {
     @DataPermission(enable = false)
     public CommonResult<TimeExplainRespVO> getTimeExplain(@RequestParam("id") Long id) {
         TimeExplainDO timeExplain = timeExplainService.getTimeExplain(id);
-        AdminUserRespDTO startUser = adminUserApi.getUser(Long.valueOf(timeExplain.getCreator()));
-        DeptRespDTO dept = startUser.getDeptId() != null ? deptApi.getDept(startUser.getDeptId()) : null;
         TimeExplainRespVO result = BeanUtils.toBean(timeExplain, TimeExplainRespVO.class);
-        result.setDeptName(dept != null ? dept.getName() : "");
-        result.setUserName(startUser != null ? startUser.getNickname() : "");
+        Long creatorUserId = parseCreatorUserId(timeExplain.getCreator());
+        if (creatorUserId != null) {
+            AdminUserRespDTO startUser = adminUserApi.getUser(creatorUserId);
+            DeptRespDTO dept = startUser != null && startUser.getDeptId() != null ? deptApi.getDept(startUser.getDeptId()) : null;
+            result.setDeptName(dept != null ? dept.getName() : "");
+            result.setUserName(startUser != null ? startUser.getNickname() : "");
+        }
         // 查询附件列表
         List<TimeExplainAttachRespVO> attachList = timeExplainService.getTimeExplainAttachListByTimeExplainId(id);
         result.setFileList(attachList);
@@ -134,10 +136,14 @@ public class TimeExplainController {
     public CommonResult<PageResult<TimeExplainRespVO>> getTimeExplainPage(@Valid TimeExplainPageReqVO pageReqVO) {
         PageResult<TimeExplainDO> pageResult = timeExplainService.getTimeExplainPage(pageReqVO);
         PageResult<TimeExplainRespVO> result = BeanUtils.toBean(pageResult, TimeExplainRespVO.class);
-        Set<Long> userIds = convertSet(result.getList(), TimeExplainRespVO::getCreator);
+        Set<Long> userIds = collectApplyUserIds(result.getList());
         Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(userIds);
         result.getList().forEach(vo ->{
-            AdminUserRespDTO user = userMap.get(vo.getCreator());
+            if (vo.getUserName() != null && !vo.getUserName().isEmpty()) {
+                vo.setNickName(vo.getUserName());
+                return;
+            }
+            AdminUserRespDTO user = userMap.get(getApplyUserId(vo));
             if (user != null) {
                 vo.setNickName(user.getNickname());
                 // 如果需要部门或其他信息，也可以在这里设置
@@ -163,6 +169,31 @@ public class TimeExplainController {
     @Parameter(name = "timeExplainId", description = "外出请假补假编号(外键t_time_explain_attach.time_explain_id)")
     public CommonResult<List<TimeExplainAttachRespVO>> getTimeExplainAttachListByTimeExplainId(@RequestParam("timeExplainId") Long timeExplainId) {
         return success(timeExplainService.getTimeExplainAttachListByTimeExplainId(timeExplainId));
+    }
+
+    private Set<Long> collectApplyUserIds(List<TimeExplainRespVO> list) {
+        Set<Long> userIds = new HashSet<>();
+        for (TimeExplainRespVO vo : list) {
+            Long userId = getApplyUserId(vo);
+            if (userId != null) {
+                userIds.add(userId);
+            }
+        }
+        return userIds;
+    }
+
+    private Long getApplyUserId(TimeExplainRespVO vo) {
+        if (vo.getUserId() != null) {
+            return vo.getUserId();
+        }
+        return parseCreatorUserId(vo.getCreator());
+    }
+
+    private Long parseCreatorUserId(String creator) {
+        if (creator == null || !creator.matches("\\d+")) {
+            return null;
+        }
+        return Long.valueOf(creator);
     }
 
 }

@@ -24,7 +24,6 @@ import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
 import static cn.iocoder.yudao.framework.common.pojo.CommonResult.success;
-import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertSet;
 import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 
 import cn.iocoder.yudao.framework.excel.core.util.ExcelUtils;
@@ -113,10 +112,13 @@ public class LeaveController {
     @DataPermission(enable = false)
     public CommonResult<LeaveDetailRespVO> getLeave(@RequestParam("id") Long id) {
         LeaveDetailRespVO detail = leaveService.getLeaveDetail(id);
-        AdminUserRespDTO startUser = adminUserApi.getUser(detail.getCreator());
-        DeptRespDTO dept = deptApi.getDept(startUser.getDeptId());
-        detail.setDeptName(dept.getName());
-        detail.setNickName(startUser.getNickname());
+        Long creatorUserId = parseCreatorUserId(detail.getCreator());
+        if (creatorUserId != null) {
+            AdminUserRespDTO startUser = adminUserApi.getUser(creatorUserId);
+            DeptRespDTO dept = startUser != null && startUser.getDeptId() != null ? deptApi.getDept(startUser.getDeptId()) : null;
+            detail.setDeptName(dept != null ? dept.getName() : "");
+            detail.setNickName(startUser != null ? startUser.getNickname() : "");
+        }
         return success(detail);
     }
 
@@ -125,10 +127,10 @@ public class LeaveController {
     public CommonResult<PageResult<LeaveRespVO>> getLeavePage(@Valid LeavePageReqVO pageReqVO) {
         PageResult<LeaveDO> pageResult = leaveService.getLeavePage(pageReqVO);
         PageResult<LeaveRespVO> result = BeanUtils.toBean(pageResult, LeaveRespVO.class);
-        Set<Long> userIds = convertSet(result.getList(), LeaveRespVO::getCreator);
+        Set<Long> userIds = collectApplyUserIds(result.getList());
         Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(userIds);
         result.getList().forEach(vo ->{
-            AdminUserRespDTO user = userMap.get(vo.getCreator());
+            AdminUserRespDTO user = userMap.get(getApplyUserId(vo));
             if (user != null) {
                 vo.setNickName(user.getNickname());
                 // 如果需要部门或其他信息，也可以在这里设置
@@ -183,6 +185,31 @@ public class LeaveController {
     @Parameter(name = "leaveId", description = "请假编号(外键t_leave_attact.leave_id)")
     public CommonResult<List<LeaveAttachRespVO>> getLeaveAttachListByLeaveId(@RequestParam("leaveId") Long leaveId) {
         return success(leaveService.getLeaveAttachListByLeaveId(leaveId));
+    }
+
+    private Set<Long> collectApplyUserIds(List<LeaveRespVO> list) {
+        Set<Long> userIds = new HashSet<>();
+        for (LeaveRespVO vo : list) {
+            Long userId = getApplyUserId(vo);
+            if (userId != null) {
+                userIds.add(userId);
+            }
+        }
+        return userIds;
+    }
+
+    private Long getApplyUserId(LeaveRespVO vo) {
+        if (vo.getUserid() != null) {
+            return vo.getUserid().longValue();
+        }
+        return parseCreatorUserId(vo.getCreator());
+    }
+
+    private Long parseCreatorUserId(String creator) {
+        if (creator == null || !creator.matches("\\d+")) {
+            return null;
+        }
+        return Long.valueOf(creator);
     }
 
 }

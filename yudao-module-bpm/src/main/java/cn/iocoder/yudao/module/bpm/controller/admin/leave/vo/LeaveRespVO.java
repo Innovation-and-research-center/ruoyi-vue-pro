@@ -16,6 +16,9 @@ public class LeaveRespVO {
     @ExcelProperty("假期申请审批内码")
     private Long id;
 
+    @Schema(description = "历史迁移旧工作流项目号")
+    private String projectId;
+
     @Schema(description = "申请时间")
     @ExcelProperty("申请时间")
     private LocalDateTime applyDate;
@@ -47,7 +50,9 @@ public class LeaveRespVO {
 
     private Short spzt;
 
-    private Long creator;
+    private Integer userid;
+
+    private String creator;
 
     private String nickName;
 

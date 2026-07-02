@@ -33,6 +33,7 @@ import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUti
 import cn.iocoder.yudao.module.bpm.controller.admin.xzfy.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzfy.XzfyDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzfy.XzfyKzDO;
+import cn.iocoder.yudao.module.bpm.dal.mysql.historyworkflow.HistoryWorkflowMapper;
 import cn.iocoder.yudao.module.bpm.service.commentattach.CommentAttachService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
@@ -58,6 +59,9 @@ public class XzfyController {
 
     @Resource
     private XzssService xzssService;
+
+    @Resource
+    private HistoryWorkflowMapper historyWorkflowMapper;
 
     @PostMapping("/create")
     @Operation(summary = "创建行政复议")
@@ -128,6 +132,7 @@ public class XzfyController {
         }
         // 2. 转换为 RespVO
         XzfyRespVO respVO = BeanUtils.toBean(xzfy, XzfyRespVO.class);
+        fillProjectId(respVO);
 
         // 3. 获取关联的行政诉讼列表
         // 逻辑：通过行政复议的 xmGuid 匹配行政诉讼的 fyGuid
@@ -148,7 +153,9 @@ public class XzfyController {
     @PreAuthorize("@ss.hasPermission('bpm:xzfy:query')")
     public CommonResult<PageResult<XzfyRespVO>> getXzfyPage(@Valid XzfyPageReqVO pageReqVO) {
         PageResult<XzfyDO> pageResult = xzfyService.getXzfyPage(pageReqVO);
-        return success(BeanUtils.toBean(pageResult, XzfyRespVO.class));
+        PageResult<XzfyRespVO> result = BeanUtils.toBean(pageResult, XzfyRespVO.class);
+        result.getList().forEach(this::fillProjectId);
+        return success(result);
     }
 
     @GetMapping("/export-excel")
@@ -179,7 +186,16 @@ public class XzfyController {
     public CommonResult<PageResult<XzfyRespVO>> getUnlinkedXzfyPage(@Valid XzfyPageReqVO pageReqVO) {
         // 调用 Service 的分页方法
         PageResult<XzfyDO> pageResult = xzfyService.getUnlinkedXzfyPage(pageReqVO);
-        return success(BeanUtils.toBean(pageResult, XzfyRespVO.class));
+        PageResult<XzfyRespVO> result = BeanUtils.toBean(pageResult, XzfyRespVO.class);
+        result.getList().forEach(this::fillProjectId);
+        return success(result);
+    }
+
+    private void fillProjectId(XzfyRespVO respVO) {
+        if (respVO == null || respVO.getXmGuid() == null) {
+            return;
+        }
+        respVO.setProjectId(historyWorkflowMapper.selectProjectIdByBizinstGuid("xzfy", respVO.getXmGuid()));
     }
 
 

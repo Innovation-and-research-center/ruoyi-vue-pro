@@ -18,6 +18,9 @@ public class ReceiveDocRespVO {
     @ExcelProperty("收文 id")
     private Long id;
 
+    @Schema(description = "历史迁移旧工作流项目号")
+    private String projectId;
+
     @Schema(description = "单位类别")
     @ExcelProperty(value = "单位类别", converter = DictConvert.class)
     @DictFormat("receive_class") // TODO 代码优化：建议设置到对应的 DictTypeConstants 枚举类中

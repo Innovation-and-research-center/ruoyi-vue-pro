@@ -10,6 +10,7 @@ import cn.iocoder.yudao.framework.mybatis.core.query.MPJLambdaWrapperX;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.fileexchange.FileExchangeDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocDO;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.util.BpmQueryUtils;
 import com.baomidou.mybatisplus.core.toolkit.support.SFunction;
 import org.apache.ibatis.annotations.Mapper;
@@ -44,7 +45,7 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
         wrapper.eqIfPresent(ReceiveDocDO::getUrgencyDegree, reqVO.getUrgencyDegree());
         likeDictValueOrLabel(wrapper, ReceiveDocDO::getDocSecondClass, reqVO.getDocSecondClass(), DICT_TYPE_DOC_CLASS);
         wrapper.neIfPresent(ReceiveDocDO::getStatus, BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue());
-        wrapper.eqIfPresent(ReceiveDocDO::getStatus, reqVO.getStatus());
+        applyEffectiveStatusFilter(wrapper, reqVO.getStatus());
 
         if (StrUtil.isNotBlank(reqVO.getSource())) {
             if (WEB_CREATE_SOURCE.equals(reqVO.getSource())) {
@@ -67,6 +68,29 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
             }
         });
         return pageResult;
+    }
+
+    default void applyEffectiveStatusFilter(MPJLambdaWrapperX<ReceiveDocDO> wrapper, Short status) {
+        if (status == null) {
+            return;
+        }
+        if (Objects.equals(status, BpmTaskStatusEnum.APPROVE.getStatus().shortValue())) {
+            wrapper.and(w -> w.eq(ReceiveDocDO::getStatus, status)
+                    .or()
+                    .apply("t.project_id IS NOT NULL AND t.project_id <> '' AND EXISTS (" +
+                            "SELECT 1 FROM hist_wf.proinst hp WHERE hp.project_id = t.project_id " +
+                            "AND (hp.proinst_status IN (2, 8) OR hp.end_date IS NOT NULL))"));
+            return;
+        }
+        if (Objects.equals(status, BpmTaskStatusEnum.RUNNING.getStatus().shortValue())) {
+            wrapper.and(w -> w.eq(ReceiveDocDO::getStatus, status)
+                    .or()
+                    .apply("t.project_id IS NOT NULL AND t.project_id <> '' AND EXISTS (" +
+                            "SELECT 1 FROM hist_wf.proinst hp WHERE hp.project_id = t.project_id " +
+                            "AND hp.proinst_status NOT IN (2, 8) AND hp.end_date IS NULL)"));
+            return;
+        }
+        wrapper.eq(ReceiveDocDO::getStatus, status);
     }
 
     default <S> void likeDictValueOrLabel(MPJLambdaWrapperX<ReceiveDocDO> wrapper, SFunction<S, ?> column,

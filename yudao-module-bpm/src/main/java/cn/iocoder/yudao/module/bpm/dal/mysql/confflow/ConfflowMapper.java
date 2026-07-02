@@ -8,6 +8,7 @@ import cn.iocoder.yudao.framework.mybatis.core.query.LambdaQueryWrapperX;
 import cn.iocoder.yudao.framework.mybatis.core.mapper.BaseMapperX;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.confflow.ConfflowDO;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.util.BpmQueryUtils;
 import com.baomidou.mybatisplus.core.toolkit.support.SFunction;
 import org.apache.ibatis.annotations.Mapper;
@@ -35,11 +36,34 @@ public interface ConfflowMapper extends BaseMapperX<ConfflowDO> {
                 .likeIfPresent(ConfflowDO::getJoinUnit, reqVO.getJoinUnit())
                 .likeIfPresent(ConfflowDO::getOfferUnit, reqVO.getOfferUnit())
                 .likeIfPresent(ConfflowDO::getOfferPerson, reqVO.getOfferPerson())
-                .eqIfPresent(ConfflowDO::getStatus, reqVO.getStatus())
                 .neIfPresent(ConfflowDO::getStatus, BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue());
+        applyEffectiveStatusFilter(wrapper, reqVO.getStatus());
         likeKeywords(wrapper, ConfflowDO::getTitle, reqVO.getTitle());
         orderBy(reqVO, wrapper);
         return selectPage(reqVO, wrapper);
+    }
+
+    default void applyEffectiveStatusFilter(LambdaQueryWrapperX<ConfflowDO> wrapper, Short status) {
+        if (status == null) {
+            return;
+        }
+        if (Objects.equals(status, BpmTaskStatusEnum.APPROVE.getStatus().shortValue())) {
+            wrapper.and(w -> w.eq(ConfflowDO::getStatus, status)
+                    .or()
+                    .apply("t_confflow.project_id IS NOT NULL AND t_confflow.project_id <> '' AND EXISTS (" +
+                            "SELECT 1 FROM hist_wf.proinst hp WHERE hp.project_id = t_confflow.project_id " +
+                            "AND (hp.proinst_status IN (2, 8) OR hp.end_date IS NOT NULL))"));
+            return;
+        }
+        if (Objects.equals(status, BpmTaskStatusEnum.RUNNING.getStatus().shortValue())) {
+            wrapper.and(w -> w.eq(ConfflowDO::getStatus, status)
+                    .or()
+                    .apply("t_confflow.project_id IS NOT NULL AND t_confflow.project_id <> '' AND EXISTS (" +
+                            "SELECT 1 FROM hist_wf.proinst hp WHERE hp.project_id = t_confflow.project_id " +
+                            "AND hp.proinst_status NOT IN (2, 8) AND hp.end_date IS NULL)"));
+            return;
+        }
+        wrapper.eq(ConfflowDO::getStatus, status);
     }
 
     default void likeKeywords(LambdaQueryWrapperX<ConfflowDO> wrapper, SFunction<ConfflowDO, ?> column, String keyword) {

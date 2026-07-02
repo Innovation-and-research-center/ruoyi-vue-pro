@@ -37,6 +37,10 @@ public class LeaveDO extends BaseDO {
     @TableId
     private Long id;
     /**
+     * 历史迁移旧工作流项目号
+     */
+    private String projectId;
+    /**
      * 申请时间
      */
     private LocalDateTime applyDate;
