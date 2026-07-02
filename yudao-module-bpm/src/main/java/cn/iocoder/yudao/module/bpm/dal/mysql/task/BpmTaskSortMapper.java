@@ -1,6 +1,7 @@
 package cn.iocoder.yudao.module.bpm.dal.mysql.task;
 
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskPageReqVO;
+import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskRespVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -20,6 +21,12 @@ public interface BpmTaskSortMapper {
 
     Long selectDoneTaskCount(@Param("userId") Long userId,
                              @Param("reqVO") BpmTaskPageReqVO reqVO);
+
+    List<BpmTaskRespVO> selectUnifiedDoneTaskList(@Param("userId") Long userId,
+                                                  @Param("reqVO") BpmTaskPageReqVO reqVO);
+
+    Long selectUnifiedDoneTaskCount(@Param("userId") Long userId,
+                                    @Param("reqVO") BpmTaskPageReqVO reqVO);
 
     int updateHistoricTaskLongVariable(@Param("taskId") String taskId,
                                        @Param("name") String name,

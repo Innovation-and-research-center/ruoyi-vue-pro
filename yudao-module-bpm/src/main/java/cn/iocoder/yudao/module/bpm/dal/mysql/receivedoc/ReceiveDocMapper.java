@@ -14,6 +14,8 @@ import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.util.BpmQueryUtils;
 import com.baomidou.mybatisplus.core.toolkit.support.SFunction;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.*;
 
 /**
@@ -28,6 +30,20 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
     String UNKNOWN_SOURCE = "未知来源";
     String DICT_TYPE_AGENCY_NAME = "agency_name";
     String DICT_TYPE_DOC_CLASS = "doc_class";
+
+    @Select("<script>" +
+            "SELECT r.process_instance_id AS \"processInstanceId\", " +
+            "CASE WHEN count(f.id) = 0 THEN '" + WEB_CREATE_SOURCE + "' " +
+            "WHEN max(NULLIF(f.operation_information, '')) IS NULL THEN '" + UNKNOWN_SOURCE + "' " +
+            "ELSE max(NULLIF(f.operation_information, '')) END AS source " +
+            "FROM bpm_receive_doc r " +
+            "LEFT JOIN t_file_exchange f ON f.doc_id = r.id AND COALESCE(f.deleted, 0) = 0 " +
+            "WHERE r.process_instance_id IN " +
+            "<foreach collection='processInstanceIds' item='processInstanceId' open='(' separator=',' close=')'>#{processInstanceId}</foreach> " +
+            "AND COALESCE(r.deleted, 0) = 0 " +
+            "GROUP BY r.process_instance_id" +
+            "</script>")
+    List<Map<String, Object>> selectSourceByProcessInstanceIds(@Param("processInstanceIds") Collection<String> processInstanceIds);
 
     default PageResult<ReceiveDocDO> selectPage(ReceiveDocPageReqVO reqVO) {
         MPJLambdaWrapperX<ReceiveDocDO> wrapper = new MPJLambdaWrapperX<>();

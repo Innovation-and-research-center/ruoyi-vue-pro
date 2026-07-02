@@ -56,6 +56,15 @@ public interface BpmTaskService {
     PageResult<HistoricTaskInstance> getTaskDonePage(Long userId, BpmTaskPageReqVO pageReqVO);
 
     /**
+     * 获得已办任务统一分页，包含 Flowable 新流程和 hist_wf 历史流程。
+     *
+     * @param userId    用户编号
+     * @param pageReqVO 分页请求
+     * @return 流程任务分页
+     */
+    PageResult<BpmTaskRespVO> getUnifiedTaskDonePage(Long userId, BpmTaskPageReqVO pageReqVO);
+
+    /**
      * 获得全部的流程任务分页
      *
      * @param userId    用户编号

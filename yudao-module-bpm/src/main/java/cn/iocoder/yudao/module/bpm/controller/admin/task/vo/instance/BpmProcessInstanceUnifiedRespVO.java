@@ -23,6 +23,21 @@ public class BpmProcessInstanceUnifiedRespVO {
 
     private String processReason;
 
+    /**
+     * 是否历史迁移数据。历史数据来自 hist_wf，不进入 Flowable 表。
+     */
+    private Boolean isHistory;
+
+    /**
+     * 历史业务项目内码，用于跳转历史详情和关联业务表。
+     */
+    private String projectId;
+
+    /**
+     * 数据来源：flowable / history。
+     */
+    private String sourceType;
+
     // --- 运行时信息 (仅进行中流程有) ---
     private String currTaskName;       // 在办环节 (当前任务节点名称)
     private String currTaskAssignee;   // 在办人员 (当前办理人姓名)

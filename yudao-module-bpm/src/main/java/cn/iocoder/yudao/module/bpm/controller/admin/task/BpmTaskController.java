@@ -10,6 +10,7 @@ import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.*;
 import cn.iocoder.yudao.module.bpm.convert.task.BpmTaskConvert;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmFormDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmProcessDefinitionInfoDO;
+import cn.iocoder.yudao.module.bpm.dal.mysql.receivedoc.ReceiveDocMapper;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmFormService;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmProcessDefinitionService;
 import cn.iocoder.yudao.module.bpm.service.task.BpmProcessInstanceService;
@@ -73,6 +74,8 @@ public class BpmTaskController {
 
     @Resource
     private RepositoryService repositoryService;
+    @Resource
+    private ReceiveDocMapper receiveDocMapper;
 
 
     @GetMapping("todo-page")
@@ -90,26 +93,32 @@ public class BpmTaskController {
                 convertSet(processInstanceMap.values(), instance -> Long.valueOf(instance.getStartUserId())));
         Map<String, BpmProcessDefinitionInfoDO> processDefinitionInfoMap = processDefinitionService.getProcessDefinitionInfoMap(
                 convertSet(pageResult.getList(), Task::getProcessDefinitionId));
-        return success(BpmTaskConvert.INSTANCE.buildTodoTaskPage(pageResult, processInstanceMap, userMap, processDefinitionInfoMap));
+        PageResult<BpmTaskRespVO> result = BpmTaskConvert.INSTANCE.buildTodoTaskPage(pageResult, processInstanceMap, userMap, processDefinitionInfoMap);
+        fillReceiveDocSource(result.getList());
+        return success(result);
+    }
+
+    private void fillReceiveDocSource(List<BpmTaskRespVO> tasks) {
+        Set<String> processInstanceIds = convertSet(tasks, BpmTaskRespVO::getProcessInstanceId);
+        if (CollUtil.isEmpty(processInstanceIds)) {
+            return;
+        }
+        Map<String, String> sourceMap = convertMap(receiveDocMapper.selectSourceByProcessInstanceIds(processInstanceIds),
+                row -> String.valueOf(row.get("processInstanceId")),
+                row -> row.get("source") == null ? null : String.valueOf(row.get("source")));
+        tasks.forEach(task -> {
+            String source = sourceMap.get(task.getProcessInstanceId());
+            if (StrUtil.isNotBlank(source)) {
+                task.setSource(source);
+            }
+        });
     }
 
     @GetMapping("done-page")
     @Operation(summary = "获取 Done 已办任务分页")
     @PreAuthorize("@ss.hasPermission('bpm:task:query')")
     public CommonResult<PageResult<BpmTaskRespVO>> getTaskDonePage(@Valid BpmTaskPageReqVO pageVO) {
-        PageResult<HistoricTaskInstance> pageResult = taskService.getTaskDonePage(getLoginUserId(), pageVO);
-        if (CollUtil.isEmpty(pageResult.getList())) {
-            return success(PageResult.empty());
-        }
-
-        // 拼接数据
-        Map<String, HistoricProcessInstance> processInstanceMap = processInstanceService.getHistoricProcessInstanceMap(
-                convertSet(pageResult.getList(), HistoricTaskInstance::getProcessInstanceId));
-        Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(
-                convertSet(processInstanceMap.values(), instance -> Long.valueOf(instance.getStartUserId())));
-        Map<String, BpmProcessDefinitionInfoDO> processDefinitionInfoMap = processDefinitionService.getProcessDefinitionInfoMap(
-                convertSet(pageResult.getList(), HistoricTaskInstance::getProcessDefinitionId));
-        return success(BpmTaskConvert.INSTANCE.buildTaskPage(pageResult, processInstanceMap, userMap, null, processDefinitionInfoMap));
+        return success(taskService.getUnifiedTaskDonePage(getLoginUserId(), pageVO));
     }
 
     @GetMapping("manager-page")

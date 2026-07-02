@@ -461,6 +461,16 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         return new PageResult<>(tasks, count);
     }
 
+    @Override
+    public PageResult<BpmTaskRespVO> getUnifiedTaskDonePage(Long userId, BpmTaskPageReqVO pageVO) {
+        Long count = taskSortMapper.selectUnifiedDoneTaskCount(userId, pageVO);
+        if (count == null || count == 0) {
+            return PageResult.empty();
+        }
+        List<BpmTaskRespVO> list = taskSortMapper.selectUnifiedDoneTaskList(userId, pageVO);
+        return new PageResult<>(list, count);
+    }
+
     private PageResult<HistoricTaskInstance> getTaskDonePageBySql(Long userId, BpmTaskPageReqVO pageVO) {
         Long count = taskSortMapper.selectDoneTaskCount(userId, pageVO);
         if (count == null || count == 0) {

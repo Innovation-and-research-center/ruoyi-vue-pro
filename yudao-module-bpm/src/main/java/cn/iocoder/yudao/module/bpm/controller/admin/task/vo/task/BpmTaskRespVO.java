@@ -45,6 +45,18 @@ public class BpmTaskRespVO {
     @Schema(description = "办结时限日期")
     private LocalDateTime deadlineDate;
 
+    @Schema(description = "来源")
+    private String source;
+
+    @Schema(description = "是否历史迁移数据")
+    private Boolean isHistory;
+
+    @Schema(description = "历史业务项目内码")
+    private String projectId;
+
+    @Schema(description = "数据来源：flowable / history")
+    private String sourceType;
+
     @Schema(description = "任务状态", requiredMode = Schema.RequiredMode.REQUIRED, example = "2")
     private Integer status; // 参见 BpmTaskStatusEnum 枚举
 
@@ -126,6 +138,15 @@ public class BpmTaskRespVO {
 
         @Schema(description = "流程定义的key", example = "2048")
         private String processDefinitionKey;
+
+        @Schema(description = "是否历史迁移数据")
+        private Boolean isHistory;
+
+        @Schema(description = "历史业务项目内码")
+        private String projectId;
+
+        @Schema(description = "数据来源：flowable / history")
+        private String sourceType;
 
         /**
          * 发起人的用户信息

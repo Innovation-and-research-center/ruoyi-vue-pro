@@ -2,6 +2,42 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="cn.iocoder.yudao.module.bpm.dal.mysql.task.BpmTaskSortMapper">
 
+    <resultMap id="UnifiedDoneTaskResultMap" type="cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskRespVO">
+        <id property="id" column="id" />
+        <result property="name" column="name" />
+        <result property="taskName" column="taskName" />
+        <result property="createTime" column="createTime" />
+        <result property="endTime" column="endTime" />
+        <result property="durationInMillis" column="durationInMillis" />
+        <result property="dueDate" column="dueDate" />
+        <result property="urgencyDegree" column="urgencyDegree" />
+        <result property="deadlineDate" column="deadlineDate" />
+        <result property="source" column="source" />
+        <result property="status" column="status" />
+        <result property="reason" column="reason" />
+        <result property="taskDefinitionKey" column="taskDefinitionKey" />
+        <result property="processInstanceId" column="processInstanceId" />
+        <result property="isHistory" column="isHistory" />
+        <result property="projectId" column="projectId" />
+        <result property="sourceType" column="sourceType" />
+        <association property="assigneeUser" javaType="cn.iocoder.yudao.module.bpm.controller.admin.base.user.UserSimpleBaseVO">
+            <result property="nickname" column="assigneeNickname" />
+        </association>
+        <association property="processInstance" javaType="cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskRespVO$ProcessInstance">
+            <id property="id" column="processInstanceId" />
+            <result property="name" column="processInstanceName" />
+            <result property="createTime" column="processInstanceCreateTime" />
+            <result property="processDefinitionId" column="processDefinitionId" />
+            <result property="processDefinitionKey" column="processDefinitionKey" />
+            <result property="isHistory" column="isHistory" />
+            <result property="projectId" column="projectId" />
+            <result property="sourceType" column="sourceType" />
+            <association property="startUser" javaType="cn.iocoder.yudao.module.bpm.controller.admin.base.user.UserSimpleBaseVO">
+                <result property="nickname" column="startUserNickname" />
+            </association>
+        </association>
+    </resultMap>
+
     <sql id="TodoFrom">
         FROM ACT_RU_TASK t
         LEFT JOIN ACT_HI_PROCINST p ON p.ID_ = t.PROC_INST_ID_
@@ -91,7 +127,7 @@
             <if test="reqVO.category != null and reqVO.category != ''"> AND t.CATEGORY_ = #{reqVO.category} </if>
             <if test="reqVO.processDefinitionKey != null and reqVO.processDefinitionKey != ''"> AND def.KEY_ = #{reqVO.processDefinitionKey} </if>
             <if test="reqVO.createTime != null and reqVO.createTime.length > 0">
-                AND t.CREATE_TIME_ BETWEEN #{reqVO.createTime[0]} AND #{reqVO.createTime[1]}
+                AND t.START_TIME_ BETWEEN #{reqVO.createTime[0]} AND #{reqVO.createTime[1]}
             </if>
             <if test="reqVO.processInstanceNameKeywords != null and reqVO.processInstanceNameKeywords.size() > 0">
                 <foreach collection="reqVO.processInstanceNameKeywords" item="keyword">
@@ -124,7 +160,7 @@
             <when test="reqVO.orderField == 'deadlineDate' and reqVO.orderDirection == 'desc'">deadline.LONG_ DESC</when>
             <when test="reqVO.orderField == 'processInstance.createTime' and reqVO.orderDirection == 'asc'">p.START_TIME_ ASC</when>
             <when test="reqVO.orderField == 'processInstance.createTime' and reqVO.orderDirection == 'desc'">p.START_TIME_ DESC</when>
-            <otherwise>t.CREATE_TIME_ DESC</otherwise>
+            <otherwise>t.START_TIME_ DESC</otherwise>
         </choose>
         , t.ID_ DESC
     </sql>
@@ -193,6 +229,243 @@
         SELECT COUNT(1)
         <include refid="DoneFrom" />
         <include refid="DoneWhere" />
+    </select>
+
+    <sql id="UnifiedDoneTaskData">
+        <bind name="VAR_URGENCY" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_URGENCY_DEGREE" />
+        <bind name="VAR_SOURCE_UNIT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_SOURCE_UNIT" />
+        <bind name="VAR_DEADLINE" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_DEADLINE_DATE" />
+        <bind name="VAR_PROCESS_STATUS" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_INSTANCE_VARIABLE_STATUS" />
+        <bind name="TASK_STATUS" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@TASK_VARIABLE_STATUS" />
+        <bind name="START_USER_NODE_ID" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnModelConstants@START_USER_NODE_ID" />
+        (
+            SELECT
+                t.ID_ AS id,
+                t.NAME_ AS name,
+                def.NAME_ AS "taskName",
+                t.START_TIME_ AS "createTime",
+                t.END_TIME_ AS "endTime",
+                t.DURATION_ AS "durationInMillis",
+                t.DUE_DATE_ AS "dueDate",
+                (SELECT COALESCE(CAST(v.LONG_ AS VARCHAR), v.TEXT_)
+                 FROM ACT_HI_VARINST v
+                 WHERE v.PROC_INST_ID_ = t.PROC_INST_ID_ AND v.NAME_ = #{VAR_URGENCY}
+                 LIMIT 1) AS "urgencyDegree",
+                (SELECT CASE WHEN v.LONG_ IS NOT NULL THEN to_timestamp(v.LONG_ / 1000) ELSE NULL END
+                 FROM ACT_HI_VARINST v
+                 WHERE v.PROC_INST_ID_ = t.PROC_INST_ID_ AND v.NAME_ = #{VAR_DEADLINE}
+                 LIMIT 1) AS "deadlineDate",
+                (SELECT v.TEXT_
+                 FROM ACT_HI_VARINST v
+                 WHERE v.PROC_INST_ID_ = t.PROC_INST_ID_ AND v.NAME_ = #{VAR_SOURCE_UNIT}
+                 LIMIT 1) AS source,
+                CAST(COALESCE((SELECT COALESCE(CAST(v.LONG_ AS VARCHAR), v.TEXT_)
+                               FROM ACT_HI_VARINST v
+                               WHERE v.TASK_ID_ = t.ID_ AND v.NAME_ = #{TASK_STATUS}
+                               LIMIT 1), '2') AS INTEGER) AS status,
+                (SELECT v.TEXT_
+                 FROM ACT_HI_VARINST v
+                 WHERE v.TASK_ID_ = t.ID_ AND v.NAME_ = 'reason'
+                 LIMIT 1) AS reason,
+                t.TASK_DEF_KEY_ AS "taskDefinitionKey",
+                t.PROC_INST_ID_ AS "processInstanceId",
+                p.NAME_ AS "processInstanceName",
+                p.START_TIME_ AS "processInstanceCreateTime",
+                p.PROC_DEF_ID_ AS "processDefinitionId",
+                def.KEY_ AS "processDefinitionKey",
+                startUser.nickname AS "startUserNickname",
+                assigneeUser.nickname AS "assigneeNickname",
+                FALSE AS "isHistory",
+                NULL AS "projectId",
+                'flowable' AS "sourceType",
+                t.ID_ AS "sortId"
+            FROM ACT_HI_TASKINST t
+            LEFT JOIN ACT_HI_PROCINST p ON p.ID_ = t.PROC_INST_ID_
+            LEFT JOIN ACT_RE_PROCDEF def ON def.ID_ = t.PROC_DEF_ID_
+            LEFT JOIN system_users startUser ON p.START_USER_ID_ = CAST(startUser.id AS VARCHAR)
+            LEFT JOIN system_users assigneeUser ON t.ASSIGNEE_ = CAST(assigneeUser.id AS VARCHAR)
+            WHERE t.ASSIGNEE_ = CAST(#{userId} AS VARCHAR)
+              AND t.END_TIME_ IS NOT NULL
+              AND t.TASK_DEF_KEY_ != #{START_USER_NODE_ID}
+              AND NOT EXISTS (
+                  SELECT 1 FROM ACT_HI_VARINST deletedStatus
+                  WHERE deletedStatus.PROC_INST_ID_ = t.PROC_INST_ID_
+                    AND deletedStatus.NAME_ = #{VAR_PROCESS_STATUS}
+                    AND COALESCE(CAST(deletedStatus.LONG_ AS VARCHAR), deletedStatus.TEXT_) = '5'
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM ACT_HI_VARINST cancelStatus
+                  WHERE cancelStatus.TASK_ID_ = t.ID_
+                    AND cancelStatus.NAME_ = #{TASK_STATUS}
+                    AND COALESCE(CAST(cancelStatus.LONG_ AS VARCHAR), cancelStatus.TEXT_) = '4'
+              )
+
+            UNION ALL
+
+            SELECT
+                CONCAT('HISTORY_TASK:', a.actinst_id) AS id,
+                a.actinst_name AS name,
+                CASE
+                    WHEN rd.id IS NOT NULL THEN '收文'
+                    WHEN lv.id IS NOT NULL THEN '请假管理'
+                    WHEN te.id IS NOT NULL THEN '因公外出'
+                    WHEN cf.id IS NOT NULL THEN '会议报告单'
+                    WHEN bpm.business_type = 'xzfy' THEN '行政复议'
+                    WHEN bpm.business_type = 'xzss' THEN '行政诉讼'
+                    ELSE '历史流程'
+                END AS "taskName",
+                a.start_date AS "createTime",
+                a.end_date AS "endTime",
+                CASE
+                    WHEN a.start_date IS NOT NULL AND a.end_date IS NOT NULL
+                    THEN CAST(EXTRACT(EPOCH FROM (a.end_date - a.start_date)) * 1000 AS BIGINT)
+                    ELSE NULL
+                END AS "durationInMillis",
+                a.will_finish_date AS "dueDate",
+                CAST(p.emergency AS VARCHAR) AS "urgencyDegree",
+                p.deadline AS "deadlineDate",
+                COALESCE(rd.send_dept, p.responsible_dept) AS source,
+                2 AS status,
+                a.actinst_comment AS reason,
+                CAST(a.actinst_id AS VARCHAR) AS "taskDefinitionKey",
+                CAST(p.proinst_id AS VARCHAR) AS "processInstanceId",
+                p.proinst_name AS "processInstanceName",
+                p.start_date AS "processInstanceCreateTime",
+                NULL AS "processDefinitionId",
+                CASE
+                    WHEN rd.id IS NOT NULL THEN 'receive_doc'
+                    WHEN lv.id IS NOT NULL THEN 'leave'
+                    WHEN te.id IS NOT NULL THEN 'time_explain'
+                    WHEN cf.id IS NOT NULL THEN 'confflow'
+                    WHEN bpm.business_type = 'xzfy' THEN 'xzfy'
+                    WHEN bpm.business_type = 'xzss' THEN 'xzss'
+                    ELSE 'history'
+                END AS "processDefinitionKey",
+                p.creator AS "startUserNickname",
+                a.transactor AS "assigneeNickname",
+                TRUE AS "isHistory",
+                p.project_id AS "projectId",
+                'history' AS "sourceType",
+                CAST(a.actinst_id AS VARCHAR) AS "sortId"
+            FROM hist_wf.actinst a
+            JOIN hist_wf.proinst p ON p.source_schema = a.source_schema AND p.proinst_id = a.proinst_id
+            LEFT JOIN (
+                SELECT project_id, MAX(id) AS id, MAX(send_dept) AS send_dept
+                FROM bpm_receive_doc
+                WHERE COALESCE(deleted, 0) = 0
+                GROUP BY project_id
+            ) rd ON rd.project_id = p.project_id
+            LEFT JOIN (
+                SELECT project_id, MAX(id) AS id
+                FROM bpm_leave
+                WHERE COALESCE(deleted, 0) = 0
+                GROUP BY project_id
+            ) lv ON lv.project_id = p.project_id
+            LEFT JOIN (
+                SELECT project_id, MAX(id) AS id
+                FROM t_time_explain
+                WHERE COALESCE(deleted, 0) = 0
+                GROUP BY project_id
+            ) te ON te.project_id = p.project_id
+            LEFT JOIN (
+                SELECT project_id, MAX(id) AS id
+                FROM t_confflow
+                WHERE COALESCE(deleted, 0) = 0
+                GROUP BY project_id
+            ) cf ON cf.project_id = p.project_id
+            LEFT JOIN (
+                SELECT project_id, MIN(business_type) AS business_type
+                FROM hist_wf.biz_project_map
+                WHERE business_type IN ('xzfy', 'xzss')
+                GROUP BY project_id
+            ) bpm ON bpm.project_id = p.project_id
+            WHERE a.user_id = #{userId}
+              AND a.end_date IS NOT NULL
+        ) unified
+    </sql>
+
+    <sql id="UnifiedDoneTaskWhere">
+        <where>
+            <if test="reqVO.name != null and reqVO.name != ''"> AND unified.name LIKE CONCAT('%', #{reqVO.name}, '%') </if>
+            <if test="reqVO.status != null"> AND unified.status = #{reqVO.status} </if>
+            <if test="reqVO.category != null and reqVO.category != ''"> AND unified."processDefinitionKey" = #{reqVO.category} </if>
+            <if test="reqVO.processDefinitionKey != null and reqVO.processDefinitionKey != ''">
+                AND (
+                    unified."processDefinitionKey" = #{reqVO.processDefinitionKey}
+                    OR (#{reqVO.processDefinitionKey} = 'receive_doc'
+                        AND (unified."processDefinitionKey" = 'receive_doc'
+                            OR unified."taskName" LIKE '%收文%' OR unified."processInstanceName" LIKE '%收文%'))
+                    OR (#{reqVO.processDefinitionKey} = 'leave'
+                        AND (unified."processDefinitionKey" IN ('leave', 'oa_leave')
+                            OR unified."taskName" LIKE '%请假%' OR unified."processInstanceName" LIKE '%请假%'))
+                    OR (#{reqVO.processDefinitionKey} = 'time_explain'
+                        AND (unified."processDefinitionKey" = 'time_explain'
+                            OR unified."taskName" LIKE '%公出%' OR unified."taskName" LIKE '%外出%'
+                            OR unified."processInstanceName" LIKE '%公出%' OR unified."processInstanceName" LIKE '%外出%'))
+                    OR (#{reqVO.processDefinitionKey} = 'confflow'
+                        AND (unified."processDefinitionKey" = 'confflow'
+                            OR unified."taskName" LIKE '%会议%' OR unified."processInstanceName" LIKE '%会议%'))
+                    OR (#{reqVO.processDefinitionKey} = 'xzfy'
+                        AND (unified."processDefinitionKey" = 'xzfy'
+                            OR unified."taskName" LIKE '%复议%' OR unified."processInstanceName" LIKE '%复议%'))
+                    OR (#{reqVO.processDefinitionKey} = 'xzss'
+                        AND (unified."processDefinitionKey" = 'xzss'
+                            OR unified."taskName" LIKE '%诉讼%' OR unified."processInstanceName" LIKE '%诉讼%'))
+                )
+            </if>
+            <if test="reqVO.createTime != null and reqVO.createTime.length > 0">
+                AND unified."createTime" BETWEEN #{reqVO.createTime[0]} AND #{reqVO.createTime[1]}
+            </if>
+            <if test="reqVO.processInstanceNameKeywords != null and reqVO.processInstanceNameKeywords.size() > 0">
+                <foreach collection="reqVO.processInstanceNameKeywords" item="keyword">
+                    AND unified."processInstanceName" LIKE CONCAT('%', #{keyword}, '%')
+                </foreach>
+            </if>
+            <if test="reqVO.processInstanceId != null and reqVO.processInstanceId != ''">
+                AND (unified."processInstanceId" LIKE CONCAT('%', #{reqVO.processInstanceId}, '%')
+                    OR unified."projectId" LIKE CONCAT('%', #{reqVO.processInstanceId}, '%'))
+            </if>
+            <if test="reqVO.urgencyDegree != null"> AND unified."urgencyDegree" = CAST(#{reqVO.urgencyDegree} AS VARCHAR) </if>
+            <if test="reqVO.sendingUnit != null and reqVO.sendingUnit != ''"> AND LOWER(unified.source) LIKE LOWER(CONCAT('%', #{reqVO.sendingUnit}, '%')) </if>
+            <if test="reqVO.dueDate != null and reqVO.dueDate.length > 0">
+                AND unified."dueDate" BETWEEN #{reqVO.dueDate[0]} AND #{reqVO.dueDate[1]}
+            </if>
+            <if test="reqVO.processDeadline != null and reqVO.processDeadline.length > 0">
+                AND unified."deadlineDate" BETWEEN #{reqVO.processDeadline[0]} AND #{reqVO.processDeadline[1]}
+            </if>
+        </where>
+    </sql>
+
+    <select id="selectUnifiedDoneTaskList" resultMap="UnifiedDoneTaskResultMap">
+        SELECT *
+        FROM <include refid="UnifiedDoneTaskData" />
+        <include refid="UnifiedDoneTaskWhere" />
+        ORDER BY
+        <choose>
+            <when test="reqVO.orderField == 'processInstanceName' and reqVO.orderDirection == 'asc'">unified."processInstanceName" ASC</when>
+            <when test="reqVO.orderField == 'processInstanceName' and reqVO.orderDirection == 'desc'">unified."processInstanceName" DESC</when>
+            <when test="reqVO.orderField == 'processInstance.name' and reqVO.orderDirection == 'asc'">unified."processInstanceName" ASC</when>
+            <when test="reqVO.orderField == 'processInstance.name' and reqVO.orderDirection == 'desc'">unified."processInstanceName" DESC</when>
+            <when test="reqVO.orderField == 'name' and reqVO.orderDirection == 'asc'">unified.name ASC</when>
+            <when test="reqVO.orderField == 'name' and reqVO.orderDirection == 'desc'">unified.name DESC</when>
+            <when test="reqVO.orderField == 'urgencyDegree' and reqVO.orderDirection == 'asc'">unified."urgencyDegree" ASC</when>
+            <when test="reqVO.orderField == 'urgencyDegree' and reqVO.orderDirection == 'desc'">unified."urgencyDegree" DESC</when>
+            <when test="reqVO.orderField == 'deadlineDate' and reqVO.orderDirection == 'asc'">unified."deadlineDate" ASC</when>
+            <when test="reqVO.orderField == 'deadlineDate' and reqVO.orderDirection == 'desc'">unified."deadlineDate" DESC</when>
+            <when test="reqVO.orderField == 'processInstance.createTime' and reqVO.orderDirection == 'asc'">unified."processInstanceCreateTime" ASC</when>
+            <when test="reqVO.orderField == 'processInstance.createTime' and reqVO.orderDirection == 'desc'">unified."processInstanceCreateTime" DESC</when>
+            <when test="reqVO.orderField == 'endTime' and reqVO.orderDirection == 'asc'">unified."endTime" ASC</when>
+            <when test="reqVO.orderField == 'endTime' and reqVO.orderDirection == 'desc'">unified."endTime" DESC</when>
+            <otherwise>unified."processInstanceCreateTime" DESC</otherwise>
+        </choose>
+        , unified."sortId" DESC
+        LIMIT #{reqVO.pageSize} OFFSET (#{reqVO.pageNo} - 1) * #{reqVO.pageSize}
+    </select>
+
+    <select id="selectUnifiedDoneTaskCount" resultType="java.lang.Long">
+        SELECT COUNT(1)
+        FROM <include refid="UnifiedDoneTaskData" />
+        <include refid="UnifiedDoneTaskWhere" />
     </select>
 
     <update id="updateHistoricTaskLongVariable">
