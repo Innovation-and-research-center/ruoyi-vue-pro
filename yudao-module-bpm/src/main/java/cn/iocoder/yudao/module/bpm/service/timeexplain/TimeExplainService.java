@@ -24,6 +24,10 @@ public interface TimeExplainService {
 
     Long createOut(Long userId,@Valid TimeExplainSaveReqVO createReqVO);
 
+    Long saveOut(Long userId, @Valid TimeExplainSaveReqVO createReqVO);
+
+    void createFlowOut(Long userId, @Valid TimeExplainSaveReqVO updateReqVO);
+
     /**
      * 更新外出请假补假
      *

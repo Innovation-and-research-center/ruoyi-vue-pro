@@ -23,6 +23,10 @@ public interface XzfyService {
      */
     Long createXzfy(Long userId,@Valid XzfySaveReqVO createReqVO);
 
+    Long saveXzfy(Long userId, @Valid XzfySaveReqVO createReqVO);
+
+    void createFlowXzfy(Long userId, @Valid XzfySaveReqVO updateReqVO);
+
     /**
      * 更新行政复议
      *

@@ -1,5 +1,7 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.xzss;
 
+import cn.hutool.core.util.StrUtil;
+import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
 import cn.iocoder.yudao.module.bpm.controller.admin.xzfy.vo.XzfyRespVO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzfy.XzfyDO;
 import cn.iocoder.yudao.module.bpm.service.xzfy.XzfyService;
@@ -38,6 +40,7 @@ import cn.iocoder.yudao.module.bpm.service.commentattach.CommentAttachService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.xzss.XzssService;
+import org.flowable.task.api.Task;
 
 @Tag(name = "管理后台 - 行政诉讼")
 @RestController
@@ -63,11 +66,45 @@ public class XzssController {
     @Resource
     private HistoryWorkflowMapper historyWorkflowMapper;
 
+    @Resource
+    private org.flowable.engine.TaskService flowableTaskService;
+
     @PostMapping("/create")
     @Operation(summary = "创建行政诉讼")
     @PreAuthorize("@ss.hasPermission('bpm:xzss:create')")
     public CommonResult<Long> createXzss(@Valid @RequestBody XzssSaveReqVO createReqVO) {
+        parseProcessVariables(createReqVO);
         return success(xzssService.createXzss(getLoginUserId(),createReqVO));
+    }
+
+    @PostMapping("/save")
+    @Operation(summary = "保存行政诉讼并生成登记待办")
+    @PreAuthorize("@ss.hasPermission('bpm:xzss:create')")
+    public CommonResult<XzssSaveRespVO> saveXzss(@Valid @RequestBody XzssSaveReqVO reqVO) {
+        parseProcessVariables(reqVO);
+        Long userId = getLoginUserId();
+        Long id = xzssService.saveXzss(userId, reqVO);
+        XzssDO xzss = xzssService.getXzss(id);
+        String processInstanceId = xzss != null ? xzss.getProcessInstanceId() : null;
+        Task task = StrUtil.isBlank(processInstanceId) ? null : flowableTaskService.createTaskQuery()
+                .processInstanceId(processInstanceId).taskAssignee(String.valueOf(userId)).active().singleResult();
+        return success(new XzssSaveRespVO().setId(id).setProcessInstanceId(processInstanceId)
+                .setTaskId(task != null ? task.getId() : null));
+    }
+
+    @PostMapping("/create-flow")
+    @Operation(summary = "提交已保存的行政诉讼登记")
+    @PreAuthorize("@ss.hasPermission('bpm:xzss:create')")
+    public CommonResult<Boolean> createFlowXzss(@Valid @RequestBody XzssSaveReqVO reqVO) {
+        parseProcessVariables(reqVO);
+        xzssService.createFlowXzss(getLoginUserId(), reqVO);
+        return success(true);
+    }
+
+    private void parseProcessVariables(XzssSaveReqVO reqVO) {
+        if (StrUtil.isNotEmpty(reqVO.getProcessVariablesStr())) {
+            reqVO.setProcessVariables(JsonUtils.parseObject(reqVO.getProcessVariablesStr(), Map.class));
+        }
     }
 
     @PutMapping("/update")
@@ -138,13 +175,9 @@ public class XzssController {
             respVO.setXzfyList(BeanUtils.toBean(xzfyList, XzfyRespVO.class));
         }
 
-        // 4. 获取历史诉讼列表
-        // 逻辑：历史诉讼则是 ss_guid 和 xmid 匹配
-        // 理解为：查找其他诉讼记录，其 ssGuid 等于当前的 xmGuid (即查找关联到本案的记录)
-        if (xzss.getXmGuid() != null && !xzss.getXmGuid().isEmpty()) {
-            // 需要在 XzssService 中实现 getXzssListBySsGuid 方法
-            // 这里假设数据库中字段为 ss_guid，对应实体字段为 ssGuid
-            List<XzssDO> historyList = xzssService.getXzssListBySsGuid(xzss.getXmGuid());
+        // 4. 根据当前记录的 ssGuid 向前追溯上一审、上上一审等历史诉讼。
+        if (xzss.getSsGuid() != null && !xzss.getSsGuid().isEmpty()) {
+            List<XzssDO> historyList = xzssService.getXzssHistoryList(xzss.getSsGuid());
             respVO.setHistoryXzssList(BeanUtils.toBean(historyList, XzssRespVO.class));
         }
 

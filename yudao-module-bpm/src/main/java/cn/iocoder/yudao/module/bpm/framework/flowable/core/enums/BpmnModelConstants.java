@@ -9,6 +9,15 @@ import cn.iocoder.yudao.module.bpm.enums.definition.BpmModelTypeEnum;
  */
 public interface BpmnModelConstants {
 
+    /** 业务节点类型扩展属性 */
+    String BUSINESS_NODE_TYPE = "business_node_type";
+    /** 登记类业务节点 */
+    String BUSINESS_NODE_TYPE_REGISTER = "register";
+    /** 登记业务编码扩展属性 */
+    String REGISTER_CODE = "register_code";
+    /** 登记任务提交模式扩展属性 */
+    String REGISTER_SUBMIT_MODE = "register_submit_mode";
+
     String BPMN_FILE_SUFFIX = ".bpmn";
 
     /**

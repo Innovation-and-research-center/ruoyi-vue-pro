@@ -20,6 +20,10 @@ public interface LeaveService {
      */
     Long createLeave(Long userId,@Valid LeaveSaveReqVO createReqVO);
 
+    Long saveLeave(Long userId, @Valid LeaveSaveReqVO createReqVO);
+
+    void createFlowLeave(Long userId, @Valid LeaveSaveReqVO updateReqVO);
+
     /**
      * 更新假期申请审批
      *

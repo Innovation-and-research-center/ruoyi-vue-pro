@@ -3,7 +3,7 @@ package cn.iocoder.yudao.module.bpm.framework.flowable.core.behavior;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.candidate.BpmTaskCandidateInvoker;
-import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmReceiveRegisterTaskUtils;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.bpmn.model.UserTask;
@@ -45,8 +45,8 @@ public class BpmUserTaskActivityBehavior extends UserTaskActivityBehavior {
     protected void handleAssignments(TaskService taskService, String assignee, String owner,
         List<String> candidateUsers, List<String> candidateGroups, TaskEntity task, ExpressionManager expressionManager,
         DelegateExecution execution, ProcessEngineConfigurationImpl processEngineConfiguration) {
-        if (BpmReceiveRegisterTaskUtils.isReceiveRegisterTask(task.getTaskDefinitionKey())) {
-            Set<Long> candidateUserIds = BpmReceiveRegisterTaskUtils.calculateCandidateUserIds(execution, taskCandidateInvoker);
+        if (BpmRegisterTaskUtils.isRegisterTask(execution)) {
+            Set<Long> candidateUserIds = BpmRegisterTaskUtils.calculateCandidateUserIds(execution, taskCandidateInvoker);
             if (CollUtil.isNotEmpty(candidateUserIds)) {
                 task.setAssignee(null);
                 task.addCandidateUsers(candidateUserIds.stream().map(String::valueOf).collect(Collectors.toList()));

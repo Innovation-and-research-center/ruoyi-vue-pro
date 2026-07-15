@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.bpm.service.xzfy;
 
+import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.NumberUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.util.date.DateUtils;
@@ -10,6 +11,7 @@ import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.receivedoc.ReceiveDocDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
 import cn.iocoder.yudao.module.bpm.dal.mysql.xzss.XzssMapper;
+import cn.iocoder.yudao.module.bpm.dal.mysql.task.BpmTaskSortMapper;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
@@ -22,6 +24,7 @@ import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.transaction.annotation.Transactional;
+import org.flowable.engine.RuntimeService;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -72,11 +75,44 @@ public class XzfyServiceImpl implements XzfyService {
     private CommentAttachService commentAttachService;
 
     @Resource
+    private BpmTaskSortMapper taskSortMapper;
+
+    @Resource
+    private RuntimeService runtimeService;
+
+    @Resource
     private BpmInvalidateHelper bpmInvalidateHelper;
+
+    @Resource
+    private cn.iocoder.yudao.module.bpm.service.task.BpmRegisterTaskService bpmRegisterTaskService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long createXzfy(Long userId,XzfySaveReqVO createReqVO) {
+        XzfyDO xzfy = createXzfyAndProcess(userId, createReqVO);
+        bpmRegisterTaskService.completeOnSubmit(userId, xzfy.getProcessInstanceId(), buildProcessVariables(createReqVO));
+        return xzfy.getId();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Long saveXzfy(Long userId, XzfySaveReqVO createReqVO) {
+        XzfyDO xzfy = createXzfyAndProcess(userId, createReqVO);
+        bpmRegisterTaskService.claim(userId, xzfy.getProcessInstanceId());
+        return xzfy.getId();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void createFlowXzfy(Long userId, XzfySaveReqVO updateReqVO) {
+        XzfyDO xzfy = xzfyMapper.selectById(updateReqVO.getId());
+        if (xzfy == null) throw exception(XZFY_NOT_EXISTS);
+        updateReqVO.setXmGuid(xzfy.getXmGuid());
+        updateXzfy(updateReqVO);
+        bpmRegisterTaskService.completeOnSubmit(userId, xzfy.getProcessInstanceId(), buildProcessVariables(updateReqVO));
+    }
+
+    private XzfyDO createXzfyAndProcess(Long userId, XzfySaveReqVO createReqVO) {
 
         UUID uuid = UUID.randomUUID();
 
@@ -91,8 +127,21 @@ public class XzfyServiceImpl implements XzfyService {
 
         commentAttachService.saveCommentAttachList(guidString, DOC_TYPE_XZFY, createReqVO.getFileList());
 
+        Map<String, Object> processInstanceVariables = buildProcessVariables(createReqVO);
+        String processInstanceId = processInstanceApi.createProcessInstance(userId,
+                new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
+                        .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(xzfy.getId()))
+                        .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
+        xzfyMapper.updateById(new XzfyDO().setId(xzfy.getId()).setProcessInstanceId(processInstanceId).setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
+        return xzfy.setProcessInstanceId(processInstanceId);
+    }
+
+    private Map<String, Object> buildProcessVariables(XzfySaveReqVO createReqVO) {
         Map<String, Object> processInstanceVariables = new HashMap<>();
-        String customName = StringUtil.isEmpty(createReqVO.getSqr()) ? "行政复议":createReqVO.getSqr();
+        if (CollUtil.isNotEmpty(createReqVO.getProcessVariables())) {
+            processInstanceVariables.putAll(createReqVO.getProcessVariables());
+        }
+        String customName = StrUtil.blankToDefault(createReqVO.getSqr(), "行政复议");
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
         String timeKey = "common";
@@ -104,20 +153,15 @@ public class XzfyServiceImpl implements XzfyService {
             processInstanceVariables.put(PROCESS_FINISH_TIME, timeoutLabel);
             processInstanceVariables.put(PROCESS_DEADLINE_DATE, DateUtils.of(deadline));
         }
-        String processInstanceId = processInstanceApi.createProcessInstance(userId,
-                new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
-                        .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(xzfy.getId()))
-                        .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
-        xzfyMapper.updateById(new XzfyDO().setId(xzfy.getId()).setProcessInstanceId(processInstanceId).setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
-        // 返回
-        return xzfy.getId();
+        return processInstanceVariables;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void updateXzfy(XzfySaveReqVO updateReqVO) {
         // 校验存在
-        validateXzfyExists(updateReqVO.getId());
+        XzfyDO oldXzfy = xzfyMapper.selectById(updateReqVO.getId());
+        if (oldXzfy == null) throw exception(XZFY_NOT_EXISTS);
         // 更新
         XzfyDO updateObj = BeanUtils.toBean(updateReqVO, XzfyDO.class);
         xzfyMapper.updateById(updateObj);
@@ -126,6 +170,17 @@ public class XzfyServiceImpl implements XzfyService {
         updateXzfyKz(updateReqVO.getXmGuid(), updateReqVO.getXzfyKz());
 
         commentAttachService.saveCommentAttachList(updateReqVO.getXmGuid(), DOC_TYPE_XZFY, updateReqVO.getFileList());
+        syncProcessInstanceTitle(oldXzfy.getProcessInstanceId(),
+                StrUtil.blankToDefault(updateReqVO.getSqr(), "行政复议"));
+    }
+
+    private void syncProcessInstanceTitle(String processInstanceId, String processName) {
+        if (StrUtil.isBlank(processInstanceId)) return;
+        taskSortMapper.updateRuntimeProcessInstanceName(processInstanceId, processName);
+        taskSortMapper.updateHistoricProcessInstanceName(processInstanceId, processName);
+        if (runtimeService.createProcessInstanceQuery().processInstanceId(processInstanceId).singleResult() != null) {
+            runtimeService.setVariable(processInstanceId, PROCESS_CUSTOM_NAME, processName);
+        }
     }
 
     @Override
@@ -266,6 +321,10 @@ public class XzfyServiceImpl implements XzfyService {
     private void updateXzfyKz(String xmGuid, XzfyKzDO xzfyKz) {
         if (xzfyKz == null) {
 			return;
+        }
+        XzfyKzDO existing = xzfyKzMapper.selectByXmGuid(xmGuid);
+        if (existing != null) {
+            xzfyKz.setId(existing.getId());
         }
         xzfyKz.setXmGuid(xmGuid).clean();// 解决更新情况下：updateTime 不更新
         xzfyKzMapper.insertOrUpdate(xzfyKz);

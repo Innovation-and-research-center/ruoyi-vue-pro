@@ -15,6 +15,7 @@ import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
+import cn.iocoder.yudao.module.bpm.service.task.BpmRegisterTaskService;
 import cn.iocoder.yudao.module.system.dal.dataobject.permission.RoleDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.service.permission.PermissionService;
@@ -26,6 +27,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.*;
 import cn.iocoder.yudao.module.bpm.controller.admin.timeexplain.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.timeexplain.TimeExplainDO;
@@ -75,6 +77,9 @@ public class TimeExplainServiceImpl implements TimeExplainService {
     @Resource
     private BpmInvalidateHelper bpmInvalidateHelper;
 
+    @Resource
+    private BpmRegisterTaskService bpmRegisterTaskService;
+
     @Override
     public Long createTimeExplain(TimeExplainSaveReqVO createReqVO) {
         // 插入
@@ -86,21 +91,34 @@ public class TimeExplainServiceImpl implements TimeExplainService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Long createOut(Long userId, TimeExplainSaveReqVO createReqVO) {
-        //根据时段增加时间上午为8:30 下午为 13:30
-        if(createReqVO.getStartPeriod().equals("1")){
-            createReqVO.setCheckBegin(createReqVO.getCheckBegin().plusHours(8).plusMinutes(30));
-        }
-        else {
-            createReqVO.setCheckBegin(createReqVO.getCheckBegin().plusHours(13).plusMinutes(30));
-        }
-        if(createReqVO.getEndPeriod().equals("1")){
-            createReqVO.setCheckEnd(createReqVO.getCheckEnd().plusHours(8).plusMinutes(30));
-        }
-        else{
-            createReqVO.setCheckEnd(createReqVO.getCheckEnd().plusHours(13).plusMinutes(30));
-        }
-        AdminUserDO user = userService.getUser(getLoginUserId());
+        TimeExplainDO out = createOutAndProcess(userId, createReqVO);
+        bpmRegisterTaskService.completeOnSubmit(userId, out.getProcessInstanceId(), buildProcessVariables(userId, createReqVO));
+        return out.getId();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Long saveOut(Long userId, TimeExplainSaveReqVO createReqVO) {
+        TimeExplainDO out = createOutAndProcess(userId, createReqVO);
+        bpmRegisterTaskService.claim(userId, out.getProcessInstanceId());
+        return out.getId();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void createFlowOut(Long userId, TimeExplainSaveReqVO updateReqVO) {
+        TimeExplainDO out = timeExplainMapper.selectById(updateReqVO.getId());
+        if (out == null) throw exception(TIME_EXPLAIN_NOT_EXISTS);
+        normalizePeriodTime(updateReqVO);
+        updateTimeExplain(updateReqVO);
+        bpmRegisterTaskService.completeOnSubmit(userId, out.getProcessInstanceId(), buildProcessVariables(userId, updateReqVO));
+    }
+
+    private TimeExplainDO createOutAndProcess(Long userId, TimeExplainSaveReqVO createReqVO) {
+        normalizePeriodTime(createReqVO);
+        AdminUserDO user = userService.getUser(userId);
         TimeExplainDO out = BeanUtils.toBean(createReqVO, TimeExplainDO.class)
                 .setUserId( userId).setStatus(Long.valueOf(BpmTaskStatusEnum.RUNNING.getStatus()))
                 .setUserName(user.getUsername())
@@ -109,9 +127,20 @@ public class TimeExplainServiceImpl implements TimeExplainService {
 
         createTimeExplainAttachList(out.getId(), createReqVO.getFileList());
 
-        Set<Long> roleIds = permissionService.getUserRoleIdListByUserId(getLoginUserId());
+        Map<String, Object> processInstanceVariables = buildProcessVariables(userId, createReqVO);
+        String processInstanceId = processInstanceApi.createProcessInstance(userId,
+                new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
+                        .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(out.getId()))
+                        .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
+        timeExplainMapper.updateById(new TimeExplainDO().setId(out.getId()).setProcessInstanceId(processInstanceId));
+        return out.setProcessInstanceId(processInstanceId);
+    }
+
+    private Map<String, Object> buildProcessVariables(Long userId, TimeExplainSaveReqVO createReqVO) {
+        AdminUserDO user = userService.getUser(userId);
+        Set<Long> roleIds = permissionService.getUserRoleIdListByUserId(userId);
         List<RoleDO> roles = roleService.getRoleList(roleIds);
-        roles.removeIf(role -> !CommonStatusEnum.ENABLE.getStatus().equals(role.getStatus())&& role.getCode().contains("grade_")); // 移除禁用的角色
+        roles.removeIf(role -> !CommonStatusEnum.ENABLE.getStatus().equals(role.getStatus()));
 
         String roleCondition = "grade_3";
         int maxGradeVal=3 ;
@@ -127,6 +156,7 @@ public class TimeExplainServiceImpl implements TimeExplainService {
         }
         String customName = user.getNickname() + "因公外出"+createReqVO.getEndPeriod();
         Map<String, Object> processInstanceVariables = new HashMap<>();
+        if (CollUtil.isNotEmpty(createReqVO.getProcessVariables())) processInstanceVariables.putAll(createReqVO.getProcessVariables());
         processInstanceVariables.put("role_condition", roleCondition);
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
         String timeKey = "common";
@@ -140,12 +170,14 @@ public class TimeExplainServiceImpl implements TimeExplainService {
         }
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
 
-        String processInstanceId = processInstanceApi.createProcessInstance(userId,
-                new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
-                        .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(out.getId()))
-                        .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
-        timeExplainMapper.updateById(new TimeExplainDO().setId(out.getId()).setProcessInstanceId(processInstanceId));
-        return out.getId() ;
+        return processInstanceVariables;
+    }
+
+    private void normalizePeriodTime(TimeExplainSaveReqVO reqVO) {
+        reqVO.setCheckBegin(reqVO.getCheckBegin().toLocalDate()
+                .atTime("1".equals(reqVO.getStartPeriod()) ? LocalTime.of(8, 30) : LocalTime.of(13, 30)));
+        reqVO.setCheckEnd(reqVO.getCheckEnd().toLocalDate()
+                .atTime("1".equals(reqVO.getEndPeriod()) ? LocalTime.of(8, 30) : LocalTime.of(13, 30)));
     }
 
     @Override

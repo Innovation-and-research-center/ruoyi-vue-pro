@@ -14,6 +14,7 @@ import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
+import cn.iocoder.yudao.module.bpm.service.task.BpmRegisterTaskService;
 import jodd.util.StringUtil;
 import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
@@ -61,6 +62,9 @@ public class ConfflowServiceImpl implements ConfflowService {
     @Resource
     private BpmInvalidateHelper bpmInvalidateHelper;
 
+    @Resource
+    private BpmRegisterTaskService bpmRegisterTaskService;
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long createConfflow(Long userId,ConfflowSaveReqVO createReqVO) {
@@ -87,6 +91,16 @@ public class ConfflowServiceImpl implements ConfflowService {
         confflowMapper.insert(confflow);
 
         createConfflowAttachList(confflow.getId(), createReqVO.getFileList());
+        Map<String, Object> processInstanceVariables = buildProcessVariables(createReqVO);
+        String processInstanceId = createProcessInstance(userId, confflow.getId(), createReqVO,
+                processInstanceVariables);
+        int claimedCount = bpmRegisterTaskService.claim(userId, processInstanceId);
+        if (claimedCount == 0) {
+            throw exception(CONFFLOW_REGISTER_TASK_NOT_ACTIVE);
+        }
+        confflowMapper.updateById(new ConfflowDO().setId(confflow.getId())
+                .setProcessInstanceId(processInstanceId)
+                .setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
         return confflow.getId();
     }
 
@@ -97,17 +111,14 @@ public class ConfflowServiceImpl implements ConfflowService {
         if (confflow == null) {
             throw exception(CONFFLOW_NOT_EXISTS);
         }
-        if (StrUtil.isNotBlank(confflow.getProcessInstanceId())) {
-            throw exception(CONFFLOW_ALREADY_SUBMITTED);
-        }
         validateSubmitReq(updateReqVO);
 
         ConfflowDO updateObj = BeanUtils.toBean(updateReqVO, ConfflowDO.class);
-        updateObj.setProcessInstanceId(null);
+        updateObj.setProcessInstanceId(confflow.getProcessInstanceId());
         confflowMapper.updateById(updateObj);
 
         updateConfflowAttachList(updateReqVO.getId(), updateReqVO.getFileList());
-        startProcess(userId, updateReqVO.getId(), updateReqVO);
+        submitRegisterTask(userId, updateReqVO.getId(), confflow.getProcessInstanceId(), updateReqVO);
     }
 
     private void validateSubmitReq(ConfflowSaveReqVO reqVO) {
@@ -117,6 +128,13 @@ public class ConfflowServiceImpl implements ConfflowService {
     }
 
     private void startProcess(Long userId, Long confflowId, ConfflowSaveReqVO reqVO) {
+        Map<String, Object> processInstanceVariables = buildProcessVariables(reqVO);
+        String processInstanceId = createProcessInstance(userId, confflowId, reqVO, processInstanceVariables);
+        completeRegisterTask(userId, processInstanceId, processInstanceVariables);
+        updateProcessInfo(confflowId, processInstanceId);
+    }
+
+    private Map<String, Object> buildProcessVariables(ConfflowSaveReqVO reqVO) {
         Map<String, Object> processInstanceVariables = new HashMap<>();
         if (CollUtil.isNotEmpty(reqVO.getProcessVariables())) {
             processInstanceVariables.putAll(reqVO.getProcessVariables());
@@ -134,10 +152,37 @@ public class ConfflowServiceImpl implements ConfflowService {
             processInstanceVariables.put(PROCESS_FINISH_TIME, timeoutLabel);
             processInstanceVariables.put(PROCESS_DEADLINE_DATE, DateUtils.of(deadline));
         }
-        String processInstanceId = processInstanceApi.createProcessInstance(userId,
+        return processInstanceVariables;
+    }
+
+    private String createProcessInstance(Long userId, Long confflowId, ConfflowSaveReqVO reqVO,
+                                         Map<String, Object> processInstanceVariables) {
+        return processInstanceApi.createProcessInstance(userId,
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
                         .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(confflowId))
                         .setStartUserSelectAssignees(reqVO.getStartUserSelectAssignees()));
+    }
+
+    private void submitRegisterTask(Long userId, Long confflowId, String processInstanceId,
+                                    ConfflowSaveReqVO reqVO) {
+        Map<String, Object> processInstanceVariables = buildProcessVariables(reqVO);
+        if (StrUtil.isBlank(processInstanceId)) {
+            processInstanceId = createProcessInstance(userId, confflowId, reqVO, processInstanceVariables);
+        }
+        completeRegisterTask(userId, processInstanceId, processInstanceVariables);
+        updateProcessInfo(confflowId, processInstanceId);
+    }
+
+    private void completeRegisterTask(Long userId, String processInstanceId,
+                                      Map<String, Object> processInstanceVariables) {
+        int completedCount = bpmRegisterTaskService.completeOnSubmit(userId, processInstanceId,
+                processInstanceVariables);
+        if (completedCount == 0) {
+            throw exception(CONFFLOW_REGISTER_TASK_NOT_ACTIVE);
+        }
+    }
+
+    private void updateProcessInfo(Long confflowId, String processInstanceId) {
         confflowMapper.updateById(new ConfflowDO().setId(confflowId).setProcessInstanceId(processInstanceId).setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
     }
 

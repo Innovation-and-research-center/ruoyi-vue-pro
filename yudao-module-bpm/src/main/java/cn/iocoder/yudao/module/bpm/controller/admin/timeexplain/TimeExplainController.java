@@ -1,5 +1,7 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.timeexplain;
 
+import cn.hutool.core.util.StrUtil;
+import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
 import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
 import cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.LeaveRespVO;
 import cn.iocoder.yudao.module.system.api.dept.DeptApi;
@@ -38,6 +40,7 @@ import cn.iocoder.yudao.module.bpm.dal.dataobject.timeexplain.TimeExplainDO;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.timeexplain.TimeExplainService;
+import org.flowable.task.api.Task;
 
 @Tag(name = "管理后台 - 外出请假补假")
 @RestController
@@ -55,6 +58,9 @@ public class TimeExplainController {
     private BpmUpdateOperateLogService bpmUpdateOperateLogService;
 
     @Resource
+    private org.flowable.engine.TaskService flowableTaskService;
+
+    @Resource
     private AdminUserApi adminUserApi;
 
     @Resource
@@ -69,7 +75,36 @@ public class TimeExplainController {
     @PostMapping("/createout")
     @Operation(summary = "创建外出")
     public CommonResult<Long> createOut(@Valid @RequestBody TimeExplainSaveReqVO createReqVO) {
+        parseProcessVariables(createReqVO);
         return success(timeExplainService.createOut(getLoginUserId(),createReqVO));
+    }
+
+    @PostMapping("/save-out")
+    @Operation(summary = "保存公出并生成登记待办")
+    public CommonResult<TimeExplainSaveRespVO> saveOut(@Valid @RequestBody TimeExplainSaveReqVO createReqVO) {
+        parseProcessVariables(createReqVO);
+        Long userId = getLoginUserId();
+        Long id = timeExplainService.saveOut(userId, createReqVO);
+        TimeExplainDO out = timeExplainService.getTimeExplain(id);
+        String processInstanceId = out != null ? out.getProcessInstanceId() : null;
+        Task task = StrUtil.isBlank(processInstanceId) ? null : flowableTaskService.createTaskQuery()
+                .processInstanceId(processInstanceId).taskAssignee(String.valueOf(userId)).active().singleResult();
+        return success(new TimeExplainSaveRespVO().setId(id).setProcessInstanceId(processInstanceId)
+                .setTaskId(task != null ? task.getId() : null));
+    }
+
+    @PostMapping("/create-flow-out")
+    @Operation(summary = "提交已保存的公出登记")
+    public CommonResult<Boolean> createFlowOut(@Valid @RequestBody TimeExplainSaveReqVO reqVO) {
+        parseProcessVariables(reqVO);
+        timeExplainService.createFlowOut(getLoginUserId(), reqVO);
+        return success(true);
+    }
+
+    private void parseProcessVariables(TimeExplainSaveReqVO reqVO) {
+        if (StrUtil.isNotEmpty(reqVO.getProcessVariablesStr())) {
+            reqVO.setProcessVariables(JsonUtils.parseObject(reqVO.getProcessVariablesStr(), Map.class));
+        }
     }
 
 

@@ -82,7 +82,7 @@ public final class BpmReceiveRegisterTaskUtils {
         return null;
     }
 
-    private static Set<Long> calculateCandidateUserIds(FlowElement flowElement) {
+    static Set<Long> calculateCandidateUserIds(FlowElement flowElement) {
         String groupIdsText = getRegisterGroupIdsText(flowElement);
         BpmUserGroupService userGroupService = SpringUtil.getBean(BpmUserGroupService.class);
         List<BpmUserGroupDO> groups;

@@ -23,6 +23,10 @@ public interface XzssService {
      */
     Long createXzss(Long userId,@Valid XzssSaveReqVO createReqVO);
 
+    Long saveXzss(Long userId, @Valid XzssSaveReqVO createReqVO);
+
+    void createFlowXzss(Long userId, @Valid XzssSaveReqVO updateReqVO);
+
     /**
      * 更新行政诉讼
      *
@@ -73,6 +77,8 @@ public interface XzssService {
     List<XzssDO> getXzssListByFyGuid(String fyGuid);
 
     List<XzssDO> getXzssListBySsGuid(String ssGuid);
+
+    List<XzssDO> getXzssHistoryList(String ssGuid);
 
     void updateXzssStatus(Long id, Integer status);
 

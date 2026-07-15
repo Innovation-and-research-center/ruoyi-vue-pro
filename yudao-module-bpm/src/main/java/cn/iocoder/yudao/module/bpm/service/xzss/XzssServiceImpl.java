@@ -12,6 +12,7 @@ import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import cn.iocoder.yudao.module.bpm.service.commentattach.CommentAttachService;
+import cn.iocoder.yudao.module.bpm.dal.mysql.task.BpmTaskSortMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
 import jodd.util.StringUtil;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.transaction.annotation.Transactional;
+import org.flowable.engine.RuntimeService;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -66,11 +68,44 @@ public class XzssServiceImpl implements XzssService {
     private CommentAttachService commentAttachService;
 
     @Resource
+    private BpmTaskSortMapper taskSortMapper;
+
+    @Resource
+    private RuntimeService runtimeService;
+
+    @Resource
     private BpmInvalidateHelper bpmInvalidateHelper;
+
+    @Resource
+    private cn.iocoder.yudao.module.bpm.service.task.BpmRegisterTaskService bpmRegisterTaskService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long createXzss(Long userId,XzssSaveReqVO createReqVO) {
+        XzssDO xzss = createXzssAndProcess(userId, createReqVO);
+        bpmRegisterTaskService.completeOnSubmit(userId, xzss.getProcessInstanceId(), buildProcessVariables(createReqVO));
+        return xzss.getId();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Long saveXzss(Long userId, XzssSaveReqVO createReqVO) {
+        XzssDO xzss = createXzssAndProcess(userId, createReqVO);
+        bpmRegisterTaskService.claim(userId, xzss.getProcessInstanceId());
+        return xzss.getId();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void createFlowXzss(Long userId, XzssSaveReqVO updateReqVO) {
+        XzssDO xzss = xzssMapper.selectById(updateReqVO.getId());
+        if (xzss == null) throw exception(XZSS_NOT_EXISTS);
+        updateReqVO.setXmGuid(xzss.getXmGuid());
+        updateXzss(updateReqVO);
+        bpmRegisterTaskService.completeOnSubmit(userId, xzss.getProcessInstanceId(), buildProcessVariables(updateReqVO));
+    }
+
+    private XzssDO createXzssAndProcess(Long userId, XzssSaveReqVO createReqVO) {
         UUID uuid = UUID.randomUUID();
 
         // 转换为字符串
@@ -82,8 +117,21 @@ public class XzssServiceImpl implements XzssService {
         // 插入子表
         createXzssKz(xzss.getXmGuid(), createReqVO.getXzssKz());
         commentAttachService.saveCommentAttachList(guidString, DOC_TYPE_XZSS, createReqVO.getFileList());
+        Map<String, Object> processInstanceVariables = buildProcessVariables(createReqVO);
+        String processInstanceId = processInstanceApi.createProcessInstance(userId,
+                new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
+                        .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(xzss.getId()))
+                        .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
+        xzssMapper.updateById(new XzssDO().setId(xzss.getId()).setProcessInstanceId(processInstanceId).setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
+        return xzss.setProcessInstanceId(processInstanceId);
+    }
+
+    private Map<String, Object> buildProcessVariables(XzssSaveReqVO createReqVO) {
         Map<String, Object> processInstanceVariables = new HashMap<>();
-        String customName = StringUtil.isEmpty(createReqVO.getSqr()) ? "行政诉讼":createReqVO.getSqr();
+        if (CollUtil.isNotEmpty(createReqVO.getProcessVariables())) {
+            processInstanceVariables.putAll(createReqVO.getProcessVariables());
+        }
+        String customName = StrUtil.blankToDefault(createReqVO.getSqr(), "行政诉讼");
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
         processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
         String timeKey = "xzss";
@@ -95,20 +143,15 @@ public class XzssServiceImpl implements XzssService {
             processInstanceVariables.put(PROCESS_FINISH_TIME, timeoutLabel);
             processInstanceVariables.put(PROCESS_DEADLINE_DATE, DateUtils.of(deadline));
         }
-        String processInstanceId = processInstanceApi.createProcessInstance(userId,
-                new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
-                        .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(xzss.getId()))
-                        .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
-        xzssMapper.updateById(new XzssDO().setId(xzss.getId()).setProcessInstanceId(processInstanceId).setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
-        // 返回
-        return xzss.getId();
+        return processInstanceVariables;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void updateXzss(XzssSaveReqVO updateReqVO) {
         // 校验存在
-        validateXzssExists(updateReqVO.getId());
+        XzssDO oldXzss = xzssMapper.selectById(updateReqVO.getId());
+        if (oldXzss == null) throw exception(XZSS_NOT_EXISTS);
         // 更新
         XzssDO updateObj = BeanUtils.toBean(updateReqVO, XzssDO.class);
         xzssMapper.updateById(updateObj);
@@ -117,6 +160,17 @@ public class XzssServiceImpl implements XzssService {
         updateXzssKz(updateReqVO.getXmGuid(), updateReqVO.getXzssKz());
 
         commentAttachService.saveCommentAttachList(updateReqVO.getXmGuid(), DOC_TYPE_XZSS, updateReqVO.getFileList());
+        syncProcessInstanceTitle(oldXzss.getProcessInstanceId(),
+                StrUtil.blankToDefault(updateReqVO.getSqr(), "行政诉讼"));
+    }
+
+    private void syncProcessInstanceTitle(String processInstanceId, String processName) {
+        if (StrUtil.isBlank(processInstanceId)) return;
+        taskSortMapper.updateRuntimeProcessInstanceName(processInstanceId, processName);
+        taskSortMapper.updateHistoricProcessInstanceName(processInstanceId, processName);
+        if (runtimeService.createProcessInstanceQuery().processInstanceId(processInstanceId).singleResult() != null) {
+            runtimeService.setVariable(processInstanceId, PROCESS_CUSTOM_NAME, processName);
+        }
     }
 
     @Override
@@ -212,6 +266,10 @@ public class XzssServiceImpl implements XzssService {
         if (xzssKz == null) {
 			return;
         }
+        XzssKzDO existing = xzssKzMapper.selectByXmGuid(xmGuid);
+        if (existing != null) {
+            xzssKz.setId(existing.getId());
+        }
         xzssKz.setXmGuid(xmGuid).clean();// 解决更新情况下：updateTime 不更新
         xzssKzMapper.insertOrUpdate(xzssKz);
     }
@@ -234,6 +292,30 @@ public class XzssServiceImpl implements XzssService {
     public List<XzssDO> getXzssListBySsGuid(String ssGuid) {
         return xzssMapper.selectList(new LambdaQueryWrapper<XzssDO>()
                 .eq(XzssDO::getSsGuid, ssGuid));
+    }
+
+    @Override
+    public List<XzssDO> getXzssHistoryList(String ssGuid) {
+        if (StrUtil.isBlank(ssGuid)) {
+            return Collections.emptyList();
+        }
+        List<XzssDO> all = xzssMapper.selectList();
+        Map<String, XzssDO> byXmGuid = all.stream()
+                .filter(item -> StrUtil.isNotBlank(item.getXmGuid()))
+                .collect(Collectors.toMap(XzssDO::getXmGuid, item -> item, (left, right) -> left));
+        List<XzssDO> history = new ArrayList<>();
+        Set<String> visited = new HashSet<>();
+        String currentGuid = ssGuid;
+        while (StrUtil.isNotBlank(currentGuid) && visited.add(currentGuid)) {
+            XzssDO previous = byXmGuid.get(currentGuid);
+            if (previous == null) {
+                break;
+            }
+            history.add(previous);
+            currentGuid = previous.getSsGuid();
+        }
+        Collections.reverse(history);
+        return history;
     }
 
     @Override

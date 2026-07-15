@@ -40,7 +40,7 @@ import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnModelConsta
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.event.BpmProcessInstanceEventPublisher;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmHttpRequestUtils;
-import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmReceiveRegisterTaskUtils;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.SimpleModelUtils;
@@ -267,6 +267,10 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
         // 3.1 计算当前登录用户的待办任务
         BpmTaskRespVO todoTask = taskService.getTodoTask(loginUserId, reqVO.getTaskId(), reqVO.getProcessInstanceId());
+        if (todoTask != null) {
+            todoTask.setRegisterTask(BpmRegisterTaskUtils.isRegisterTask(
+                    bpmnModel, todoTask.getTaskDefinitionKey()));
+        }
 
         // 3.2 获取由于退回操作，需要预测的节点。从流程变量中获取，回退操作会设置这些变量
         Set<String> needSimulateTaskDefKeysByReturn = new HashSet<>();
@@ -409,7 +413,9 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             sourceElement = bpmnModel.getFlowElement(task.getTaskDefinitionKey());
         }
 
-        if (!checkManualSelectProperty(sourceElement)) {
+        // 登记节点的“发送”语义就是提交登记并选择下一办理人，统一允许查询下一节点。
+        // 普通任务节点仍然由 select_manually=1 控制，避免改变已有流程行为。
+        if (!BpmRegisterTaskUtils.isRegisterTask(sourceElement) && !checkManualSelectProperty(sourceElement)) {
             return Collections.emptyList(); // 如果没开启手动选人，直接返回空
         }
         List<BpmNextTaskRespVO> result = new ArrayList<>();
@@ -1415,8 +1421,8 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
     private List<Long> getTaskCandidateUserList(BpmnModel bpmnModel, String activityId,
                                                 Long startUserId, String processDefinitionId, Map<String, Object> processVariables) {
-        Set<Long> userIds = BpmReceiveRegisterTaskUtils.isReceiveRegisterTask(activityId)
-                ? BpmReceiveRegisterTaskUtils.calculateCandidateUserIds(bpmnModel, activityId, taskCandidateInvoker,
+        Set<Long> userIds = BpmRegisterTaskUtils.isRegisterTask(bpmnModel, activityId)
+                ? BpmRegisterTaskUtils.calculateCandidateUserIds(bpmnModel, activityId, taskCandidateInvoker,
                 startUserId, processDefinitionId, processVariables)
                 : taskCandidateInvoker.calculateUsersByActivity(bpmnModel, activityId,
                 startUserId, processDefinitionId, processVariables);

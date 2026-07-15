@@ -15,6 +15,7 @@ import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import cn.iocoder.yudao.module.bpm.service.task.BpmProcessInstanceService;
+import cn.iocoder.yudao.module.bpm.service.task.BpmRegisterTaskService;
 import cn.iocoder.yudao.module.bpm.service.task.BpmTaskService;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
@@ -92,35 +93,59 @@ public class LeaveServiceImpl implements LeaveService {
     @Resource
     private BpmInvalidateHelper bpmInvalidateHelper;
 
-    @Override
-    public Long createLeave(Long userId,LeaveSaveReqVO createReqVO) {
+    @Resource
+    private BpmRegisterTaskService bpmRegisterTaskService;
 
-        //根据时段增加时间上午为8:30 下午为 13:30
-        if(createReqVO.getStartPeriod().equals("1")){
-            createReqVO.setQxjStartDate(createReqVO.getQxjStartDate().plusHours(8).plusMinutes(30));
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Long createLeave(Long userId, LeaveSaveReqVO createReqVO) {
+        LeaveDO leave = createLeaveAndProcess(userId, createReqVO);
+        bpmRegisterTaskService.completeOnSubmit(userId, leave.getProcessInstanceId(),
+                buildProcessVariables(userId, createReqVO));
+        return leave.getId();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Long saveLeave(Long userId, LeaveSaveReqVO createReqVO) {
+        LeaveDO leave = createLeaveAndProcess(userId, createReqVO);
+        bpmRegisterTaskService.claim(userId, leave.getProcessInstanceId());
+        return leave.getId();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void createFlowLeave(Long userId, LeaveSaveReqVO updateReqVO) {
+        LeaveDO leave = leaveMapper.selectById(updateReqVO.getId());
+        if (leave == null) {
+            throw exception(LEAVE_NOT_EXISTS);
         }
-        else {
-            createReqVO.setQxjStartDate(createReqVO.getQxjStartDate().plusHours(13).plusMinutes(30));
-        }
-        if(createReqVO.getEndPeriod().equals("1")){
-            createReqVO.setQxjEndDate(createReqVO.getQxjEndDate().plusHours(8).plusMinutes(30));
-        }
-        else{
-            createReqVO.setQxjEndDate(createReqVO.getQxjEndDate().plusHours(13).plusMinutes(30));
-        }
-        // 插入
+        normalizePeriodTime(updateReqVO);
+        updateLeave(updateReqVO);
+        bpmRegisterTaskService.completeOnSubmit(userId, leave.getProcessInstanceId(),
+                buildProcessVariables(userId, updateReqVO));
+    }
+
+    private LeaveDO createLeaveAndProcess(Long userId, LeaveSaveReqVO createReqVO) {
+        normalizePeriodTime(createReqVO);
         LeaveDO leave = BeanUtils.toBean(createReqVO, LeaveDO.class)
                 .setUserid(userId.intValue()).setSpzt(BpmTaskStatusEnum.RUNNING.getStatus().shortValue());
         leaveMapper.insert(leave);
-
         createLeaveAttachList(leave.getId(), createReqVO.getFileList());
+        Map<String, Object> processInstanceVariables = buildProcessVariables(userId, createReqVO);
+        String processInstanceId = processInstanceApi.createProcessInstance(userId,
+                new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
+                        .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(leave.getId()))
+                        .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
+        leaveMapper.updateById(new LeaveDO().setId(leave.getId()).setProcessInstanceId(processInstanceId));
+        return leave.setProcessInstanceId(processInstanceId);
+    }
 
-
-        AdminUserDO user = userService.getUser(getLoginUserId());
-
-        Set<Long> roleIds = permissionService.getUserRoleIdListByUserId(getLoginUserId());
+    private Map<String, Object> buildProcessVariables(Long userId, LeaveSaveReqVO reqVO) {
+        AdminUserDO user = userService.getUser(userId);
+        Set<Long> roleIds = permissionService.getUserRoleIdListByUserId(userId);
         List<RoleDO> roles = roleService.getRoleList(roleIds);
-        roles.removeIf(role -> !CommonStatusEnum.ENABLE.getStatus().equals(role.getStatus())&& role.getCode().contains("grade_")); // 移除禁用的角色
+        roles.removeIf(role -> !CommonStatusEnum.ENABLE.getStatus().equals(role.getStatus()));
 
         String roleCondition = "grade_3";
         String days_condition4 = "";
@@ -137,7 +162,7 @@ public class LeaveServiceImpl implements LeaveService {
                 }
             }
         }
-        if (createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(1)) <= 0 && roleCondition.equals("grade_3"))
+        if (reqVO.getTotalTs().compareTo(BigDecimal.valueOf(1)) <= 0 && roleCondition.equals("grade_3"))
         {
             days_condition4 = "4_6";
         }
@@ -148,34 +173,37 @@ public class LeaveServiceImpl implements LeaveService {
 
 
         //如果普通人员请假大于1天，或者中层副职请假7天及以内；分管领导-->人教科备案
-        if ((createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(1)) > 0 && createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(30))<=0 && roleCondition.equals("grade_3")) || (createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(7))<=0 && roleCondition.equals("grade_7")))
+        if ((reqVO.getTotalTs().compareTo(BigDecimal.valueOf(1)) > 0 && reqVO.getTotalTs().compareTo(BigDecimal.valueOf(30)) < 0 && roleCondition.equals("grade_3")) || (reqVO.getTotalTs().compareTo(BigDecimal.valueOf(7))<=0 && roleCondition.equals("grade_7")))
         {
             days_condition3 = "3_6";
         }
-        //如果中层正职，或者中层副职请假7天以上，或一般人员超过30天；分管领导-->局领导审核
-        if (roleCondition == "grade_11" || (createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(7))>0 && roleCondition.equals("grade_7")) || (createReqVO.getTotalTs().compareTo(BigDecimal.valueOf(30))>0 && roleCondition.equals("grade_3")))
+        //如果中层正职，或者中层副职请假7天以上，或一般人员请假30天及以上；分管领导-->局领导审核
+        if ("grade_11".equals(roleCondition) || (reqVO.getTotalTs().compareTo(BigDecimal.valueOf(7))>0 && roleCondition.equals("grade_7")) || (reqVO.getTotalTs().compareTo(BigDecimal.valueOf(30)) >= 0 && roleCondition.equals("grade_3")))
         {
             days_condition3 = "3_5";
         }
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy年MM月dd日");
         String timeStr = "";
-        if (createReqVO.getQxjStartDate() != null) {
-            timeStr += "(" + createReqVO.getQxjStartDate().format(formatter) + "-";
+        if (reqVO.getQxjStartDate() != null) {
+            timeStr += "(" + reqVO.getQxjStartDate().format(formatter) + "-";
         } else {
             timeStr += "无";
         }
 
-        if (createReqVO.getQxjEndDate() != null) {
-            timeStr += createReqVO.getQxjEndDate().format(formatter) + ")";
+        if (reqVO.getQxjEndDate() != null) {
+            timeStr += reqVO.getQxjEndDate().format(formatter) + ")";
         } else {
             timeStr += "无";
         }
-        String dictLabel = DictFrameworkUtils.parseDictDataLabel("leave_type",createReqVO.getQxjType());
+        String dictLabel = DictFrameworkUtils.parseDictDataLabel("leave_type",reqVO.getQxjType());
         //自定义标题
         String customName = user.getNickname() + dictLabel+timeStr;
 
         // 发起 BPM 流程
         Map<String, Object> processInstanceVariables = new HashMap<>();
+        if (CollUtil.isNotEmpty(reqVO.getProcessVariables())) {
+            processInstanceVariables.putAll(reqVO.getProcessVariables());
+        }
         processInstanceVariables.put("role_condition", roleCondition);
         processInstanceVariables.put("days_condition3", days_condition3);
         processInstanceVariables.put("days_condition4", days_condition4);
@@ -183,16 +211,15 @@ public class LeaveServiceImpl implements LeaveService {
         String timeoutLabel = DictFrameworkUtils.parseDictDataLabel("bpm_process_timeout_config", timeKey);
         processInstanceVariables.put(PROCESS_FINISH_TIME, timeoutLabel);
         processInstanceVariables.put(PROCESS_CUSTOM_NAME, customName);
-        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, createReqVO.getNextNodeAssignees());
+        processInstanceVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, reqVO.getNextNodeAssignees());
+        return processInstanceVariables;
+    }
 
-        String processInstanceId = processInstanceApi.createProcessInstance(userId,
-                new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(PROCESS_KEY)
-                        .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(leave.getId()))
-                        .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
-        leaveMapper.updateById(new LeaveDO().setId(leave.getId()).setProcessInstanceId(processInstanceId));
-
-        // 返回
-        return leave.getId();
+    private void normalizePeriodTime(LeaveSaveReqVO reqVO) {
+        reqVO.setQxjStartDate(reqVO.getQxjStartDate().toLocalDate()
+                .atTime("1".equals(reqVO.getStartPeriod()) ? LocalTime.of(8, 30) : LocalTime.of(13, 30)));
+        reqVO.setQxjEndDate(reqVO.getQxjEndDate().toLocalDate()
+                .atTime("1".equals(reqVO.getEndPeriod()) ? LocalTime.of(8, 30) : LocalTime.of(13, 30)));
     }
 
     @Override

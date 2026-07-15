@@ -4,7 +4,7 @@ import cn.hutool.core.collection.CollUtil;
 import cn.iocoder.yudao.framework.common.util.collection.SetUtils;
 import cn.iocoder.yudao.module.bpm.enums.definition.BpmChildProcessMultiInstanceSourceTypeEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.candidate.BpmTaskCandidateInvoker;
-import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmReceiveRegisterTaskUtils;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
 import lombok.Setter;
@@ -51,7 +51,7 @@ public class BpmParallelMultiInstanceBehavior extends ParallelMultiInstanceBehav
     protected int resolveNrOfInstances(DelegateExecution execution) {
         // 情况一：UserTask 节点
         if (execution.getCurrentFlowElement() instanceof UserTask) {
-            if (BpmReceiveRegisterTaskUtils.isReceiveRegisterTask(execution.getCurrentActivityId())) {
+            if (BpmRegisterTaskUtils.isRegisterTask(execution)) {
                 return 1;
             }
             // 第一步，设置 collectionVariable 和 CollectionVariable

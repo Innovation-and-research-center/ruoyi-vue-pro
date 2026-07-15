@@ -41,6 +41,7 @@ import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.service.confflow.ConfflowService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
+import org.flowable.task.api.Task;
 
 @Tag(name = "管理后台 - 会议报告单")
 @RestController
@@ -56,6 +57,9 @@ public class ConfflowController {
 
     @Resource
     private BpmUpdateOperateLogService bpmUpdateOperateLogService;
+
+    @Resource
+    private org.flowable.engine.TaskService flowableTaskService;
 
     @Resource
     private AdminUserApi adminUserApi;
@@ -79,8 +83,20 @@ public class ConfflowController {
     @PostMapping("/save")
     @Operation(summary = "保存会议报告单草稿")
 //    @PreAuthorize("@ss.hasPermission('bpm:confflow:create')")
-    public CommonResult<Long> saveConfflow(@Valid @RequestBody ConfflowSaveReqVO createReqVO) {
-        return success(confflowService.saveConfflow(getLoginUserId(), createReqVO));
+    public CommonResult<ConfflowSaveRespVO> saveConfflow(@Valid @RequestBody ConfflowSaveReqVO createReqVO) {
+        Long userId = getLoginUserId();
+        Long confflowId = confflowService.saveConfflow(userId, createReqVO);
+        ConfflowDO confflow = confflowService.getConfflow(confflowId);
+        String processInstanceId = confflow != null ? confflow.getProcessInstanceId() : null;
+        Task registerTask = StrUtil.isBlank(processInstanceId) ? null : flowableTaskService.createTaskQuery()
+                .processInstanceId(processInstanceId)
+                .taskAssignee(String.valueOf(userId))
+                .active()
+                .singleResult();
+        return success(new ConfflowSaveRespVO()
+                .setId(confflowId)
+                .setProcessInstanceId(processInstanceId)
+                .setTaskId(registerTask != null ? registerTask.getId() : null));
     }
 
     @PostMapping("/create-flow")

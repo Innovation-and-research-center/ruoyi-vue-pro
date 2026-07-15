@@ -82,6 +82,9 @@ public class BpmTaskRespVO {
     @Schema(description = "任务定义的标识", requiredMode = Schema.RequiredMode.REQUIRED, example = "Activity_one")
     private String taskDefinitionKey;
 
+    @Schema(description = "是否为业务登记任务")
+    private Boolean registerTask;
+
     @Schema(description = "所属流程实例编号", requiredMode = Schema.RequiredMode.REQUIRED, example = "8888")
     private String processInstanceId;
     /**

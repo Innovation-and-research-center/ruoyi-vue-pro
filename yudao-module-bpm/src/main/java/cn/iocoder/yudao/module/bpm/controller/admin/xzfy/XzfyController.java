@@ -1,5 +1,7 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.xzfy;
 
+import cn.hutool.core.util.StrUtil;
+import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
 import cn.iocoder.yudao.module.bpm.controller.admin.xzss.vo.XzssRespVO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
 import cn.iocoder.yudao.module.bpm.service.xzss.XzssService;
@@ -38,6 +40,7 @@ import cn.iocoder.yudao.module.bpm.service.commentattach.CommentAttachService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.xzfy.XzfyService;
+import org.flowable.task.api.Task;
 
 @Tag(name = "管理后台 - 行政复议")
 @RestController
@@ -55,6 +58,9 @@ public class XzfyController {
     private BpmUpdateOperateLogService bpmUpdateOperateLogService;
 
     @Resource
+    private org.flowable.engine.TaskService flowableTaskService;
+
+    @Resource
     private CommentAttachService commentAttachService;
 
     @Resource
@@ -67,7 +73,38 @@ public class XzfyController {
     @Operation(summary = "创建行政复议")
     @PreAuthorize("@ss.hasPermission('bpm:xzfy:create')")
     public CommonResult<Long> createXzfy(@Valid @RequestBody XzfySaveReqVO createReqVO) {
+        parseProcessVariables(createReqVO);
         return success(xzfyService.createXzfy(getLoginUserId(),createReqVO));
+    }
+
+    @PostMapping("/save")
+    @Operation(summary = "保存行政复议并生成登记待办")
+    @PreAuthorize("@ss.hasPermission('bpm:xzfy:create')")
+    public CommonResult<XzfySaveRespVO> saveXzfy(@Valid @RequestBody XzfySaveReqVO reqVO) {
+        parseProcessVariables(reqVO);
+        Long userId = getLoginUserId();
+        Long id = xzfyService.saveXzfy(userId, reqVO);
+        XzfyDO xzfy = xzfyService.getXzfy(id);
+        String processInstanceId = xzfy != null ? xzfy.getProcessInstanceId() : null;
+        Task task = StrUtil.isBlank(processInstanceId) ? null : flowableTaskService.createTaskQuery()
+                .processInstanceId(processInstanceId).taskAssignee(String.valueOf(userId)).active().singleResult();
+        return success(new XzfySaveRespVO().setId(id).setProcessInstanceId(processInstanceId)
+                .setTaskId(task != null ? task.getId() : null));
+    }
+
+    @PostMapping("/create-flow")
+    @Operation(summary = "提交已保存的行政复议登记")
+    @PreAuthorize("@ss.hasPermission('bpm:xzfy:create')")
+    public CommonResult<Boolean> createFlowXzfy(@Valid @RequestBody XzfySaveReqVO reqVO) {
+        parseProcessVariables(reqVO);
+        xzfyService.createFlowXzfy(getLoginUserId(), reqVO);
+        return success(true);
+    }
+
+    private void parseProcessVariables(XzfySaveReqVO reqVO) {
+        if (StrUtil.isNotEmpty(reqVO.getProcessVariablesStr())) {
+            reqVO.setProcessVariables(JsonUtils.parseObject(reqVO.getProcessVariablesStr(), Map.class));
+        }
     }
 
     @PutMapping("/update")

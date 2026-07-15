@@ -11,7 +11,7 @@ import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
 import cn.iocoder.yudao.module.bpm.enums.definition.BpmUserTaskApproveTypeEnum;
 import cn.iocoder.yudao.module.bpm.enums.definition.BpmUserTaskAssignStartUserHandlerTypeEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmTaskCandidateStrategyEnum;
-import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmReceiveRegisterTaskUtils;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
 import cn.iocoder.yudao.module.bpm.service.task.BpmProcessInstanceService;
@@ -61,7 +61,8 @@ public class BpmTaskCandidateInvoker {
         List<UserTask> userTaskList = BpmnModelUtils.getBpmnModelElements(bpmnModel, UserTask.class);
         // 遍历所有的 UserTask，校验审批人配置
         userTaskList.forEach(userTask -> {
-            if (BpmReceiveRegisterTaskUtils.isReceiveRegisterTask(userTask.getId())) {
+            // 旧收文登记没有标准候选人配置，由兼容逻辑在运行时补齐；新登记节点必须正常校验。
+            if (BpmRegisterTaskUtils.isLegacyReceiveRegisterTask(userTask)) {
                 return;
             }
             // 1.1 非人工审批，无需校验审批人配置

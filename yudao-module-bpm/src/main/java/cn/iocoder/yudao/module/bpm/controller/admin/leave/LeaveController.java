@@ -1,5 +1,7 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.leave;
 
+import cn.hutool.core.util.StrUtil;
+import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
 import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
 import cn.iocoder.yudao.module.system.api.dept.DeptApi;
 import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
@@ -36,6 +38,7 @@ import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.leave.LeaveService;
+import org.flowable.task.api.Task;
 
 @Slf4j
 @Tag(name = "管理后台 - 假期申请审批")
@@ -54,6 +57,9 @@ public class LeaveController {
     private BpmUpdateOperateLogService bpmUpdateOperateLogService;
 
     @Resource
+    private org.flowable.engine.TaskService flowableTaskService;
+
+    @Resource
     private AdminUserApi adminUserApi;
 
     @Resource
@@ -62,7 +68,41 @@ public class LeaveController {
     @PostMapping("/create")
     @Operation(summary = "创建假期申请审批")
     public CommonResult<Long> createLeave(@Valid @RequestBody LeaveSaveReqVO createReqVO) {
+        parseProcessVariables(createReqVO);
         return success(leaveService.createLeave(getLoginUserId(),createReqVO));
+    }
+
+    @PostMapping("/save")
+    @Operation(summary = "保存请假并生成登记待办")
+    public CommonResult<LeaveSaveRespVO> saveLeave(@Valid @RequestBody LeaveSaveReqVO createReqVO) {
+        parseProcessVariables(createReqVO);
+        Long userId = getLoginUserId();
+        Long leaveId = leaveService.saveLeave(userId, createReqVO);
+        LeaveDO leave = leaveService.getLeave(leaveId);
+        String processInstanceId = leave != null ? leave.getProcessInstanceId() : null;
+        Task registerTask = StrUtil.isBlank(processInstanceId) ? null : flowableTaskService.createTaskQuery()
+                .processInstanceId(processInstanceId)
+                .taskAssignee(String.valueOf(userId))
+                .active()
+                .singleResult();
+        return success(new LeaveSaveRespVO()
+                .setId(leaveId)
+                .setProcessInstanceId(processInstanceId)
+                .setTaskId(registerTask != null ? registerTask.getId() : null));
+    }
+
+    @PostMapping("/create-flow")
+    @Operation(summary = "提交已保存的请假登记")
+    public CommonResult<Boolean> createFlowLeave(@Valid @RequestBody LeaveSaveReqVO updateReqVO) {
+        parseProcessVariables(updateReqVO);
+        leaveService.createFlowLeave(getLoginUserId(), updateReqVO);
+        return success(true);
+    }
+
+    private void parseProcessVariables(LeaveSaveReqVO reqVO) {
+        if (StrUtil.isNotEmpty(reqVO.getProcessVariablesStr())) {
+            reqVO.setProcessVariables(JsonUtils.parseObject(reqVO.getProcessVariablesStr(), Map.class));
+        }
     }
 
     @PutMapping("/update")

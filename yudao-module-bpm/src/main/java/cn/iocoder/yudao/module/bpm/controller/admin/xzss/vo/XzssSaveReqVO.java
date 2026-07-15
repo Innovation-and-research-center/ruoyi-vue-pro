@@ -118,6 +118,12 @@ public class XzssSaveReqVO {
     @Schema(description = "下一节点审批人", example = "assist")
     private Map<String, List<Long>> nextNodeAssignees;
 
+    @Schema(description = "流程变量")
+    private Map<String, Object> processVariables;
+
+    @Schema(description = "流程变量 JSON 字符串")
+    private String processVariablesStr;
+
     @Schema(description = "附件列表")
     private List<CommentAttachDO> fileList;
 

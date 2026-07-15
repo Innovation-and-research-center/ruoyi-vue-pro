@@ -94,6 +94,10 @@ public class XzfySaveReqVO {
     @Schema(description = "下一节点审批人", example = "assist")
     private Map<String, List<Long>> nextNodeAssignees;
 
+    private Map<String, Object> processVariables;
+
+    private String processVariablesStr;
+
     @Schema(description = "附件列表")
     private List<CommentAttachDO> fileList;
 
