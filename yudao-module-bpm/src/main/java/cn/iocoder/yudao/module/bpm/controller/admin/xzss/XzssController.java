@@ -36,6 +36,7 @@ import cn.iocoder.yudao.module.bpm.controller.admin.xzss.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssKzDO;
 import cn.iocoder.yudao.module.bpm.dal.mysql.historyworkflow.HistoryWorkflowMapper;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.service.commentattach.CommentAttachService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
@@ -220,7 +221,20 @@ public class XzssController {
         if (respVO == null || respVO.getXmGuid() == null) {
             return;
         }
-        respVO.setProjectId(historyWorkflowMapper.selectProjectIdByBizinstGuid("xzss", respVO.getXmGuid()));
+        String projectId = historyWorkflowMapper.selectProjectIdByBizinstGuid("xzss", respVO.getXmGuid());
+        respVO.setProjectId(projectId);
+        if (StrUtil.isNotBlank(projectId)
+                && isFinishedHistoryProcess(historyWorkflowMapper.selectProinstByProjectId(projectId))) {
+            respVO.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+        }
+    }
+
+    private boolean isFinishedHistoryProcess(Map<String, Object> proinst) {
+        if (proinst == null || proinst.isEmpty()) {
+            return false;
+        }
+        String proinstStatus = String.valueOf(proinst.get("proinstStatus"));
+        return "2".equals(proinstStatus) || "8".equals(proinstStatus) || proinst.get("endDate") != null;
     }
 
 }

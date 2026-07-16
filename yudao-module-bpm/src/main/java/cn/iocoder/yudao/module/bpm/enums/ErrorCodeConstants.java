@@ -14,6 +14,7 @@ public interface ErrorCodeConstants {
     // ========== OA 流程模块 1-009-001-000 ==========
     ErrorCode OA_LEAVE_NOT_EXISTS = new ErrorCode(1_009_001_001, "请假申请不存在");
     ErrorCode LEAVE_NOT_EXISTS = new ErrorCode(1_009_020_001, "假期申请审批不存在");
+    ErrorCode LEAVE_TIME_OVERLAP = new ErrorCode(1_009_020_002, "请假时间与已有请假记录重叠，请重新选择");
     ErrorCode RECEIVE_DOC_NOT_EXISTS = new ErrorCode(1_009_021_001,"收文不存在");
     ErrorCode RECEIVE_DOC_EXISTS = new ErrorCode(1_009_021_002,"收文编号重复");
     ErrorCode RECEIVE_DOC_ERROR= new ErrorCode(1_009_021_003,"收文编号格式不正确");

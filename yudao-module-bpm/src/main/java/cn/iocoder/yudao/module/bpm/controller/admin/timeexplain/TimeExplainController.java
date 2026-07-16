@@ -37,6 +37,8 @@ import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUti
 
 import cn.iocoder.yudao.module.bpm.controller.admin.timeexplain.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.timeexplain.TimeExplainDO;
+import cn.iocoder.yudao.module.bpm.dal.mysql.historyworkflow.HistoryWorkflowMapper;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.timeexplain.TimeExplainService;
@@ -65,6 +67,9 @@ public class TimeExplainController {
 
     @Resource
     private DeptApi deptApi;
+
+    @Resource
+    private HistoryWorkflowMapper historyWorkflowMapper;
 
     @PostMapping("/create")
     @Operation(summary = "创建外出请假补假")
@@ -163,6 +168,7 @@ public class TimeExplainController {
         // 查询附件列表
         List<TimeExplainAttachRespVO> attachList = timeExplainService.getTimeExplainAttachListByTimeExplainId(id);
         result.setFileList(attachList);
+        normalizeHistoryStatus(result);
         return success(result);
     }
 
@@ -176,6 +182,7 @@ public class TimeExplainController {
         result.getList().forEach(vo ->{
             if (vo.getUserName() != null && !vo.getUserName().isEmpty()) {
                 vo.setNickName(vo.getUserName());
+                normalizeHistoryStatus(vo);
                 return;
             }
             AdminUserRespDTO user = userMap.get(getApplyUserId(vo));
@@ -183,8 +190,26 @@ public class TimeExplainController {
                 vo.setNickName(user.getNickname());
                 // 如果需要部门或其他信息，也可以在这里设置
             }
+            normalizeHistoryStatus(vo);
         });
         return success(result);
+    }
+
+    private void normalizeHistoryStatus(TimeExplainRespVO timeExplain) {
+        if (timeExplain == null || StrUtil.isBlank(timeExplain.getProjectId())) {
+            return;
+        }
+        if (isFinishedHistoryProcess(historyWorkflowMapper.selectProinstByProjectId(timeExplain.getProjectId()))) {
+            timeExplain.setStatus(BpmProcessInstanceStatusEnum.APPROVE.getStatus().longValue());
+        }
+    }
+
+    private boolean isFinishedHistoryProcess(Map<String, Object> proinst) {
+        if (proinst == null || proinst.isEmpty()) {
+            return false;
+        }
+        String proinstStatus = String.valueOf(proinst.get("proinstStatus"));
+        return "2".equals(proinstStatus) || "8".equals(proinstStatus) || proinst.get("endDate") != null;
     }
 
     @GetMapping("/export-excel")

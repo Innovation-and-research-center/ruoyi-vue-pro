@@ -6,6 +6,7 @@ import java.util.*;
 import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.mybatis.core.mapper.BaseMapperX;
+import cn.iocoder.yudao.framework.mybatis.core.query.LambdaQueryWrapperX;
 import cn.iocoder.yudao.framework.mybatis.core.query.MPJLambdaWrapperX;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
@@ -22,6 +23,22 @@ import org.apache.ibatis.annotations.Select;
  */
 @Mapper
 public interface LeaveMapper extends BaseMapperX<LeaveDO> {
+
+    /**
+     * 判断用户是否存在时间重叠的有效请假记录。
+     * 审批中、审批通过的记录占用请假时间；修改时排除当前记录。
+     */
+    default boolean existsOverlappingLeave(Integer userId, LocalDateTime startTime,
+                                           LocalDateTime endTime, Long excludeId) {
+        return selectCount(new LambdaQueryWrapperX<LeaveDO>()
+                .eq(LeaveDO::getUserid, userId)
+                .le(LeaveDO::getQxjStartDate, endTime)
+                .ge(LeaveDO::getQxjEndDate, startTime)
+                .ne(excludeId != null, LeaveDO::getId, excludeId)
+                .in(LeaveDO::getSpzt,
+                        BpmProcessInstanceStatusEnum.RUNNING.getStatus().shortValue(),
+                        BpmProcessInstanceStatusEnum.APPROVE.getStatus().shortValue())) > 0;
+    }
 
     List<LeaveSummaryRespVO> selectLeaveSummaryList(LeaveSummaryReqVO reqVO);
 

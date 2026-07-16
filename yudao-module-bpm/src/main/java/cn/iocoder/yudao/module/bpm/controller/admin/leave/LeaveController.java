@@ -35,6 +35,8 @@ import static cn.iocoder.yudao.framework.apilog.core.enums.OperateTypeEnum.*;
 
 import cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
+import cn.iocoder.yudao.module.bpm.dal.mysql.historyworkflow.HistoryWorkflowMapper;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
 import cn.iocoder.yudao.module.bpm.service.leave.LeaveService;
@@ -64,6 +66,9 @@ public class LeaveController {
 
     @Resource
     private DeptApi deptApi;
+
+    @Resource
+    private HistoryWorkflowMapper historyWorkflowMapper;
 
     @PostMapping("/create")
     @Operation(summary = "创建假期申请审批")
@@ -159,6 +164,7 @@ public class LeaveController {
             detail.setDeptName(dept != null ? dept.getName() : "");
             detail.setNickName(startUser != null ? startUser.getNickname() : "");
         }
+        normalizeHistoryStatus(detail);
         return success(detail);
     }
 
@@ -175,8 +181,26 @@ public class LeaveController {
                 vo.setNickName(user.getNickname());
                 // 如果需要部门或其他信息，也可以在这里设置
             }
+            normalizeHistoryStatus(vo);
         });
         return success(result);
+    }
+
+    private void normalizeHistoryStatus(LeaveRespVO leave) {
+        if (leave == null || StrUtil.isBlank(leave.getProjectId())) {
+            return;
+        }
+        if (isFinishedHistoryProcess(historyWorkflowMapper.selectProinstByProjectId(leave.getProjectId()))) {
+            leave.setSpzt(BpmProcessInstanceStatusEnum.APPROVE.getStatus().shortValue());
+        }
+    }
+
+    private boolean isFinishedHistoryProcess(Map<String, Object> proinst) {
+        if (proinst == null || proinst.isEmpty()) {
+            return false;
+        }
+        String proinstStatus = String.valueOf(proinst.get("proinstStatus"));
+        return "2".equals(proinstStatus) || "8".equals(proinstStatus) || proinst.get("endDate") != null;
     }
 
     @GetMapping("/export-excel")

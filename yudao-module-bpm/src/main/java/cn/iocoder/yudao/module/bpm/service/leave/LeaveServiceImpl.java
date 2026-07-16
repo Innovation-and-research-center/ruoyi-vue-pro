@@ -128,6 +128,8 @@ public class LeaveServiceImpl implements LeaveService {
 
     private LeaveDO createLeaveAndProcess(Long userId, LeaveSaveReqVO createReqVO) {
         normalizePeriodTime(createReqVO);
+        validateLeaveTimeOverlap(userId.intValue(), createReqVO.getQxjStartDate(),
+                createReqVO.getQxjEndDate(), null);
         LeaveDO leave = BeanUtils.toBean(createReqVO, LeaveDO.class)
                 .setUserid(userId.intValue()).setSpzt(BpmTaskStatusEnum.RUNNING.getStatus().shortValue());
         leaveMapper.insert(leave);
@@ -225,7 +227,10 @@ public class LeaveServiceImpl implements LeaveService {
     @Override
     public void updateLeave(LeaveSaveReqVO updateReqVO) {
         // 校验存在
-        validateLeaveExists(updateReqVO.getId());
+        LeaveDO leave = validateLeaveExists(updateReqVO.getId());
+        normalizePeriodTime(updateReqVO);
+        validateLeaveTimeOverlap(leave.getUserid(), updateReqVO.getQxjStartDate(),
+                updateReqVO.getQxjEndDate(), updateReqVO.getId());
         // 更新
         LeaveDO updateObj = BeanUtils.toBean(updateReqVO, LeaveDO.class);
         leaveMapper.updateById(updateObj);
@@ -265,9 +270,18 @@ public class LeaveServiceImpl implements LeaveService {
         }
 
 
-    private void validateLeaveExists(Long id) {
-        if (leaveMapper.selectById(id) == null) {
+    private LeaveDO validateLeaveExists(Long id) {
+        LeaveDO leave = leaveMapper.selectById(id);
+        if (leave == null) {
             throw exception(LEAVE_NOT_EXISTS);
+        }
+        return leave;
+    }
+
+    private void validateLeaveTimeOverlap(Integer userId, LocalDateTime startTime,
+                                          LocalDateTime endTime, Long excludeId) {
+        if (leaveMapper.existsOverlappingLeave(userId, startTime, endTime, excludeId)) {
+            throw exception(LEAVE_TIME_OVERLAP);
         }
     }
 
