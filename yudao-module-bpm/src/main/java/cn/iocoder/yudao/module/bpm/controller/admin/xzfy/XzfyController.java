@@ -192,7 +192,7 @@ public class XzfyController {
     public CommonResult<PageResult<XzfyRespVO>> getXzfyPage(@Valid XzfyPageReqVO pageReqVO) {
         PageResult<XzfyDO> pageResult = xzfyService.getXzfyPage(pageReqVO);
         PageResult<XzfyRespVO> result = BeanUtils.toBean(pageResult, XzfyRespVO.class);
-        result.getList().forEach(this::fillProjectId);
+        fillProjectIds(result.getList());
         return success(result);
     }
 
@@ -225,8 +225,33 @@ public class XzfyController {
         // 调用 Service 的分页方法
         PageResult<XzfyDO> pageResult = xzfyService.getUnlinkedXzfyPage(pageReqVO);
         PageResult<XzfyRespVO> result = BeanUtils.toBean(pageResult, XzfyRespVO.class);
-        result.getList().forEach(this::fillProjectId);
+        fillProjectIds(result.getList());
         return success(result);
+    }
+
+    private void fillProjectIds(List<XzfyRespVO> respVOs) {
+        List<String> xmGuids = respVOs.stream()
+                .map(XzfyRespVO::getXmGuid)
+                .filter(StrUtil::isNotBlank)
+                .distinct()
+                .collect(java.util.stream.Collectors.toList());
+        if (xmGuids.isEmpty()) {
+            return;
+        }
+        Map<String, Map<String, Object>> infoMap = historyWorkflowMapper
+                .selectBizProjectInfoByGuids("xzfy", xmGuids).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        item -> String.valueOf(item.get("bizinstGuid")), item -> item, (a, b) -> a));
+        respVOs.forEach(respVO -> {
+            Map<String, Object> info = infoMap.get(respVO.getXmGuid());
+            if (info == null) {
+                return;
+            }
+            respVO.setProjectId(String.valueOf(info.get("projectId")));
+            if (isFinishedHistoryProcess(info)) {
+                respVO.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+            }
+        });
     }
 
     private void fillProjectId(XzfyRespVO respVO) {

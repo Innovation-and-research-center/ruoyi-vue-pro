@@ -294,6 +294,28 @@
                     AND COALESCE(CAST(deletedStatus.LONG_ AS VARCHAR), deletedStatus.TEXT_) = '5'
               )
               AND NOT EXISTS (
+                  SELECT 1 FROM bpm_receive_doc businessData
+                  WHERE businessData.process_instance_id = t.PROC_INST_ID_ AND businessData.status = 5
+                  UNION ALL
+                  SELECT 1 FROM bpm_leave businessData
+                  WHERE businessData.process_instance_id = t.PROC_INST_ID_ AND businessData.spzt = 5
+                  UNION ALL
+                  SELECT 1 FROM t_time_explain businessData
+                  WHERE businessData.process_instance_id = t.PROC_INST_ID_ AND businessData.status = 5
+                  UNION ALL
+                  SELECT 1 FROM t_confflow businessData
+                  WHERE businessData.process_instance_id = t.PROC_INST_ID_ AND businessData.status = 5
+                  UNION ALL
+                  SELECT 1 FROM t_xzfy_list businessData
+                  WHERE businessData.process_instance_id = t.PROC_INST_ID_ AND businessData.status = 5
+                  UNION ALL
+                  SELECT 1 FROM t_xzss_list businessData
+                  WHERE businessData.process_instance_id = t.PROC_INST_ID_ AND businessData.status = 5
+                  UNION ALL
+                  SELECT 1 FROM t_send_doc businessData
+                  WHERE businessData.process_instance_id = t.PROC_INST_ID_ AND businessData.status = 5
+              )
+              AND NOT EXISTS (
                   SELECT 1 FROM ACT_HI_VARINST cancelStatus
                   WHERE cancelStatus.TASK_ID_ = t.ID_
                     AND cancelStatus.NAME_ = #{TASK_STATUS}
@@ -463,9 +485,82 @@
     </select>
 
     <select id="selectUnifiedDoneTaskCount" resultType="java.lang.Long">
-        SELECT COUNT(1)
-        FROM <include refid="UnifiedDoneTaskData" />
-        <include refid="UnifiedDoneTaskWhere" />
+        <choose>
+            <!--
+                已办页首屏不带筛选条件时，只统计两个数据源的基础记录。
+                避免 COUNT 复用 UnifiedDoneTaskData，导致无意义地计算展示字段、变量子查询，
+                并对多张业务表执行全表 GROUP BY。带筛选条件时继续走原查询，保证语义不变。
+            -->
+            <when test="(reqVO.name == null or reqVO.name == '')
+                    and reqVO.status == null
+                    and (reqVO.category == null or reqVO.category == '')
+                    and (reqVO.processDefinitionKey == null or reqVO.processDefinitionKey == '')
+                    and (reqVO.createTime == null or reqVO.createTime.length == 0)
+                    and (reqVO.processInstanceName == null or reqVO.processInstanceName == '')
+                    and (reqVO.processInstanceId == null or reqVO.processInstanceId == '')
+                    and reqVO.urgencyDegree == null
+                    and (reqVO.sendingUnit == null or reqVO.sendingUnit == '')
+                    and (reqVO.dueDate == null or reqVO.dueDate.length == 0)
+                    and (reqVO.processDeadline == null or reqVO.processDeadline.length == 0)">
+                <bind name="VAR_PROCESS_STATUS" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_INSTANCE_VARIABLE_STATUS" />
+                <bind name="TASK_STATUS" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@TASK_VARIABLE_STATUS" />
+                <bind name="START_USER_NODE_ID" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnModelConstants@START_USER_NODE_ID" />
+                SELECT
+                    (
+                        SELECT COUNT(1)
+                        FROM ACT_HI_TASKINST t
+                        WHERE t.ASSIGNEE_ = CAST(#{userId} AS VARCHAR)
+                          AND t.END_TIME_ IS NOT NULL
+                          AND t.TASK_DEF_KEY_ != #{START_USER_NODE_ID}
+                          AND NOT EXISTS (
+                              SELECT 1 FROM ACT_HI_VARINST deletedStatus
+                              WHERE deletedStatus.PROC_INST_ID_ = t.PROC_INST_ID_
+                                AND deletedStatus.NAME_ = #{VAR_PROCESS_STATUS}
+                                AND COALESCE(CAST(deletedStatus.LONG_ AS VARCHAR), deletedStatus.TEXT_) = '5'
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM bpm_receive_doc businessData
+                              WHERE businessData.process_instance_id = t.PROC_INST_ID_ AND businessData.status = 5
+                              UNION ALL
+                              SELECT 1 FROM bpm_leave businessData
+                              WHERE businessData.process_instance_id = t.PROC_INST_ID_ AND businessData.spzt = 5
+                              UNION ALL
+                              SELECT 1 FROM t_time_explain businessData
+                              WHERE businessData.process_instance_id = t.PROC_INST_ID_ AND businessData.status = 5
+                              UNION ALL
+                              SELECT 1 FROM t_confflow businessData
+                              WHERE businessData.process_instance_id = t.PROC_INST_ID_ AND businessData.status = 5
+                              UNION ALL
+                              SELECT 1 FROM t_xzfy_list businessData
+                              WHERE businessData.process_instance_id = t.PROC_INST_ID_ AND businessData.status = 5
+                              UNION ALL
+                              SELECT 1 FROM t_xzss_list businessData
+                              WHERE businessData.process_instance_id = t.PROC_INST_ID_ AND businessData.status = 5
+                              UNION ALL
+                              SELECT 1 FROM t_send_doc businessData
+                              WHERE businessData.process_instance_id = t.PROC_INST_ID_ AND businessData.status = 5
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM ACT_HI_VARINST cancelStatus
+                              WHERE cancelStatus.TASK_ID_ = t.ID_
+                                AND cancelStatus.NAME_ = #{TASK_STATUS}
+                                AND COALESCE(CAST(cancelStatus.LONG_ AS VARCHAR), cancelStatus.TEXT_) = '4'
+                          )
+                    )
+                    +
+                    (
+                        SELECT COUNT(1)
+                        FROM hist_wf.actinst a
+                        WHERE a.user_id = #{userId}
+                          AND a.end_date IS NOT NULL
+                    )
+            </when>
+            <otherwise>
+                SELECT COUNT(1)
+                FROM <include refid="UnifiedDoneTaskData" />
+                <include refid="UnifiedDoneTaskWhere" />
+            </otherwise>
+        </choose>
     </select>
 
     <update id="updateHistoricTaskLongVariable">
@@ -474,6 +569,16 @@
             TEXT_ = NULL,
             TEXT2_ = NULL
         WHERE TASK_ID_ = #{taskId}
+          AND NAME_ = #{name}
+    </update>
+
+    <update id="updateHistoricProcessLongVariable">
+        UPDATE ACT_HI_VARINST
+        SET LONG_ = #{value},
+            TEXT_ = NULL,
+            TEXT2_ = NULL
+        WHERE PROC_INST_ID_ = #{processInstanceId}
+          AND TASK_ID_ IS NULL
           AND NAME_ = #{name}
     </update>
 

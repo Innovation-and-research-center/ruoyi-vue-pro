@@ -15,6 +15,9 @@ import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import cn.iocoder.yudao.module.bpm.service.task.BpmRegisterTaskService;
+import cn.iocoder.yudao.module.infra.dal.dataobject.file.FileDO;
+import cn.iocoder.yudao.module.infra.dal.mysql.file.FileMapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import jodd.util.StringUtil;
 import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
@@ -23,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 import cn.iocoder.yudao.module.bpm.controller.admin.confflow.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.confflow.ConfflowDO;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
@@ -55,6 +59,9 @@ public class ConfflowServiceImpl implements ConfflowService {
 
     @Resource
     private ConfflowAttachMapper confflowAttachMapper;
+
+    @Resource
+    private FileMapper fileMapper;
 
     @Resource
     private BpmProcessInstanceApi processInstanceApi;
@@ -314,8 +321,16 @@ public class ConfflowServiceImpl implements ConfflowService {
             return Collections.emptyList();
         }
         List<ConfflowAttachRespVO> voList = BeanUtils.toBean(doList, ConfflowAttachRespVO.class);
+        Set<String> filePaths = doList.stream()
+                .map(ConfflowAttachDO::getFilePath)
+                .filter(StrUtil::isNotBlank)
+                .collect(Collectors.toSet());
+        Map<String, FileDO> fileMap = CollUtil.isEmpty(filePaths) ? Collections.emptyMap()
+                : fileMapper.selectList(new LambdaQueryWrapper<FileDO>().in(FileDO::getPath, filePaths)).stream()
+                .collect(Collectors.toMap(FileDO::getPath, file -> file, (first, ignored) -> first));
         voList.forEach(vo -> {
-            vo.setFileUrl(vo.getFilePath());
+            FileDO file = fileMap.get(vo.getFilePath());
+            vo.setFileUrl(file != null && StrUtil.isNotBlank(file.getUrl()) ? file.getUrl() : vo.getFilePath());
         });
         return voList;
     }

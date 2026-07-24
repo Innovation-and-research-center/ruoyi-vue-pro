@@ -175,8 +175,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 .taskAssignee(String.valueOf(userId)) // 分配给自己
                 .taskCandidateUser(String.valueOf(userId)) // 收文登记等候选任务
                 .endOr()
-                .active()
-                .includeProcessVariables();
+                .active();
         if (StrUtil.isNotBlank(pageVO.getName())) {
             taskQuery.taskNameLike("%" + pageVO.getName() + "%");
         }
@@ -249,7 +248,9 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         if (count == 0) {
             return PageResult.empty();
         }
-        List<Task> tasks = taskQuery.listPage(PageUtils.getStart(pageVO), pageVO.getPageSize());
+        // COUNT 不需要加载流程变量；仅在读取当前页数据时补充，避免放大统计查询。
+        List<Task> tasks = taskQuery.includeProcessVariables()
+                .listPage(PageUtils.getStart(pageVO), pageVO.getPageSize());
         return new PageResult<>(tasks, count);
     }
 
@@ -262,8 +263,13 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         if (CollUtil.isEmpty(taskIds)) {
             return new PageResult<>(Collections.emptyList(), count);
         }
+        // 一次批量查询分页内的任务，避免按 taskId 逐条查询产生 N+1；再按 SQL 返回的 ID 顺序还原排序。
+        Map<String, Task> taskMap = convertMap(taskService.createTaskQuery()
+                .taskIds(new HashSet<>(taskIds))
+                .includeProcessVariables()
+                .list(), Task::getId);
         List<Task> tasks = taskIds.stream()
-                .map(taskId -> taskService.createTaskQuery().taskId(taskId).includeProcessVariables().singleResult())
+                .map(taskMap::get)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toList());
         return new PageResult<>(tasks, count);

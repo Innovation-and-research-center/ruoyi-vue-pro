@@ -24,6 +24,8 @@ import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.service.permission.PermissionService;
 import cn.iocoder.yudao.module.system.service.permission.RoleService;
 import cn.iocoder.yudao.module.system.service.user.AdminUserService;
+import cn.iocoder.yudao.module.infra.dal.dataobject.file.FileDO;
+import cn.iocoder.yudao.module.infra.dal.mysql.file.FileMapper;
 import org.flowable.task.api.Task;
 import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
@@ -68,6 +70,9 @@ public class LeaveServiceImpl implements LeaveService {
 
     @Resource
     private LeaveAttachMapper leaveAttachMapper;
+
+    @Resource
+    private FileMapper fileMapper;
 
     @Resource
     private BpmProcessInstanceApi processInstanceApi;
@@ -129,7 +134,7 @@ public class LeaveServiceImpl implements LeaveService {
     private LeaveDO createLeaveAndProcess(Long userId, LeaveSaveReqVO createReqVO) {
         normalizePeriodTime(createReqVO);
         validateLeaveTimeOverlap(userId.intValue(), createReqVO.getQxjStartDate(),
-                createReqVO.getQxjEndDate(), null);
+                createReqVO.getQxjEndDate(), createReqVO.getQxjType(), null);
         LeaveDO leave = BeanUtils.toBean(createReqVO, LeaveDO.class)
                 .setUserid(userId.intValue()).setSpzt(BpmTaskStatusEnum.RUNNING.getStatus().shortValue());
         leaveMapper.insert(leave);
@@ -230,7 +235,7 @@ public class LeaveServiceImpl implements LeaveService {
         LeaveDO leave = validateLeaveExists(updateReqVO.getId());
         normalizePeriodTime(updateReqVO);
         validateLeaveTimeOverlap(leave.getUserid(), updateReqVO.getQxjStartDate(),
-                updateReqVO.getQxjEndDate(), updateReqVO.getId());
+                updateReqVO.getQxjEndDate(), updateReqVO.getQxjType(), updateReqVO.getId());
         // 更新
         LeaveDO updateObj = BeanUtils.toBean(updateReqVO, LeaveDO.class);
         leaveMapper.updateById(updateObj);
@@ -264,10 +269,12 @@ public class LeaveServiceImpl implements LeaveService {
     }
 
     @Override
-        public void deleteLeaveListByIds(List<Long> ids,String reason) {
-        // 删除
-        leaveMapper.deleteByIds(ids);
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteLeaveListByIds(List<Long> ids,String reason) {
+        for (Long id : ids) {
+            deleteLeave(id, reason);
         }
+    }
 
 
     private LeaveDO validateLeaveExists(Long id) {
@@ -279,7 +286,11 @@ public class LeaveServiceImpl implements LeaveService {
     }
 
     private void validateLeaveTimeOverlap(Integer userId, LocalDateTime startTime,
-                                          LocalDateTime endTime, Long excludeId) {
+                                          LocalDateTime endTime, Integer leaveType, Long excludeId) {
+        // 哺乳假（5）不参与请假时间重复校验：自身不触发，也不阻塞其他类型请假。
+        if (Objects.equals(leaveType, 5)) {
+            return;
+        }
         if (leaveMapper.existsOverlappingLeave(userId, startTime, endTime, excludeId)) {
             throw exception(LEAVE_TIME_OVERLAP);
         }
@@ -600,13 +611,17 @@ public class LeaveServiceImpl implements LeaveService {
         // 3. 转换为 VO
         List<LeaveAttachRespVO> voList = BeanUtils.toBean(doList, LeaveAttachRespVO.class);
 
-        // 4. 处理 URL (因为 T_TIME_ATTACH 直接存了 filePath，可以直接拿来用)
+        // 4. 新系统附件通过 attachFileId 获取真实访问地址；历史附件保留原始路径，后续由历史附件逻辑处理。
+        Set<Long> fileIds = doList.stream()
+                .map(LeaveAttachDO::getAttachFileId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, FileDO> fileMap = CollUtil.isEmpty(fileIds) ? Collections.emptyMap()
+                : fileMapper.selectBatchIds(fileIds).stream()
+                .collect(Collectors.toMap(FileDO::getId, file -> file));
         voList.forEach(vo -> {
-            // 如果你系统的 filePath 已经是完整的 URL，直接赋给 fileUrl 供前端渲染
-            vo.setFileUrl(vo.getFilePath());
-
-            // 提示：如果你系统的 filePath 只是相对路径，可以在这里拼接上前缀
-            // 例如：vo.setFileUrl( "https://你的域名.com/" + vo.getFilePath() );
+            FileDO file = fileMap.get(vo.getAttachFileId());
+            vo.setFileUrl(file != null && StrUtil.isNotBlank(file.getUrl()) ? file.getUrl() : vo.getFilePath());
         });
 
         return voList;

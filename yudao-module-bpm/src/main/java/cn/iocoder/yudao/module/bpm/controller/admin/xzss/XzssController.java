@@ -191,8 +191,33 @@ public class XzssController {
     public CommonResult<PageResult<XzssRespVO>> getXzssPage(@Valid XzssPageReqVO pageReqVO) {
         PageResult<XzssDO> pageResult = xzssService.getXzssPage(pageReqVO);
         PageResult<XzssRespVO> result = BeanUtils.toBean(pageResult, XzssRespVO.class);
-        result.getList().forEach(this::fillProjectId);
+        fillProjectIds(result.getList());
         return success(result);
+    }
+
+    private void fillProjectIds(List<XzssRespVO> respVOs) {
+        List<String> xmGuids = respVOs.stream()
+                .map(XzssRespVO::getXmGuid)
+                .filter(StrUtil::isNotBlank)
+                .distinct()
+                .collect(java.util.stream.Collectors.toList());
+        if (xmGuids.isEmpty()) {
+            return;
+        }
+        Map<String, Map<String, Object>> infoMap = historyWorkflowMapper
+                .selectBizProjectInfoByGuids("xzss", xmGuids).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        item -> String.valueOf(item.get("bizinstGuid")), item -> item, (a, b) -> a));
+        respVOs.forEach(respVO -> {
+            Map<String, Object> info = infoMap.get(respVO.getXmGuid());
+            if (info == null) {
+                return;
+            }
+            respVO.setProjectId(String.valueOf(info.get("projectId")));
+            if (isFinishedHistoryProcess(info)) {
+                respVO.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+            }
+        });
     }
 
     @GetMapping("/export-excel")

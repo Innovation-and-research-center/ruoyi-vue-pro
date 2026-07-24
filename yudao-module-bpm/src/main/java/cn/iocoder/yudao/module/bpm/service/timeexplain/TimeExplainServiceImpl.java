@@ -21,6 +21,8 @@ import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.service.permission.PermissionService;
 import cn.iocoder.yudao.module.system.service.permission.RoleService;
 import cn.iocoder.yudao.module.system.service.user.AdminUserService;
+import cn.iocoder.yudao.module.infra.dal.dataobject.file.FileDO;
+import cn.iocoder.yudao.module.infra.dal.mysql.file.FileMapper;
 import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
@@ -28,7 +30,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
 import cn.iocoder.yudao.module.bpm.controller.admin.timeexplain.vo.*;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.timeexplain.TimeExplainDO;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
@@ -61,6 +65,9 @@ public class TimeExplainServiceImpl implements TimeExplainService {
 
     @Resource
     private TimeExplainAttachMapper timeExplainAttachMapper;
+
+    @Resource
+    private FileMapper fileMapper;
 
     @Resource
     private BpmProcessInstanceApi processInstanceApi;
@@ -154,7 +161,12 @@ public class TimeExplainServiceImpl implements TimeExplainService {
                 }
             }
         }
-        String customName = user.getNickname() + "因公外出"+createReqVO.getEndPeriod();
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy年MM月dd日");
+        String startDate = createReqVO.getCheckBegin() != null
+                ? createReqVO.getCheckBegin().format(formatter) : "无";
+        String endDate = createReqVO.getCheckEnd() != null
+                ? createReqVO.getCheckEnd().format(formatter) : "无";
+        String customName = user.getNickname() + "因公外出(" + startDate + "-" + endDate + ")";
         Map<String, Object> processInstanceVariables = new HashMap<>();
         if (CollUtil.isNotEmpty(createReqVO.getProcessVariables())) processInstanceVariables.putAll(createReqVO.getProcessVariables());
         processInstanceVariables.put("role_condition", roleCondition);
@@ -299,8 +311,19 @@ public class TimeExplainServiceImpl implements TimeExplainService {
             return Collections.emptyList();
         }
         List<TimeExplainAttachRespVO> voList = BeanUtils.toBean(doList, TimeExplainAttachRespVO.class);
+        Set<Long> fileIds = doList.stream()
+                .map(TimeExplainAttachDO::getAttachFileId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, FileDO> fileMap = CollUtil.isEmpty(fileIds) ? Collections.emptyMap()
+                : fileMapper.selectBatchIds(fileIds).stream()
+                .collect(Collectors.toMap(FileDO::getId, file -> file));
+        Map<Long, Long> attachFileIdMap = doList.stream()
+                .filter(attachment -> attachment.getId() != null && attachment.getAttachFileId() != null)
+                .collect(Collectors.toMap(TimeExplainAttachDO::getId, TimeExplainAttachDO::getAttachFileId));
         voList.forEach(vo -> {
-            vo.setFileUrl(vo.getFilePath());
+            FileDO file = fileMap.get(attachFileIdMap.get(vo.getId()));
+            vo.setFileUrl(file != null && StrUtil.isNotBlank(file.getUrl()) ? file.getUrl() : vo.getFilePath());
         });
         return voList;
     }

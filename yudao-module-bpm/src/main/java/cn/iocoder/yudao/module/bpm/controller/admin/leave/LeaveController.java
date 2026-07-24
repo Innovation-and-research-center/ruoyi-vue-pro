@@ -164,7 +164,7 @@ public class LeaveController {
             detail.setDeptName(dept != null ? dept.getName() : "");
             detail.setNickName(startUser != null ? startUser.getNickname() : "");
         }
-        normalizeHistoryStatus(detail);
+        normalizeHistoryStatus(Collections.singletonList(detail));
         return success(detail);
     }
 
@@ -175,24 +175,35 @@ public class LeaveController {
         PageResult<LeaveRespVO> result = BeanUtils.toBean(pageResult, LeaveRespVO.class);
         Set<Long> userIds = collectApplyUserIds(result.getList());
         Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(userIds);
+        normalizeHistoryStatus(result.getList());
         result.getList().forEach(vo ->{
             AdminUserRespDTO user = userMap.get(getApplyUserId(vo));
             if (user != null) {
                 vo.setNickName(user.getNickname());
                 // 如果需要部门或其他信息，也可以在这里设置
             }
-            normalizeHistoryStatus(vo);
         });
         return success(result);
     }
 
-    private void normalizeHistoryStatus(LeaveRespVO leave) {
-        if (leave == null || StrUtil.isBlank(leave.getProjectId())) {
+    private void normalizeHistoryStatus(List<LeaveRespVO> leaves) {
+        List<String> projectIds = leaves.stream()
+                .map(LeaveRespVO::getProjectId)
+                .filter(StrUtil::isNotBlank)
+                .distinct()
+                .collect(java.util.stream.Collectors.toList());
+        if (projectIds.isEmpty()) {
             return;
         }
-        if (isFinishedHistoryProcess(historyWorkflowMapper.selectProinstByProjectId(leave.getProjectId()))) {
-            leave.setSpzt(BpmProcessInstanceStatusEnum.APPROVE.getStatus().shortValue());
-        }
+        Map<String, Map<String, Object>> proinstMap = historyWorkflowMapper.selectProinstByProjectIds(projectIds)
+                .stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        item -> String.valueOf(item.get("projectId")), item -> item, (a, b) -> a));
+        leaves.forEach(leave -> {
+            if (isFinishedHistoryProcess(proinstMap.get(leave.getProjectId()))) {
+                leave.setSpzt(BpmProcessInstanceStatusEnum.APPROVE.getStatus().shortValue());
+            }
+        });
     }
 
     private boolean isFinishedHistoryProcess(Map<String, Object> proinst) {

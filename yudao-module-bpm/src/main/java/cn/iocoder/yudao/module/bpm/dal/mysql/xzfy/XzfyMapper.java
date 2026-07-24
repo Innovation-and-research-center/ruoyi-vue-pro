@@ -8,6 +8,7 @@ import cn.iocoder.yudao.framework.mybatis.core.query.LambdaQueryWrapperX;
 import cn.iocoder.yudao.framework.mybatis.core.mapper.BaseMapperX;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzfy.XzfyDO;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.util.BpmQueryUtils;
 import com.baomidou.mybatisplus.core.toolkit.support.SFunction;
 import org.apache.ibatis.annotations.Mapper;
@@ -31,11 +32,34 @@ public interface XzfyMapper extends BaseMapperX<XzfyDO> {
                 .eqIfPresent(XzfyDO::getLb1, reqVO.getLb1())
                 .eqIfPresent(XzfyDO::getLb2, reqVO.getLb2())
                 .eqIfPresent(XzfyDO::getLb3, reqVO.getLb3())
-                .eqIfPresent(XzfyDO::getStatus, reqVO.getStatus())
                 .neIfPresent(XzfyDO::getStatus, BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue());
+        applyEffectiveStatusFilter(wrapper, reqVO.getStatus());
         likeKeywords(wrapper, XzfyDO::getSqr, reqVO.getSqr());
         orderBy(reqVO, wrapper);
         return selectPage(reqVO, wrapper);
+    }
+
+    default void applyEffectiveStatusFilter(LambdaQueryWrapperX<XzfyDO> wrapper, Short status) {
+        if (status == null) {
+            return;
+        }
+        if (Objects.equals(status, BpmTaskStatusEnum.APPROVE.getStatus().shortValue())) {
+            wrapper.and(w -> w.eq(XzfyDO::getStatus, status).or().apply(
+                    "EXISTS (SELECT 1 FROM hist_wf.biz_project_map m " +
+                            "JOIN hist_wf.proinst hp ON hp.project_id = m.project_id " +
+                            "WHERE m.business_type = 'xzfy' AND m.bizinst_guid = t_xzfy_list.xm_guid " +
+                            "AND (hp.proinst_status IN (2, 8) OR hp.end_date IS NOT NULL))"));
+            return;
+        }
+        if (Objects.equals(status, BpmTaskStatusEnum.RUNNING.getStatus().shortValue())) {
+            wrapper.and(w -> w.eq(XzfyDO::getStatus, status).or().apply(
+                    "EXISTS (SELECT 1 FROM hist_wf.biz_project_map m " +
+                            "JOIN hist_wf.proinst hp ON hp.project_id = m.project_id " +
+                            "WHERE m.business_type = 'xzfy' AND m.bizinst_guid = t_xzfy_list.xm_guid " +
+                            "AND hp.proinst_status NOT IN (2, 8) AND hp.end_date IS NULL)"));
+            return;
+        }
+        wrapper.eq(XzfyDO::getStatus, status);
     }
 
     default void likeKeywords(LambdaQueryWrapperX<XzfyDO> wrapper, SFunction<XzfyDO, ?> column, String keyword) {

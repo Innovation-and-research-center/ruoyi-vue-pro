@@ -29,6 +29,18 @@ public interface HistoryWorkflowMapper {
             "</script>")
     List<Map<String, Object>> selectProinstByProjectIds(@Param("projectIds") List<String> projectIds);
 
+    @Select("<script>" +
+            "SELECT DISTINCT ON (m.bizinst_guid) m.bizinst_guid AS \"bizinstGuid\", " +
+            "m.project_id AS \"projectId\", p.proinst_status AS \"proinstStatus\", p.end_date AS \"endDate\" " +
+            "FROM hist_wf.biz_project_map m " +
+            "LEFT JOIN hist_wf.proinst p ON p.project_id = m.project_id " +
+            "WHERE m.business_type = #{businessType} AND m.bizinst_guid IN " +
+            "<foreach collection='bizinstGuids' item='bizinstGuid' open='(' separator=',' close=')'>#{bizinstGuid}</foreach> " +
+            "ORDER BY m.bizinst_guid, p.end_date DESC NULLS LAST, p.start_date DESC NULLS LAST" +
+            "</script>")
+    List<Map<String, Object>> selectBizProjectInfoByGuids(@Param("businessType") String businessType,
+                                                          @Param("bizinstGuids") List<String> bizinstGuids);
+
     @Select("SELECT CAST(p.proinst_id AS varchar) AS \"proinstId\", p.proinst_id AS \"proinstIdRaw\", p.source_schema AS \"sourceSchema\", p.project_id AS \"projectId\", " +
             "p.proinst_name AS \"name\", p.proinst_name AS \"proinstName\", p.start_date AS \"startTime\", " +
             "p.start_date AS \"startDate\", p.end_date AS \"endTime\", p.end_date AS \"endDate\", " +
@@ -63,6 +75,7 @@ public interface HistoryWorkflowMapper {
     List<Map<String, Object>> selectRouteRecords(@Param("proinstId") Long proinstId, @Param("sourceSchema") String sourceSchema);
 
     @Select("SELECT id, subject AS \"title\", subject, project_id AS \"projectId\", process_instance_id AS \"processInstanceId\", " +
+            "attach_file_path AS \"attachFilePath\", " +
             "directoridea AS \"directorIdea\", directorname AS \"directorName\", directordate AS \"directorDate\", " +
             "fugleidea AS \"fugleIdea\", fuglename AS \"fugleName\", fugledate AS \"fugleDate\", " +
             "dept_director_idea AS \"deptDirectorIdea\", dept_director AS \"deptDirector\", dept_director_date AS \"deptDirectorDate\", " +
@@ -128,8 +141,10 @@ public interface HistoryWorkflowMapper {
     List<Map<String, Object>> selectTimeExplainAttachments(@Param("id") String id);
 
     @Select("SELECT confflow_attach_id AS id, file_path AS \"filePath\", file_name AS \"fileName\", file_extension AS \"fileExtension\" " +
-            "FROM t_confflow_attach WHERE comm_id = CAST(#{id} AS numeric) AND COALESCE(deleted, 0) = 0 ORDER BY confflow_attach_id ASC")
-    List<Map<String, Object>> selectConfflowAttachments(@Param("id") String id);
+            "FROM t_confflow_attach WHERE (doc_guid = #{docGuid} OR comm_id = CAST(#{id} AS numeric)) " +
+            "AND COALESCE(deleted, 0) = 0 ORDER BY confflow_attach_id ASC")
+    List<Map<String, Object>> selectConfflowAttachments(@Param("id") String id,
+                                                        @Param("docGuid") String docGuid);
 
     @Select("SELECT id, task_id AS \"taskId\", filepath, filename, fileextension AS \"fileExtension\", doc_type AS \"docType\", doc_id AS \"docId\" " +
             "FROM t_comment_attach WHERE doc_id = #{docId} AND upper(doc_type) = upper(#{docType}) AND COALESCE(deleted, 0) = 0 ORDER BY id ASC")

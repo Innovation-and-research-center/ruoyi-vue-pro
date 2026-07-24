@@ -10,6 +10,7 @@ import cn.iocoder.yudao.framework.mybatis.core.query.LambdaQueryWrapperX;
 import cn.iocoder.yudao.framework.mybatis.core.query.MPJLambdaWrapperX;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.leave.LeaveDO;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import org.apache.ibatis.annotations.Mapper;
 import cn.iocoder.yudao.module.bpm.controller.admin.leave.vo.*;
@@ -35,6 +36,8 @@ public interface LeaveMapper extends BaseMapperX<LeaveDO> {
                 .le(LeaveDO::getQxjStartDate, endTime)
                 .ge(LeaveDO::getQxjEndDate, startTime)
                 .ne(excludeId != null, LeaveDO::getId, excludeId)
+                // 哺乳假不占用其他请假类型的重复校验时间段。
+                .ne(LeaveDO::getQxjType, 5)
                 .in(LeaveDO::getSpzt,
                         BpmProcessInstanceStatusEnum.RUNNING.getStatus().shortValue(),
                         BpmProcessInstanceStatusEnum.APPROVE.getStatus().shortValue())) > 0;
@@ -59,10 +62,33 @@ public interface LeaveMapper extends BaseMapperX<LeaveDO> {
                 .eqIfPresent(LeaveDO::getFilepath, reqVO.getFilepath())
                 .eqIfPresent(LeaveDO::getUserid, reqVO.getUserId())
                 .likeIfPresent(AdminUserDO::getNickname, reqVO.getNickName())
-                .eqIfPresent(LeaveDO::getSpzt, reqVO.getSpzt())
                 .neIfPresent(LeaveDO::getSpzt, BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue());
+        applyEffectiveStatusFilter(wrapper, reqVO.getSpzt());
         orderBy(reqVO, wrapper);
         return selectJoinPage(reqVO, LeaveDO.class, wrapper);
+    }
+
+    default void applyEffectiveStatusFilter(MPJLambdaWrapperX<LeaveDO> wrapper, Short status) {
+        if (status == null) {
+            return;
+        }
+        if (Objects.equals(status, BpmTaskStatusEnum.APPROVE.getStatus().shortValue())) {
+            wrapper.and(w -> w.eq(LeaveDO::getSpzt, status)
+                    .or()
+                    .apply("t.project_id IS NOT NULL AND t.project_id <> '' AND EXISTS (" +
+                            "SELECT 1 FROM hist_wf.proinst hp WHERE hp.project_id = t.project_id " +
+                            "AND (hp.proinst_status IN (2, 8) OR hp.end_date IS NOT NULL))"));
+            return;
+        }
+        if (Objects.equals(status, BpmTaskStatusEnum.RUNNING.getStatus().shortValue())) {
+            wrapper.and(w -> w.eq(LeaveDO::getSpzt, status)
+                    .or()
+                    .apply("t.project_id IS NOT NULL AND t.project_id <> '' AND EXISTS (" +
+                            "SELECT 1 FROM hist_wf.proinst hp WHERE hp.project_id = t.project_id " +
+                            "AND hp.proinst_status NOT IN (2, 8) AND hp.end_date IS NULL)"));
+            return;
+        }
+        wrapper.eq(LeaveDO::getSpzt, status);
     }
 
     static LocalDateTime getRangeStart(LocalDateTime[] range) {

@@ -168,7 +168,7 @@ public class TimeExplainController {
         // 查询附件列表
         List<TimeExplainAttachRespVO> attachList = timeExplainService.getTimeExplainAttachListByTimeExplainId(id);
         result.setFileList(attachList);
-        normalizeHistoryStatus(result);
+        normalizeHistoryStatus(Collections.singletonList(result));
         return success(result);
     }
 
@@ -179,10 +179,10 @@ public class TimeExplainController {
         PageResult<TimeExplainRespVO> result = BeanUtils.toBean(pageResult, TimeExplainRespVO.class);
         Set<Long> userIds = collectApplyUserIds(result.getList());
         Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(userIds);
+        normalizeHistoryStatus(result.getList());
         result.getList().forEach(vo ->{
             if (vo.getUserName() != null && !vo.getUserName().isEmpty()) {
                 vo.setNickName(vo.getUserName());
-                normalizeHistoryStatus(vo);
                 return;
             }
             AdminUserRespDTO user = userMap.get(getApplyUserId(vo));
@@ -190,18 +190,28 @@ public class TimeExplainController {
                 vo.setNickName(user.getNickname());
                 // 如果需要部门或其他信息，也可以在这里设置
             }
-            normalizeHistoryStatus(vo);
         });
         return success(result);
     }
 
-    private void normalizeHistoryStatus(TimeExplainRespVO timeExplain) {
-        if (timeExplain == null || StrUtil.isBlank(timeExplain.getProjectId())) {
+    private void normalizeHistoryStatus(List<TimeExplainRespVO> timeExplains) {
+        List<String> projectIds = timeExplains.stream()
+                .map(TimeExplainRespVO::getProjectId)
+                .filter(StrUtil::isNotBlank)
+                .distinct()
+                .collect(java.util.stream.Collectors.toList());
+        if (projectIds.isEmpty()) {
             return;
         }
-        if (isFinishedHistoryProcess(historyWorkflowMapper.selectProinstByProjectId(timeExplain.getProjectId()))) {
-            timeExplain.setStatus(BpmProcessInstanceStatusEnum.APPROVE.getStatus().longValue());
-        }
+        Map<String, Map<String, Object>> proinstMap = historyWorkflowMapper.selectProinstByProjectIds(projectIds)
+                .stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        item -> String.valueOf(item.get("projectId")), item -> item, (a, b) -> a));
+        timeExplains.forEach(timeExplain -> {
+            if (isFinishedHistoryProcess(proinstMap.get(timeExplain.getProjectId()))) {
+                timeExplain.setStatus(BpmProcessInstanceStatusEnum.APPROVE.getStatus().longValue());
+            }
+        });
     }
 
     private boolean isFinishedHistoryProcess(Map<String, Object> proinst) {

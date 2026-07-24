@@ -175,14 +175,20 @@ public class ConfflowController {
         normalizeHistoryStatus(result.getList());
         Set<Long> userIds = collectCreatorUserIds(result.getList());
         Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(userIds);
+        Set<Long> deptIds = userMap.values().stream()
+                .map(AdminUserRespDTO::getDeptId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, DeptRespDTO> deptMap = deptApi.getDeptMap(deptIds);
         result.getList().forEach(vo ->{
             AdminUserRespDTO user = userMap.get(parseCreatorUserId(vo.getCreator()));
 
             if (user != null) {
                 vo.setUserName(user.getNickname());
-                DeptRespDTO deptInfo = deptApi.getDept(user.getDeptId());
-                vo.setDeptName(deptInfo.getName());
-                // 如果需要部门或其他信息，也可以在这里设置
+                DeptRespDTO deptInfo = deptMap.get(user.getDeptId());
+                if (deptInfo != null) {
+                    vo.setDeptName(deptInfo.getName());
+                }
             }
         });
         return success(result);

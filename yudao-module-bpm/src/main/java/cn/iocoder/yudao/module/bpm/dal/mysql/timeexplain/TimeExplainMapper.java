@@ -8,6 +8,7 @@ import cn.iocoder.yudao.framework.mybatis.core.mapper.BaseMapperX;
 import cn.iocoder.yudao.framework.mybatis.core.query.MPJLambdaWrapperX;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.timeexplain.TimeExplainDO;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import org.apache.ibatis.annotations.Mapper;
 import cn.iocoder.yudao.module.bpm.controller.admin.timeexplain.vo.*;
@@ -34,13 +35,36 @@ public interface TimeExplainMapper extends BaseMapperX<TimeExplainDO> {
                 .likeIfPresent(TimeExplainDO::getReason, reqVO.getReason())
                 .likeIfPresent(TimeExplainDO::getStartPlace, reqVO.getStartPlace())
                 .likeIfPresent(TimeExplainDO::getEndPlace, reqVO.getEndPlace())
-                .eqIfPresent(TimeExplainDO::getStatus, reqVO.getStatus())
                 .eqIfPresent(TimeExplainDO::getDays, reqVO.getDays())
                 .eqIfPresent(TimeExplainDO::getYear, reqVO.getYear())
                 .betweenIfPresent(TimeExplainDO::getCreateTime, reqVO.getCreateTime())
                 .neIfPresent(TimeExplainDO::getStatus, BpmProcessInstanceStatusEnum.INVALID.getStatus().longValue());
+        applyEffectiveStatusFilter(wrapper, reqVO.getStatus());
         orderBy(reqVO, wrapper);
         return selectJoinPage(reqVO, TimeExplainDO.class, wrapper);
+    }
+
+    default void applyEffectiveStatusFilter(MPJLambdaWrapperX<TimeExplainDO> wrapper, Long status) {
+        if (status == null) {
+            return;
+        }
+        if (Objects.equals(status, BpmTaskStatusEnum.APPROVE.getStatus().longValue())) {
+            wrapper.and(w -> w.eq(TimeExplainDO::getStatus, status)
+                    .or()
+                    .apply("t.project_id IS NOT NULL AND t.project_id <> '' AND EXISTS (" +
+                            "SELECT 1 FROM hist_wf.proinst hp WHERE hp.project_id = t.project_id " +
+                            "AND (hp.proinst_status IN (2, 8) OR hp.end_date IS NOT NULL))"));
+            return;
+        }
+        if (Objects.equals(status, BpmTaskStatusEnum.RUNNING.getStatus().longValue())) {
+            wrapper.and(w -> w.eq(TimeExplainDO::getStatus, status)
+                    .or()
+                    .apply("t.project_id IS NOT NULL AND t.project_id <> '' AND EXISTS (" +
+                            "SELECT 1 FROM hist_wf.proinst hp WHERE hp.project_id = t.project_id " +
+                            "AND hp.proinst_status NOT IN (2, 8) AND hp.end_date IS NULL)"));
+            return;
+        }
+        wrapper.eq(TimeExplainDO::getStatus, status);
     }
 
     static java.time.LocalDateTime getRangeStart(java.time.LocalDateTime[] range) {
