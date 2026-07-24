@@ -6,6 +6,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.module.bpm.dal.mysql.historyworkflow.HistoryWorkflowMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.beans.factory.annotation.Value;
 
 import javax.annotation.Resource;
 import java.util.ArrayList;
@@ -19,6 +20,10 @@ public class HistoryWorkflowServiceImpl implements HistoryWorkflowService {
 
     @Resource
     private HistoryWorkflowMapper historyWorkflowMapper;
+
+    /** 历史附件在新系统中的访问根路径，可在部署环境覆盖。 */
+    @Value("${bpm.history-workflow.attachment-base-url:/profile/upload/}")
+    private String attachmentBaseUrl;
 
     @Override
     public Map<String, Object> getHistoryWorkflowDetail(String processInstanceId, String projectId) {
@@ -35,6 +40,7 @@ public class HistoryWorkflowServiceImpl implements HistoryWorkflowService {
         fillStartUserName(proinst, records);
         List<Map<String, Object>> comments = queryComments(business);
         List<Map<String, Object>> attachments = queryAttachments(business);
+        fillAttachmentUrls(business, attachments);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("processInstance", proinst);
@@ -283,7 +289,7 @@ public class HistoryWorkflowServiceImpl implements HistoryWorkflowService {
             case "time_explain":
                 return historyWorkflowMapper.selectTimeExplainAttachments(id);
             case "confflow":
-                return historyWorkflowMapper.selectConfflowAttachments(id);
+                return historyWorkflowMapper.selectConfflowAttachments(id, docId);
             case "xzfy":
                 return historyWorkflowMapper.selectCommentAttachments(docId, "XZFY");
             case "xzss":
@@ -291,6 +297,51 @@ public class HistoryWorkflowServiceImpl implements HistoryWorkflowService {
             default:
                 return new ArrayList<>();
         }
+    }
+
+    private void fillAttachmentUrls(Map<String, Object> business, List<Map<String, Object>> attachments) {
+        if (CollUtil.isEmpty(attachments)) {
+            return;
+        }
+        String businessType = str(business.get("type"));
+        String receiveDocDirectory = str(business.get("attachFilePath"));
+        for (Map<String, Object> attachment : attachments) {
+            String filePath = firstNonBlankString(attachment.get("fileUrl"), attachment.get("filepath"),
+                    attachment.get("filePath"));
+            if (StrUtil.isBlank(filePath) && StrUtil.equals("receive_doc", businessType)) {
+                filePath = joinPath(receiveDocDirectory,
+                        firstNonBlankString(attachment.get("filename"), attachment.get("fileName")));
+                if (StrUtil.isNotBlank(filePath)) {
+                    attachment.put("filePath", filePath);
+                }
+            }
+            if (StrUtil.isBlank(filePath)) {
+                continue;
+            }
+            String normalizedPath = filePath.replace('\\', '/');
+            attachment.put("fileUrl", isAbsoluteUrl(normalizedPath)
+                    ? normalizedPath : joinPath(attachmentBaseUrl, normalizedPath));
+        }
+    }
+
+    private String firstNonBlankString(Object... values) {
+        return str(firstNonBlank(values));
+    }
+
+    private boolean isAbsoluteUrl(String path) {
+        return StrUtil.startWithIgnoreCase(path, "http://") || StrUtil.startWithIgnoreCase(path, "https://");
+    }
+
+    private String joinPath(String prefix, String path) {
+        if (StrUtil.isBlank(path)) {
+            return null;
+        }
+        String normalizedPath = path.replace('\\', '/');
+        if (StrUtil.isBlank(prefix)) {
+            return normalizedPath;
+        }
+        String normalizedPrefix = prefix.replace('\\', '/');
+        return StrUtil.removeSuffix(normalizedPrefix, "/") + "/" + StrUtil.removePrefix(normalizedPath, "/");
     }
 
     private String getBusinessDocId(Map<String, Object> business) {
