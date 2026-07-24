@@ -16,6 +16,15 @@ public class BpmProcessInstanceUnifiedRespVO {
     private Integer status;            // 办件状态
     private String processDefinitionKey;
     private String sourceUnit;
+    /**
+     * 收文来源，例如：市局公文、通知公告、林业局收文。
+     * 非收文流程为空。
+     */
+    private String source;
+    /**
+     * 数据类型：现有数据、历史已办结、历史未办结。
+     */
+    private String dataType;
     private String urgencyDegree;
     private String deadlineDate;
     private Integer processResult;

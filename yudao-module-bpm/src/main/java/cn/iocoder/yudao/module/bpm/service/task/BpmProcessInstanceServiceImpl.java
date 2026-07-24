@@ -7,6 +7,7 @@ import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.lang.Assert;
 import cn.hutool.core.util.*;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
+import cn.iocoder.yudao.framework.common.biz.system.permission.PermissionCommonApi;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.util.collection.CollectionUtils;
 import cn.iocoder.yudao.framework.common.util.date.DateUtils;
@@ -57,6 +58,7 @@ import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserSimpleRe
 import cn.iocoder.yudao.module.system.convert.user.UserConvert;
 import cn.iocoder.yudao.module.system.dal.dataobject.dept.DeptDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
+import cn.iocoder.yudao.module.system.enums.permission.RoleCodeEnum;
 import cn.iocoder.yudao.module.system.service.dept.DeptService;
 import cn.iocoder.yudao.module.system.service.user.AdminUserService;
 import cn.iocoder.yudao.module.system.service.userdept.UserDeptService;
@@ -132,6 +134,8 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
     @Resource
     private BpmProcessDefinitionService processDefinitionService;
+    @Resource
+    private PermissionCommonApi permissionApi;
     @Resource
     @Lazy // 避免循环依赖
     private BpmTaskService taskService;
@@ -1862,15 +1866,53 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
     @Override
     @DataPermission(enable = false)
     public PageResult<BpmProcessInstanceUnifiedRespVO> getUnifiedProcessInstancePage(Long userId, BpmProcessInstanceUnifiedReqVO reqVO) {
+        boolean superAdmin = permissionApi.hasAnyRoles(userId, RoleCodeEnum.SUPER_ADMIN.getCode());
+        Set<String> managedProcessDefinitionKeys = getManagedProcessDefinitionKeys(userId);
 
-        Long count = unifiedMapper.selectUnifiedCount(userId, reqVO);
+        Long count = unifiedMapper.selectUnifiedCount(userId, superAdmin, managedProcessDefinitionKeys, reqVO);
         if (count == 0) {
             return PageResult.empty();
         }
 
-        List<BpmProcessInstanceUnifiedRespVO> list = unifiedMapper.selectUnifiedList(userId, reqVO);
+        List<BpmProcessInstanceUnifiedRespVO> list = unifiedMapper.selectUnifiedList(
+                userId, superAdmin, managedProcessDefinitionKeys, reqVO);
 
         return new PageResult<>(list, count);
+    }
+
+    /**
+     * 根据系统角色获取当前用户可管理的业务流程 Key。
+     */
+    private Set<String> getManagedProcessDefinitionKeys(Long userId) {
+        Set<String> keys = new HashSet<>();
+        if (permissionApi.hasAnyRoles(userId, "receive_admin")) {
+            keys.add("receive_doc");
+            keys.add("receice_doc_v2_copy_copy");
+        }
+        if (permissionApi.hasAnyRoles(userId, "xzfy_start")) {
+            keys.add("xzfy");
+            keys.add("oa_review");
+        }
+        if (permissionApi.hasAnyRoles(userId, "xzss_start")) {
+            keys.add("xzss");
+            keys.add("oa_lawsuit");
+        }
+        if (permissionApi.hasAnyRoles(userId, "send_start")) {
+            keys.add("send_doc");
+        }
+        if (permissionApi.hasAnyRoles(userId, "leave_admin")) {
+            keys.add("leave");
+            keys.add("oa_leave");
+        }
+        if (permissionApi.hasAnyRoles(userId, "work_admin")) {
+            keys.add("time_explain");
+            keys.add("oa_out");
+        }
+        if (permissionApi.hasAnyRoles(userId, "conn_admin")) {
+            keys.add("confflow");
+            keys.add("conference_report");
+        }
+        return keys;
     }
 
 

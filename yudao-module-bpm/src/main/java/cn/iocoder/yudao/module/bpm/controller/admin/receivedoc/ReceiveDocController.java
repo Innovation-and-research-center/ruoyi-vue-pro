@@ -347,16 +347,23 @@ public class ReceiveDocController {
                 .stream()
                 .collect(Collectors.toMap(item -> String.valueOf(item.get("projectId")), item -> item, (a, b) -> a));
         receiveDocs.forEach(receiveDoc -> {
-            if (isFinishedHistoryProcess(proinstMap.get(receiveDoc.getProjectId()))) {
+            Map<String, Object> proinst = proinstMap.get(receiveDoc.getProjectId());
+            if (isFinishedHistoryProcess(proinst)) {
                 receiveDoc.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+            } else if (proinst != null) {
+                receiveDoc.setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue());
             }
         });
     }
 
     private ReceiveDocRespVO normalizeHistoryStatus(ReceiveDocRespVO receiveDoc) {
-        if (receiveDoc != null && StrUtil.isNotBlank(receiveDoc.getProjectId())
-                && isFinishedHistoryProcess(historyWorkflowMapper.selectProinstByProjectId(receiveDoc.getProjectId()))) {
-            receiveDoc.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+        if (receiveDoc != null && StrUtil.isNotBlank(receiveDoc.getProjectId())) {
+            Map<String, Object> proinst = historyWorkflowMapper.selectProinstByProjectId(receiveDoc.getProjectId());
+            if (isFinishedHistoryProcess(proinst)) {
+                receiveDoc.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+            } else if (proinst != null) {
+                receiveDoc.setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue());
+            }
         }
         return receiveDoc;
     }

@@ -28,6 +28,12 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
 
     String WEB_CREATE_SOURCE = "网页新建";
     String UNKNOWN_SOURCE = "未知来源";
+    String NOTICE_SOURCE = "通知公告";
+    String LEGACY_NOTICE_SOURCE = "市局公告";
+    String FORESTRY_SOURCE = "林业局收文";
+    String LEGACY_FORESTRY_SOURCE = "林业局公文";
+    String PROVINCE_SOURCE = "省厅收文";
+    String LEGACY_PROVINCE_SOURCE = "省厅公文";
     String DICT_TYPE_AGENCY_NAME = "agency_name";
     String DICT_TYPE_DOC_CLASS = "doc_class";
 
@@ -35,7 +41,11 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
             "SELECT r.process_instance_id AS \"processInstanceId\", " +
             "CASE WHEN count(f.id) = 0 THEN '" + WEB_CREATE_SOURCE + "' " +
             "WHEN max(NULLIF(f.operation_information, '')) IS NULL THEN '" + UNKNOWN_SOURCE + "' " +
-            "ELSE max(NULLIF(f.operation_information, '')) END AS source " +
+            "ELSE CASE max(NULLIF(f.operation_information, '')) " +
+            "WHEN '" + LEGACY_NOTICE_SOURCE + "' THEN '" + NOTICE_SOURCE + "' " +
+            "WHEN '" + LEGACY_FORESTRY_SOURCE + "' THEN '" + FORESTRY_SOURCE + "' " +
+            "WHEN '" + LEGACY_PROVINCE_SOURCE + "' THEN '" + PROVINCE_SOURCE + "' " +
+            "ELSE max(NULLIF(f.operation_information, '')) END END AS source " +
             "FROM bpm_receive_doc r " +
             "LEFT JOIN t_file_exchange f ON f.doc_id = r.id AND COALESCE(f.deleted, 0) = 0 " +
             "WHERE r.process_instance_id IN " +
@@ -50,6 +60,9 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
         wrapper.selectAll(ReceiveDocDO.class);
         wrapper.select("CASE WHEN t1.id IS NULL THEN '" + WEB_CREATE_SOURCE
                 + "' WHEN t1.operation_information IS NULL OR t1.operation_information = '' THEN '" + UNKNOWN_SOURCE
+                + "' WHEN t1.operation_information = '" + LEGACY_NOTICE_SOURCE + "' THEN '" + NOTICE_SOURCE
+                + "' WHEN t1.operation_information = '" + LEGACY_FORESTRY_SOURCE + "' THEN '" + FORESTRY_SOURCE
+                + "' WHEN t1.operation_information = '" + LEGACY_PROVINCE_SOURCE + "' THEN '" + PROVINCE_SOURCE
                 + "' ELSE t1.operation_information END AS source");
         wrapper.leftJoin(FileExchangeDO.class, FileExchangeDO::getDocId, ReceiveDocDO::getId);
         wrapper.eqIfPresent(ReceiveDocDO::getDocClass, reqVO.getDocClass());
@@ -71,6 +84,12 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
                 wrapper.and(w -> w.isNull(FileExchangeDO::getOperationInformation)
                         .or()
                         .eq(FileExchangeDO::getOperationInformation, ""));
+            } else if (NOTICE_SOURCE.equals(reqVO.getSource())) {
+                wrapper.in(FileExchangeDO::getOperationInformation, NOTICE_SOURCE, LEGACY_NOTICE_SOURCE);
+            } else if (FORESTRY_SOURCE.equals(reqVO.getSource())) {
+                wrapper.in(FileExchangeDO::getOperationInformation, FORESTRY_SOURCE, LEGACY_FORESTRY_SOURCE);
+            } else if (PROVINCE_SOURCE.equals(reqVO.getSource())) {
+                wrapper.in(FileExchangeDO::getOperationInformation, PROVINCE_SOURCE, LEGACY_PROVINCE_SOURCE);
             } else {
                 wrapper.eq(FileExchangeDO::getOperationInformation, reqVO.getSource());
             }

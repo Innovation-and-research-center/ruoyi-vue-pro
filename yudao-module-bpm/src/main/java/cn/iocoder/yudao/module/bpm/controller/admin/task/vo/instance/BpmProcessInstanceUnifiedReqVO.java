@@ -48,6 +48,9 @@ public class BpmProcessInstanceUnifiedReqVO extends PageParam {
     @Schema(description = "业务结果(1-处理中, 2-通过, 3-不通过, 4-撤销)", example = "2")
     private Integer processResult;
 
+    @Schema(description = "数据类型：现有数据、历史已办结、历史未办结", example = "历史未办结")
+    private String dataType;
+
     @Schema(description = "排序字段")
     private String orderField;
 

@@ -1,12 +1,14 @@
 package cn.iocoder.yudao.module.bpm.service.historyworkflow;
 
+import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.map.MapUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.module.bpm.dal.mysql.historyworkflow.HistoryWorkflowMapper;
+import cn.iocoder.yudao.module.infra.dal.dataobject.file.FileConfigDO;
+import cn.iocoder.yudao.module.infra.service.file.FileConfigService;
 import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
-import org.springframework.beans.factory.annotation.Value;
 
 import javax.annotation.Resource;
 import java.util.ArrayList;
@@ -21,9 +23,8 @@ public class HistoryWorkflowServiceImpl implements HistoryWorkflowService {
     @Resource
     private HistoryWorkflowMapper historyWorkflowMapper;
 
-    /** 历史附件在新系统中的访问根路径，可在部署环境覆盖。 */
-    @Value("${bpm.history-workflow.attachment-base-url:/profile/upload/}")
-    private String attachmentBaseUrl;
+    @Resource
+    private FileConfigService fileConfigService;
 
     @Override
     public Map<String, Object> getHistoryWorkflowDetail(String processInstanceId, String projectId) {
@@ -65,7 +66,7 @@ public class HistoryWorkflowServiceImpl implements HistoryWorkflowService {
     }
 
     private void fillStartUserName(Map<String, Object> proinst, List<Map<String, Object>> records) {
-        Object startUserName = firstNonBlank(proinst.get("startUserName"), proinst.get("creator"), proinst.get("intransactor"));
+        Object startUserName = firstNonBlank(proinst.get("startUserName"), proinst.get("creator"));
         if (startUserName == null) {
             startUserName = records.stream()
                     .filter(record -> !StrUtil.equals("StartEvent", str(record.get("id"))))
@@ -305,6 +306,7 @@ public class HistoryWorkflowServiceImpl implements HistoryWorkflowService {
         }
         String businessType = str(business.get("type"));
         String receiveDocDirectory = str(business.get("attachFilePath"));
+        String masterFileDownloadBaseUrl = getMasterFileDownloadBaseUrl();
         for (Map<String, Object> attachment : attachments) {
             String filePath = firstNonBlankString(attachment.get("fileUrl"), attachment.get("filepath"),
                     attachment.get("filePath"));
@@ -320,8 +322,21 @@ public class HistoryWorkflowServiceImpl implements HistoryWorkflowService {
             }
             String normalizedPath = filePath.replace('\\', '/');
             attachment.put("fileUrl", isAbsoluteUrl(normalizedPath)
-                    ? normalizedPath : joinPath(attachmentBaseUrl, normalizedPath));
+                    ? normalizedPath : joinPath(masterFileDownloadBaseUrl, normalizedPath));
         }
+    }
+
+    private String getMasterFileDownloadBaseUrl() {
+        FileConfigDO masterConfig = fileConfigService.getMasterFileConfig();
+        if (masterConfig == null || masterConfig.getConfig() == null) {
+            return "";
+        }
+        String domain = str(BeanUtil.getFieldValue(masterConfig.getConfig(), "domain"));
+        if (StrUtil.isBlank(domain)) {
+            return "";
+        }
+        return StrUtil.format("{}/admin-api/infra/file/{}/get",
+                StrUtil.removeSuffix(domain, "/"), masterConfig.getId());
     }
 
     private String firstNonBlankString(Object... values) {

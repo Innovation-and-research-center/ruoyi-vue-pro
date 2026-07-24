@@ -10,6 +10,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * BPM 流程实例统一查询 Mapper
@@ -19,11 +20,15 @@ import java.util.List;
 public interface BpmProcessInstanceUnifiedMapper  {
 
     List<BpmProcessInstanceUnifiedRespVO> selectUnifiedList(@Param("userId") Long userId,
+                                                            @Param("superAdmin") boolean superAdmin,
+                                                            @Param("managedProcessDefinitionKeys") Set<String> managedProcessDefinitionKeys,
                                                             @Param("reqVO") BpmProcessInstanceUnifiedReqVO reqVO);
 
     /**
      * 2. 查总数
      */
     Long selectUnifiedCount(@Param("userId") Long userId,
+                            @Param("superAdmin") boolean superAdmin,
+                            @Param("managedProcessDefinitionKeys") Set<String> managedProcessDefinitionKeys,
                             @Param("reqVO") BpmProcessInstanceUnifiedReqVO reqVO);
 }

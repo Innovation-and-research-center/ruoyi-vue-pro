@@ -61,6 +61,13 @@ public interface FileConfigService {
     FileConfigDO getFileConfig(Long id);
 
     /**
+     * 获得主文件配置
+     *
+     * @return 主文件配置
+     */
+    FileConfigDO getMasterFileConfig();
+
+    /**
      * 获得文件配置分页
      *
      * @param pageReqVO 分页查询

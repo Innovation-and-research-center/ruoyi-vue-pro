@@ -200,8 +200,11 @@ public class LeaveController {
                 .collect(java.util.stream.Collectors.toMap(
                         item -> String.valueOf(item.get("projectId")), item -> item, (a, b) -> a));
         leaves.forEach(leave -> {
-            if (isFinishedHistoryProcess(proinstMap.get(leave.getProjectId()))) {
+            Map<String, Object> proinst = proinstMap.get(leave.getProjectId());
+            if (isFinishedHistoryProcess(proinst)) {
                 leave.setSpzt(BpmProcessInstanceStatusEnum.APPROVE.getStatus().shortValue());
+            } else if (proinst != null) {
+                leave.setSpzt(BpmProcessInstanceStatusEnum.RUNNING.getStatus().shortValue());
             }
         });
     }

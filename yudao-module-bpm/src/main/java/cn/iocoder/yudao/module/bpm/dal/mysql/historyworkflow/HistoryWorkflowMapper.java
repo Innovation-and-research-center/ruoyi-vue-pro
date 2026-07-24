@@ -14,8 +14,9 @@ public interface HistoryWorkflowMapper {
             "p.proinst_name AS \"name\", p.proinst_name AS \"proinstName\", p.start_date AS \"startTime\", " +
             "p.start_date AS \"startDate\", p.end_date AS \"endTime\", p.end_date AS \"endDate\", " +
             "p.proinst_status AS \"status\", p.proinst_status AS \"proinstStatus\", p.responsible_dept AS \"responsibleDept\", " +
-            "p.deadline, p.emergency, p.creator, p.creator AS \"startUserName\", p.intransactor, p.inact " +
+            "p.deadline, p.emergency, p.creator, COALESCE(NULLIF(sa.transactor, ''), NULLIF(p.creator, '')) AS \"startUserName\", p.intransactor, p.inact " +
             "FROM hist_wf.proinst p " +
+            "LEFT JOIN hist_wf.actinst sa ON sa.source_schema = p.source_schema AND sa.actinst_id = p.start_actinst_id " +
             "WHERE p.project_id = #{projectId} " +
             "ORDER BY p.end_date DESC NULLS LAST, p.start_date DESC NULLS LAST LIMIT 1")
     Map<String, Object> selectProinstByProjectId(@Param("projectId") String projectId);
@@ -45,8 +46,9 @@ public interface HistoryWorkflowMapper {
             "p.proinst_name AS \"name\", p.proinst_name AS \"proinstName\", p.start_date AS \"startTime\", " +
             "p.start_date AS \"startDate\", p.end_date AS \"endTime\", p.end_date AS \"endDate\", " +
             "p.proinst_status AS \"status\", p.proinst_status AS \"proinstStatus\", p.responsible_dept AS \"responsibleDept\", " +
-            "p.deadline, p.emergency, p.creator, p.creator AS \"startUserName\", p.intransactor, p.inact " +
+            "p.deadline, p.emergency, p.creator, COALESCE(NULLIF(sa.transactor, ''), NULLIF(p.creator, '')) AS \"startUserName\", p.intransactor, p.inact " +
             "FROM hist_wf.proinst p " +
+            "LEFT JOIN hist_wf.actinst sa ON sa.source_schema = p.source_schema AND sa.actinst_id = p.start_actinst_id " +
             "WHERE p.proinst_id = #{proinstId} " +
             "ORDER BY p.end_date DESC NULLS LAST, p.start_date DESC NULLS LAST LIMIT 1")
     Map<String, Object> selectProinstByProinstId(@Param("proinstId") Long proinstId);

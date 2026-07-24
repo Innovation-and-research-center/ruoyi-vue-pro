@@ -250,6 +250,8 @@ public class XzfyController {
             respVO.setProjectId(String.valueOf(info.get("projectId")));
             if (isFinishedHistoryProcess(info)) {
                 respVO.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+            } else {
+                respVO.setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue());
             }
         });
     }
@@ -260,9 +262,13 @@ public class XzfyController {
         }
         String projectId = historyWorkflowMapper.selectProjectIdByBizinstGuid("xzfy", respVO.getXmGuid());
         respVO.setProjectId(projectId);
-        if (StrUtil.isNotBlank(projectId)
-                && isFinishedHistoryProcess(historyWorkflowMapper.selectProinstByProjectId(projectId))) {
-            respVO.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+        if (StrUtil.isNotBlank(projectId)) {
+            Map<String, Object> proinst = historyWorkflowMapper.selectProinstByProjectId(projectId);
+            if (isFinishedHistoryProcess(proinst)) {
+                respVO.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+            } else if (proinst != null) {
+                respVO.setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue());
+            }
         }
     }
 

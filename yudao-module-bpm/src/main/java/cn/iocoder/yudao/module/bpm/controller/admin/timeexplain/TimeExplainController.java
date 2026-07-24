@@ -208,8 +208,11 @@ public class TimeExplainController {
                 .collect(java.util.stream.Collectors.toMap(
                         item -> String.valueOf(item.get("projectId")), item -> item, (a, b) -> a));
         timeExplains.forEach(timeExplain -> {
-            if (isFinishedHistoryProcess(proinstMap.get(timeExplain.getProjectId()))) {
+            Map<String, Object> proinst = proinstMap.get(timeExplain.getProjectId());
+            if (isFinishedHistoryProcess(proinst)) {
                 timeExplain.setStatus(BpmProcessInstanceStatusEnum.APPROVE.getStatus().longValue());
+            } else if (proinst != null) {
+                timeExplain.setStatus(BpmProcessInstanceStatusEnum.RUNNING.getStatus().longValue());
             }
         });
     }

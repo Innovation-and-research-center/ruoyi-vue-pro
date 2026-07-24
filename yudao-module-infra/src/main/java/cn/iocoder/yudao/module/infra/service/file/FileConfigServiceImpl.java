@@ -181,6 +181,11 @@ public class FileConfigServiceImpl implements FileConfigService {
     }
 
     @Override
+    public FileConfigDO getMasterFileConfig() {
+        return fileConfigMapper.selectByMaster();
+    }
+
+    @Override
     public PageResult<FileConfigDO> getFileConfigPage(FileConfigPageReqVO pageReqVO) {
         return fileConfigMapper.selectPage(pageReqVO);
     }

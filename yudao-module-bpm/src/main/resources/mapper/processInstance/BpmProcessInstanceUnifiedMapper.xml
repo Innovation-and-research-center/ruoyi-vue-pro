@@ -18,6 +18,8 @@
         <result property="currTaskName" column="currTaskName" />
         <result property="currTaskAssignee" column="currTaskAssignee" />
         <result property="sourceUnit" column="sourceUnit" />
+        <result property="source" column="source" />
+        <result property="dataType" column="dataType" />
         <result property="urgencyDegree" column="urgencyDegree" />
         <result property="deadlineDate" column="deadlineDate" />
         <result property="isHistory" column="isHistory" />
@@ -43,6 +45,31 @@
                 res.START_TIME_ AS "createTime",
                 res.END_TIME_ AS "endTime",
                 (CASE
+                    WHEN (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_)
+                          FROM ACT_HI_VARINST var
+                          WHERE var.PROC_INST_ID_ = res.ID_
+                            AND var.NAME_ = #{VAR_PROCESS_STATUS}
+                          LIMIT 1) = '1' THEN 1
+                    WHEN (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_)
+                          FROM ACT_HI_VARINST var
+                          WHERE var.PROC_INST_ID_ = res.ID_
+                            AND var.NAME_ = #{VAR_PROCESS_STATUS}
+                          LIMIT 1) = '2' THEN 2
+                    WHEN (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_)
+                          FROM ACT_HI_VARINST var
+                          WHERE var.PROC_INST_ID_ = res.ID_
+                            AND var.NAME_ = #{VAR_PROCESS_STATUS}
+                          LIMIT 1) = '3' THEN 3
+                    WHEN (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_)
+                          FROM ACT_HI_VARINST var
+                          WHERE var.PROC_INST_ID_ = res.ID_
+                            AND var.NAME_ = #{VAR_PROCESS_STATUS}
+                          LIMIT 1) = '4' THEN 4
+                    WHEN (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_)
+                          FROM ACT_HI_VARINST var
+                          WHERE var.PROC_INST_ID_ = res.ID_
+                            AND var.NAME_ = #{VAR_PROCESS_STATUS}
+                          LIMIT 1) = '5' THEN 5
                     WHEN res.END_TIME_ IS NULL THEN 1
                     WHEN res.END_TIME_ IS NOT NULL AND res.DELETE_REASON_ IS NULL THEN 2
                     WHEN res.END_TIME_ IS NOT NULL AND (res.DELETE_REASON_ = 'MI_END' OR LOWER(res.DELETE_REASON_) = 'completed') THEN 2
@@ -54,6 +81,25 @@
                 (SELECT string_agg(t.NAME_, ', ') FROM ACT_RU_TASK t WHERE t.PROC_INST_ID_ = res.ID_) AS "currTaskName",
                 (SELECT string_agg(tu.nickname, ', ') FROM ACT_RU_TASK t LEFT JOIN system_users tu ON t.ASSIGNEE_ = CAST(tu.id AS VARCHAR) WHERE t.PROC_INST_ID_ = res.ID_) AS "currTaskAssignee",
                 (SELECT var.TEXT_ FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_SOURCE_UNIT} LIMIT 1) AS "sourceUnit",
+                (
+                    SELECT CASE
+                        WHEN count(f.id) = 0 THEN '网页新建'
+                        WHEN max(NULLIF(f.operation_information, '')) IS NULL THEN '未知来源'
+                        WHEN max(NULLIF(f.operation_information, '')) = '市局公告' THEN '通知公告'
+                        WHEN max(NULLIF(f.operation_information, '')) = '林业局公文' THEN '林业局收文'
+                        WHEN max(NULLIF(f.operation_information, '')) = '省厅公文' THEN '省厅收文'
+                        ELSE max(NULLIF(f.operation_information, ''))
+                    END
+                    FROM bpm_receive_doc receive_doc
+                    LEFT JOIN t_file_exchange f
+                      ON f.doc_id = receive_doc.id
+                     AND COALESCE(f.deleted, 0) = 0
+                    WHERE receive_doc.process_instance_id = res.ID_
+                      AND COALESCE(receive_doc.deleted, 0) = 0
+                    GROUP BY receive_doc.id
+                    LIMIT 1
+                ) AS source,
+                '现有数据' AS "dataType",
                 (SELECT var.TEXT_ FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_URGENCY} LIMIT 1) AS "urgencyDegree",
                 (SELECT CASE WHEN var.LONG_ IS NOT NULL THEN to_char(to_timestamp(var.LONG_ / 1000), 'YYYY-MM-DD HH24:MI:SS') ELSE var.TEXT_ END
                     FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_DEADLINE} LIMIT 1) AS "deadlineDate",
@@ -64,8 +110,22 @@
             FROM ACT_HI_PROCINST res
             LEFT JOIN ACT_RE_PROCDEF def ON res.PROC_DEF_ID_ = def.ID_
             LEFT JOIN system_users u ON res.START_USER_ID_ = CAST(u.id AS VARCHAR)
-            WHERE (res.START_USER_ID_ = CAST(#{userId} AS VARCHAR)
-                OR EXISTS (SELECT 1 FROM ACT_HI_TASKINST t WHERE t.PROC_INST_ID_ = res.ID_ AND t.ASSIGNEE_ = CAST(#{userId} AS VARCHAR)))
+            WHERE (
+                #{superAdmin} = TRUE
+                <if test="managedProcessDefinitionKeys != null and managedProcessDefinitionKeys.size() > 0">
+                    OR def.KEY_ IN
+                    <foreach collection="managedProcessDefinitionKeys" item="managedKey"
+                             open="(" separator="," close=")">
+                        #{managedKey}
+                    </foreach>
+                </if>
+                OR res.START_USER_ID_ = CAST(#{userId} AS VARCHAR)
+                OR EXISTS (
+                    SELECT 1 FROM ACT_HI_TASKINST t
+                    WHERE t.PROC_INST_ID_ = res.ID_
+                      AND t.ASSIGNEE_ = CAST(#{userId} AS VARCHAR)
+                )
+            )
               AND NOT EXISTS (
                   SELECT 1 FROM ACT_HI_VARINST deletedStatus
                   WHERE deletedStatus.PROC_INST_ID_ = res.ID_
@@ -111,6 +171,11 @@
                 CASE WHEN p.end_date IS NULL THEN p.inact ELSE NULL END AS "currTaskName",
                 CASE WHEN p.end_date IS NULL THEN p.intransactor ELSE NULL END AS "currTaskAssignee",
                 COALESCE(rd.send_dept, p.responsible_dept) AS "sourceUnit",
+                rd.source AS source,
+                CASE
+                    WHEN p.batch_no = 'HIS_WF_UNFINISHED_BEFORE_2026' THEN '历史未办结'
+                    ELSE '历史已办结'
+                END AS "dataType",
                 CAST(p.emergency AS VARCHAR) AS "urgencyDegree",
                 to_char(p.deadline, 'YYYY-MM-DD HH24:MI:SS') AS "deadlineDate",
                 TRUE AS "isHistory",
@@ -119,10 +184,23 @@
                 CAST(p.proinst_id AS VARCHAR) AS "sortId"
             FROM hist_wf.proinst p
             LEFT JOIN (
-                SELECT project_id, MAX(id) AS id, MAX(send_dept) AS send_dept
-                FROM bpm_receive_doc
-                WHERE COALESCE(deleted, 0) = 0
-                GROUP BY project_id
+                SELECT r.project_id,
+                       MAX(r.id) AS id,
+                       MAX(r.send_dept) AS send_dept,
+                       CASE
+                           WHEN count(f.id) = 0 THEN '网页新建'
+                           WHEN max(NULLIF(f.operation_information, '')) IS NULL THEN '未知来源'
+                           WHEN max(NULLIF(f.operation_information, '')) = '市局公告' THEN '通知公告'
+                           WHEN max(NULLIF(f.operation_information, '')) = '林业局公文' THEN '林业局收文'
+                           WHEN max(NULLIF(f.operation_information, '')) = '省厅公文' THEN '省厅收文'
+                           ELSE max(NULLIF(f.operation_information, ''))
+                       END AS source
+                FROM bpm_receive_doc r
+                LEFT JOIN t_file_exchange f
+                  ON f.doc_id = r.id
+                 AND COALESCE(f.deleted, 0) = 0
+                WHERE COALESCE(r.deleted, 0) = 0
+                GROUP BY r.project_id
             ) rd ON rd.project_id = p.project_id
             LEFT JOIN (
                 SELECT project_id, MAX(id) AS id
@@ -148,11 +226,29 @@
                 WHERE business_type IN ('xzfy', 'xzss')
                 GROUP BY project_id
             ) bpm ON bpm.project_id = p.project_id
-            WHERE EXISTS (
-                SELECT 1 FROM hist_wf.actinst a
-                WHERE a.source_schema = p.source_schema
-                  AND a.proinst_id = p.proinst_id
-                  AND a.user_id = #{userId}
+            WHERE (
+                #{superAdmin} = TRUE
+                <if test="managedProcessDefinitionKeys != null and managedProcessDefinitionKeys.size() > 0">
+                    OR CASE
+                        WHEN rd.id IS NOT NULL THEN 'receive_doc'
+                        WHEN lv.id IS NOT NULL THEN 'leave'
+                        WHEN te.id IS NOT NULL THEN 'time_explain'
+                        WHEN cf.id IS NOT NULL THEN 'confflow'
+                        WHEN bpm.business_type = 'xzfy' THEN 'xzfy'
+                        WHEN bpm.business_type = 'xzss' THEN 'xzss'
+                        ELSE 'history'
+                    END IN
+                    <foreach collection="managedProcessDefinitionKeys" item="managedKey"
+                             open="(" separator="," close=")">
+                        #{managedKey}
+                    </foreach>
+                </if>
+                OR EXISTS (
+                    SELECT 1 FROM hist_wf.actinst a
+                    WHERE a.source_schema = p.source_schema
+                      AND a.proinst_id = p.proinst_id
+                      AND a.user_id = #{userId}
+                )
             )
         ) unified
     </sql>
@@ -173,30 +269,24 @@
                 AND (
                     unified."processDefinitionKey" = #{reqVO.processDefinitionKey}
                     OR (#{reqVO.processDefinitionKey} = 'receive_doc'
-                        AND (unified."processDefinitionKey" = 'receive_doc'
-                            OR unified.category LIKE '%收文%' OR unified.name LIKE '%收文%'))
+                        AND unified."processDefinitionKey" IN ('receive_doc', 'receice_doc_v2_copy_copy'))
                     OR (#{reqVO.processDefinitionKey} = 'leave'
-                        AND (unified."processDefinitionKey" IN ('leave', 'oa_leave')
-                            OR unified.category LIKE '%请假%' OR unified.name LIKE '%请假%'))
+                        AND unified."processDefinitionKey" IN ('leave', 'oa_leave'))
                     OR (#{reqVO.processDefinitionKey} = 'time_explain'
-                        AND (unified."processDefinitionKey" = 'time_explain'
-                            OR unified.category LIKE '%公出%' OR unified.category LIKE '%外出%'
-                            OR unified.name LIKE '%公出%' OR unified.name LIKE '%外出%'))
+                        AND unified."processDefinitionKey" IN ('time_explain', 'oa_out'))
                     OR (#{reqVO.processDefinitionKey} = 'confflow'
-                        AND (unified."processDefinitionKey" = 'confflow'
-                            OR unified.category LIKE '%会议%' OR unified.name LIKE '%会议%'))
+                        AND unified."processDefinitionKey" IN ('confflow', 'conference_report'))
                     OR (#{reqVO.processDefinitionKey} = 'xzfy'
-                        AND (unified."processDefinitionKey" = 'xzfy'
-                            OR unified.category LIKE '%复议%' OR unified.name LIKE '%复议%'))
+                        AND unified."processDefinitionKey" IN ('xzfy', 'oa_review'))
                     OR (#{reqVO.processDefinitionKey} = 'xzss'
-                        AND (unified."processDefinitionKey" = 'xzss'
-                            OR unified.category LIKE '%诉讼%' OR unified.name LIKE '%诉讼%'))
+                        AND unified."processDefinitionKey" IN ('xzss', 'oa_lawsuit'))
                 )
             </if>
             <if test="reqVO.startUserNickname != null and reqVO.startUserNickname != ''"> AND unified."startUserNickname" LIKE CONCAT('%', #{reqVO.startUserNickname}, '%') </if>
             <if test="reqVO.startDeptName != null and reqVO.startDeptName != ''"> AND unified."sourceUnit" LIKE CONCAT('%', #{reqVO.startDeptName}, '%') </if>
             <if test="reqVO.status != null"> AND unified.status = #{reqVO.status} </if>
             <if test="reqVO.processResult != null"> AND unified."processResult" = CAST(#{reqVO.processResult} AS VARCHAR) </if>
+            <if test="reqVO.dataType != null and reqVO.dataType != ''"> AND unified."dataType" = #{reqVO.dataType} </if>
             <if test="reqVO.createTime != null and reqVO.createTime.length > 0">
                 AND unified."createTime" BETWEEN #{reqVO.createTime[0]} AND #{reqVO.createTime[1]}
             </if>
@@ -219,6 +309,10 @@
             <when test="reqVO.orderField == 'category' and reqVO.orderDirection == 'desc'">unified.category DESC</when>
             <when test="reqVO.orderField == 'sourceUnit' and reqVO.orderDirection == 'asc'">unified."sourceUnit" ASC</when>
             <when test="reqVO.orderField == 'sourceUnit' and reqVO.orderDirection == 'desc'">unified."sourceUnit" DESC</when>
+            <when test="reqVO.orderField == 'source' and reqVO.orderDirection == 'asc'">unified.source ASC</when>
+            <when test="reqVO.orderField == 'source' and reqVO.orderDirection == 'desc'">unified.source DESC</when>
+            <when test="reqVO.orderField == 'dataType' and reqVO.orderDirection == 'asc'">unified."dataType" ASC</when>
+            <when test="reqVO.orderField == 'dataType' and reqVO.orderDirection == 'desc'">unified."dataType" DESC</when>
             <when test="reqVO.orderField == 'urgencyDegree' and reqVO.orderDirection == 'asc'">unified."urgencyDegree" ASC</when>
             <when test="reqVO.orderField == 'urgencyDegree' and reqVO.orderDirection == 'desc'">unified."urgencyDegree" DESC</when>
             <when test="reqVO.orderField == 'createTime' and reqVO.orderDirection == 'asc'">unified."createTime" ASC</when>

@@ -207,16 +207,23 @@ public class ConfflowController {
                 .stream()
                 .collect(Collectors.toMap(item -> String.valueOf(item.get("projectId")), item -> item, (a, b) -> a));
         confflows.forEach(confflow -> {
-            if (isFinishedHistoryProcess(proinstMap.get(confflow.getProjectId()))) {
+            Map<String, Object> proinst = proinstMap.get(confflow.getProjectId());
+            if (isFinishedHistoryProcess(proinst)) {
                 confflow.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+            } else if (proinst != null) {
+                confflow.setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue());
             }
         });
     }
 
     private ConfflowRespVO normalizeHistoryStatus(ConfflowRespVO confflow) {
-        if (confflow != null && StrUtil.isNotBlank(confflow.getProjectId())
-                && isFinishedHistoryProcess(historyWorkflowMapper.selectProinstByProjectId(confflow.getProjectId()))) {
-            confflow.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+        if (confflow != null && StrUtil.isNotBlank(confflow.getProjectId())) {
+            Map<String, Object> proinst = historyWorkflowMapper.selectProinstByProjectId(confflow.getProjectId());
+            if (isFinishedHistoryProcess(proinst)) {
+                confflow.setStatus(BpmTaskStatusEnum.APPROVE.getStatus().shortValue());
+            } else if (proinst != null) {
+                confflow.setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue());
+            }
         }
         return confflow;
     }
