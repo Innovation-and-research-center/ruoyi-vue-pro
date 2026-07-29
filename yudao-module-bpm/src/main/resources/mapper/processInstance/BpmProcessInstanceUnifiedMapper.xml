@@ -132,6 +132,9 @@
                     AND deletedStatus.NAME_ = #{VAR_PROCESS_STATUS}
                     AND COALESCE(CAST(deletedStatus.LONG_ AS VARCHAR), deletedStatus.TEXT_) = '5'
               )
+              <if test="reqVO.dataType != null and reqVO.dataType != ''">
+                  AND #{reqVO.dataType} = '现有数据'
+              </if>
 
             UNION ALL
 
@@ -250,6 +253,19 @@
                       AND a.user_id = #{userId}
                 )
             )
+            <if test="reqVO.dataType != null and reqVO.dataType != ''">
+                <choose>
+                    <when test="reqVO.dataType == '历史已办结'">
+                        AND p.batch_no = 'HIS_WF_BEFORE_2026'
+                    </when>
+                    <when test="reqVO.dataType == '历史未办结'">
+                        AND p.batch_no = 'HIS_WF_UNFINISHED_BEFORE_2026'
+                    </when>
+                    <otherwise>
+                        AND 1 = 0
+                    </otherwise>
+                </choose>
+            </if>
         ) unified
     </sql>
 
@@ -286,7 +302,6 @@
             <if test="reqVO.startDeptName != null and reqVO.startDeptName != ''"> AND unified."sourceUnit" LIKE CONCAT('%', #{reqVO.startDeptName}, '%') </if>
             <if test="reqVO.status != null"> AND unified.status = #{reqVO.status} </if>
             <if test="reqVO.processResult != null"> AND unified."processResult" = CAST(#{reqVO.processResult} AS VARCHAR) </if>
-            <if test="reqVO.dataType != null and reqVO.dataType != ''"> AND unified."dataType" = #{reqVO.dataType} </if>
             <if test="reqVO.createTime != null and reqVO.createTime.length > 0">
                 AND unified."createTime" BETWEEN #{reqVO.createTime[0]} AND #{reqVO.createTime[1]}
             </if>
