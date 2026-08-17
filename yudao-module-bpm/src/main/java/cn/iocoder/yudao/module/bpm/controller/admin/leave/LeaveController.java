@@ -157,9 +157,11 @@ public class LeaveController {
     @DataPermission(enable = false)
     public CommonResult<LeaveDetailRespVO> getLeave(@RequestParam("id") Long id) {
         LeaveDetailRespVO detail = leaveService.getLeaveDetail(id);
-        Long creatorUserId = parseCreatorUserId(detail.getCreator());
-        if (creatorUserId != null) {
-            AdminUserRespDTO startUser = adminUserApi.getUser(creatorUserId);
+        Long applyUserId = detail.getUserid() != null
+                ? detail.getUserid().longValue()
+                : parseCreatorUserId(detail.getCreator());
+        if (applyUserId != null) {
+            AdminUserRespDTO startUser = adminUserApi.getUser(applyUserId);
             DeptRespDTO dept = startUser != null && startUser.getDeptId() != null ? deptApi.getDept(startUser.getDeptId()) : null;
             detail.setDeptName(dept != null ? dept.getName() : "");
             detail.setNickName(startUser != null ? startUser.getNickname() : "");

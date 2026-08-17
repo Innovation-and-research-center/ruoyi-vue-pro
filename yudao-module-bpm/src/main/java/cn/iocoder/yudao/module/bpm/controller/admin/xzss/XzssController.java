@@ -182,6 +182,14 @@ public class XzssController {
             respVO.setHistoryXzssList(BeanUtils.toBean(historyList, XzssRespVO.class));
         }
 
+        // 5. 反向查询直接关联当前案件的后一审，并回填其案号。
+        if (StrUtil.isNotBlank(xzss.getXmGuid())) {
+            xzssService.getXzssListBySsGuid(xzss.getXmGuid()).stream()
+                    .filter(item -> StrUtil.isNotBlank(item.getSwWh()))
+                    .max(Comparator.comparing(XzssDO::getId))
+                    .ifPresent(item -> respVO.setHysAh(item.getSwWh()));
+        }
+
         return success(respVO);
     }
 

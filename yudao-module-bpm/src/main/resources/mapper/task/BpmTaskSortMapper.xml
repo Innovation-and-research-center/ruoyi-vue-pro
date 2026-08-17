@@ -478,7 +478,9 @@
             <when test="reqVO.orderField == 'processInstance.createTime' and reqVO.orderDirection == 'desc'">unified."processInstanceCreateTime" DESC</when>
             <when test="reqVO.orderField == 'endTime' and reqVO.orderDirection == 'asc'">unified."endTime" ASC</when>
             <when test="reqVO.orderField == 'endTime' and reqVO.orderDirection == 'desc'">unified."endTime" DESC</when>
-            <otherwise>unified."processInstanceCreateTime" DESC</otherwise>
+            <when test="reqVO.orderField == 'durationInMillis' and reqVO.orderDirection == 'asc'">unified."durationInMillis" ASC NULLS LAST</when>
+            <when test="reqVO.orderField == 'durationInMillis' and reqVO.orderDirection == 'desc'">unified."durationInMillis" DESC NULLS LAST</when>
+            <otherwise>unified."endTime" DESC</otherwise>
         </choose>
         , unified."sortId" DESC
         LIMIT #{reqVO.pageSize} OFFSET (#{reqVO.pageNo} - 1) * #{reqVO.pageSize}

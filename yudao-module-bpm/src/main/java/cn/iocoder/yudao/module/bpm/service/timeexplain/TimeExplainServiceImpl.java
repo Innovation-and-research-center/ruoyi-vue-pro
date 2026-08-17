@@ -30,7 +30,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 import cn.iocoder.yudao.module.bpm.controller.admin.timeexplain.vo.*;
@@ -161,12 +160,8 @@ public class TimeExplainServiceImpl implements TimeExplainService {
                 }
             }
         }
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy年MM月dd日");
-        String startDate = createReqVO.getCheckBegin() != null
-                ? createReqVO.getCheckBegin().format(formatter) : "无";
-        String endDate = createReqVO.getCheckEnd() != null
-                ? createReqVO.getCheckEnd().format(formatter) : "无";
-        String customName = user.getNickname() + "因公外出(" + startDate + "-" + endDate + ")";
+        String customName = user.getNickname() + "因公外出"
+                + (StrUtil.isNotBlank(createReqVO.getEndPlace()) ? createReqVO.getEndPlace().trim() : "");
         Map<String, Object> processInstanceVariables = new HashMap<>();
         if (CollUtil.isNotEmpty(createReqVO.getProcessVariables())) processInstanceVariables.putAll(createReqVO.getProcessVariables());
         processInstanceVariables.put("role_condition", roleCondition);

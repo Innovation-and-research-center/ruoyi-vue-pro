@@ -158,12 +158,21 @@ public class TimeExplainController {
     public CommonResult<TimeExplainRespVO> getTimeExplain(@RequestParam("id") Long id) {
         TimeExplainDO timeExplain = timeExplainService.getTimeExplain(id);
         TimeExplainRespVO result = BeanUtils.toBean(timeExplain, TimeExplainRespVO.class);
-        Long creatorUserId = parseCreatorUserId(timeExplain.getCreator());
-        if (creatorUserId != null) {
-            AdminUserRespDTO startUser = adminUserApi.getUser(creatorUserId);
+        Long applyUserId = timeExplain.getUserId() != null
+                ? timeExplain.getUserId()
+                : parseCreatorUserId(timeExplain.getCreator());
+        if (applyUserId != null) {
+            AdminUserRespDTO startUser = adminUserApi.getUser(applyUserId);
             DeptRespDTO dept = startUser != null && startUser.getDeptId() != null ? deptApi.getDept(startUser.getDeptId()) : null;
-            result.setDeptName(dept != null ? dept.getName() : "");
-            result.setUserName(startUser != null ? startUser.getNickname() : "");
+            if (StrUtil.isBlank(timeExplain.getDeptment())) {
+                result.setDeptName(dept != null ? dept.getName() : "");
+            }
+            if (StrUtil.isBlank(result.getUserName())) {
+                result.setUserName(startUser != null ? startUser.getNickname() : "");
+            }
+        }
+        if (StrUtil.isNotBlank(timeExplain.getDeptment())) {
+            result.setDeptName(timeExplain.getDeptment());
         }
         // 查询附件列表
         List<TimeExplainAttachRespVO> attachList = timeExplainService.getTimeExplainAttachListByTimeExplainId(id);

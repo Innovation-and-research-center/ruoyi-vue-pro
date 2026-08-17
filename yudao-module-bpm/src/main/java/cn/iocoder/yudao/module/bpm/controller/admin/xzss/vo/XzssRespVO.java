@@ -60,6 +60,9 @@ public class XzssRespVO {
     @ExcelProperty("上一审案号")
     private String ssAh;
 
+    @Schema(description = "后一审案号")
+    private String hysAh;
+
     @Schema(description = "类别一")
     @ExcelProperty("类别一")
     private String lb1;
