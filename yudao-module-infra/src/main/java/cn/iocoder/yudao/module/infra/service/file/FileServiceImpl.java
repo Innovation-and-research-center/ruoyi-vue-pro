@@ -3,6 +3,7 @@ package cn.iocoder.yudao.module.infra.service.file;
 import cn.hutool.core.date.LocalDateTimeUtil;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.lang.Assert;
+import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
@@ -20,6 +21,7 @@ import lombok.SneakyThrows;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static cn.hutool.core.date.DatePattern.PURE_DATE_PATTERN;
@@ -33,6 +35,15 @@ import static cn.iocoder.yudao.module.infra.enums.ErrorCodeConstants.FILE_NOT_EX
  */
 @Service
 public class FileServiceImpl implements FileService {
+
+    /**
+     * 原始文件名超过该字符数时，使用 UUID 作为存储文件名
+     */
+    static final int MAX_ORIGINAL_FILENAME_LENGTH = 100;
+    /**
+     * Linux 常见文件系统单个文件名的最大字节数
+     */
+    static final int MAX_STORAGE_FILENAME_BYTES = 255;
 
     /**
      * 上传文件的前缀，是否包含日期（yyyyMMdd）
@@ -128,6 +139,11 @@ public class FileServiceImpl implements FileService {
 
     @VisibleForTesting
     String generateUploadPath(String name, String directory) {
+        String originalName = name;
+        String originalMainName = FileUtil.mainName(name);
+        boolean useUuidStorageName = originalMainName.codePointCount(0, originalMainName.length())
+                > MAX_ORIGINAL_FILENAME_LENGTH;
+
         // 1. 生成前缀、后缀
         String prefix = null;
         if (PATH_PREFIX_DATE_ENABLE) {
@@ -147,15 +163,56 @@ public class FileServiceImpl implements FileService {
                 name = name + StrUtil.C_UNDERLINE + suffix;
             }
         }
-        // 2.2 再拼接 prefix 前缀
+        // 2.2 超过 100 个字符，或者超过文件系统的单文件名字节限制时，改用 UUID 存储名
+        if (useUuidStorageName || name.getBytes(StandardCharsets.UTF_8).length > MAX_STORAGE_FILENAME_BYTES) {
+            name = generateUuidStorageName(originalName);
+        }
+        // 2.3 再拼接 prefix 前缀
         if (StrUtil.isNotEmpty(prefix)) {
             name = prefix + StrUtil.SLASH + name;
         }
-        // 2.3 最后拼接 directory 目录
+        // 2.4 最后拼接 directory 目录
         if (StrUtil.isNotEmpty(directory)) {
             name = directory + StrUtil.SLASH + name;
         }
         return name;
+    }
+
+    private String generateUuidStorageName(String originalName) {
+        String extension = FileUtil.extName(originalName);
+        // 扩展名也会成为磁盘文件名的一部分，需要限制长度和字符范围
+        if (StrUtil.isEmpty(extension) || !extension.matches("[\\p{L}\\p{N}]{1,20}")) {
+            extension = StrUtil.EMPTY;
+        } else {
+            extension = StrUtil.DOT + extension;
+        }
+
+        String uuidSuffix = StrUtil.C_UNDERLINE + IdUtil.fastSimpleUUID() + extension;
+        int maxPrefixBytes = MAX_STORAGE_FILENAME_BYTES - uuidSuffix.getBytes(StandardCharsets.UTF_8).length;
+        String filenamePrefix = truncateUtf8(FileUtil.mainName(originalName),
+                MAX_ORIGINAL_FILENAME_LENGTH, maxPrefixBytes);
+        return StrUtil.isEmpty(filenamePrefix) ? uuidSuffix.substring(1) : filenamePrefix + uuidSuffix;
+    }
+
+    /**
+     * 按 Unicode 字符数和 UTF-8 字节数双重截断，避免截断中文或补充字符。
+     */
+    private String truncateUtf8(String value, int maxCharacters, int maxBytes) {
+        StringBuilder result = new StringBuilder();
+        int byteLength = 0;
+        int characterCount = 0;
+        for (int offset = 0; offset < value.length() && characterCount < maxCharacters; characterCount++) {
+            int codePoint = value.codePointAt(offset);
+            String character = new String(Character.toChars(codePoint));
+            int characterBytes = character.getBytes(StandardCharsets.UTF_8).length;
+            if (byteLength + characterBytes > maxBytes) {
+                break;
+            }
+            result.appendCodePoint(codePoint);
+            byteLength += characterBytes;
+            offset += Character.charCount(codePoint);
+        }
+        return result.toString();
     }
 
     @Override

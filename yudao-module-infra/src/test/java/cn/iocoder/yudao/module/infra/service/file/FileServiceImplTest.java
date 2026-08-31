@@ -1,6 +1,8 @@
 package cn.iocoder.yudao.module.infra.service.file;
 
+import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.io.resource.ResourceUtil;
+import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.util.object.ObjectUtils;
 import cn.iocoder.yudao.framework.test.core.ut.BaseDbUnitTest;
@@ -15,6 +17,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 
 import javax.annotation.Resource;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -304,6 +307,34 @@ public class FileServiceImplTest extends BaseDbUnitTest {
         // 断言
         // 格式为：yyyyMMdd/test_timestamp.jpg
         assertTrue(path.matches("\\d{8}/test_\\d+\\.jpg"));
+    }
+
+    @Test
+    public void testGenerateUploadPath_NameOver100Characters() {
+        // 准备参数：原始文件名超过 100 个字符
+        String name = StrUtil.repeat("a", 101) + ".pdf";
+
+        // 调用
+        String path = fileService.generateUploadPath(name, null);
+
+        // 断言：保留前 100 个字符，并追加 UUID 和扩展名
+        assertTrue(path.matches("\\d{8}/a{100}_[0-9a-f]{32}\\.pdf"));
+    }
+
+    @Test
+    public void testGenerateUploadPath_NameUnder100CharactersButBytesTooLong() {
+        // 准备参数：不足 100 个字符，但追加时间戳后超过 Linux 单文件名 255 字节限制
+        String name = StrUtil.repeat("文", 80) + ".pdf";
+
+        // 调用
+        String path = fileService.generateUploadPath(name, null);
+
+        // 断言：保留可容纳的中文前缀和 UUID，且不超过文件系统限制
+        String storageName = FileUtil.getName(path);
+        assertTrue(storageName.startsWith("文"));
+        assertTrue(storageName.matches("文+_[0-9a-f]{32}\\.pdf"));
+        assertTrue(storageName.getBytes(StandardCharsets.UTF_8).length
+                <= FileServiceImpl.MAX_STORAGE_FILENAME_BYTES);
     }
 
 }
