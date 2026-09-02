@@ -32,7 +32,7 @@ public class UserPageReqVO extends PageParam {
     @DateTimeFormat(pattern = FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)
     private LocalDateTime[] createTime;
 
-    @Schema(description = "部门编号，同时筛选子部门", example = "1024")
+    @Schema(description = "实际所属部门编号，精确筛选", example = "1024")
     private Long deptId;
 
     @Schema(description = "角色编号", example = "1024")

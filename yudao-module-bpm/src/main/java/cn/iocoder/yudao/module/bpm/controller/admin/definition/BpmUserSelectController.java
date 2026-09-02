@@ -17,6 +17,7 @@ import cn.iocoder.yudao.module.system.convert.user.UserConvert;
 import cn.iocoder.yudao.module.system.dal.dataobject.dept.DeptDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.service.user.AdminUserService;
+import cn.iocoder.yudao.module.system.service.dept.DeptService;
 import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -44,15 +45,17 @@ public class BpmUserSelectController {
 
     @Resource
     private AdminUserService userService;
+    @Resource
+    private DeptService deptService;
 
     @GetMapping("/get-user-list")
     @Operation(summary = "获得流程可选用户列表")
     @DataPermission(enable = false) // 关闭数据权限，避免查询不到用户数据。相关案例：https://gitee.com/zhijiantianya/yudao-cloud/issues/ID1UYA
     public CommonResult<List<UserSimpleRespVO>> getUserGroupPage(@Valid BpmUserOptionsReqVO reqVO) {
+        List<AdminUserDO> users;
         if(reqVO.getChooseRule().equals("role")){
             Set<Long> roleIds = StrUtils.splitToLongSet(reqVO.getRuleValue());
-            List<AdminUserDO> list = userService.getUserListByRoleIds(roleIds);
-            return success(UserConvert.INSTANCE.convertSimpleList(list, null));
+            users = userService.getUserListByRoleIds(roleIds);
         } else if (reqVO.getChooseRule().equals("group")) {
             Set<Long> groupIds = StrUtils.splitToLongSet(reqVO.getRuleValue());
             List<BpmUserGroupDO> groupList = userGroupService.getUserGroupList(groupIds);
@@ -65,13 +68,12 @@ public class BpmUserSelectController {
                     .flatMap(Set::stream)
                     // 4. 收集结果，Collectors.toSet() 会自动完成去重
                     .collect(Collectors.toSet());
-            List<AdminUserDO> list = userService.getUserList(allUserIds);
-            return success(UserConvert.INSTANCE.convertSimpleList(list, null));
-        }
-
-        else {
+            users = userService.getUserList(allUserIds);
+        } else {
             return success(null);
         }
-
+        users.removeIf(user -> !CommonStatusEnum.ENABLE.getStatus().equals(user.getStatus()));
+        Map<Long, DeptDO> deptMap = deptService.getDeptMap(convertList(users, AdminUserDO::getDeptId));
+        return success(UserConvert.INSTANCE.convertSimpleList(users, deptMap));
     }
 }

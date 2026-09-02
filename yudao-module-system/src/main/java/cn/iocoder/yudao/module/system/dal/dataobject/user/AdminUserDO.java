@@ -96,6 +96,10 @@ public class AdminUserDO extends TenantBaseDO {
     @TableField(exist = false)
     private String deptName;
 
+    /** 当前部门上下文中的排序，来自 system_user_dept_member.sort */
+    @TableField(exist = false)
+    private Long sort;
+
     private String dingId;
 
 }

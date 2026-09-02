@@ -32,6 +32,8 @@ public class AdminUserRespDTO {
      * 部门ID
      */
     private Long deptId;
+    /** 用户在主部门内的排序 */
+    private Long sort;
     /**
      * 岗位编号数组
      */

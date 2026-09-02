@@ -39,6 +39,9 @@ public class UserSaveReqVO {
     @DiffLogField(name = "部门", function = DeptParseFunction.NAME)
     private Long deptId;
 
+    @Schema(description = "实际所属部门编号数组，必须包含主部门", example = "[1, 2]")
+    private Set<Long> deptIds;
+
     @Schema(description = "岗位编号数组", example = "1")
     @DiffLogField(name = "岗位", function = PostParseFunction.NAME)
     private Set<Long> postIds;

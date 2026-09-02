@@ -61,7 +61,6 @@ import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.enums.permission.RoleCodeEnum;
 import cn.iocoder.yudao.module.system.service.dept.DeptService;
 import cn.iocoder.yudao.module.system.service.user.AdminUserService;
-import cn.iocoder.yudao.module.system.service.userdept.UserDeptService;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import jodd.util.StringUtil;
@@ -167,9 +166,6 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
     @Resource
     private BpmProcessInstanceUnifiedMapper unifiedMapper;
-
-    @Resource
-    private UserDeptService userDeptService;
 
     // ========== Query 查询相关方法 ==========
 
@@ -477,14 +473,6 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
         }
 
-        AdminUserDO loginUser = userService.getUser(loginUserId);
-        Long currentDeptId = (loginUser != null) ? loginUser.getDeptId() : null;
-
-        Set<Long> managedDeptIds = userDeptService.getUserDeptIds(loginUserId);
-        if (managedDeptIds == null) {
-            managedDeptIds = new HashSet<>();
-        }
-
         Map<String, List<AdminUserDO>> nodeCandidateMap = new HashMap<>();
         Set<Long> deptIdsToQuery = new HashSet<>();
 
@@ -621,8 +609,13 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             // 组装候选人员树结构
             List<AdminUserDO> rawUsers = nodeCandidateMap.get(node.getTaskDefKey());
             if (CollUtil.isNotEmpty(rawUsers)) {
-                Map<Long, List<AdminUserDO>> usersByDept = rawUsers.stream()
-                        .collect(Collectors.groupingBy(u -> u.getDeptId() != null ? u.getDeptId() : -1L));
+                // 先按部门排序 + 部门内人员排序，再使用 LinkedHashMap 分组，
+                // 确保返回给前端的部门顺序和人员顺序都稳定可预期。
+                List<AdminUserDO> sortedUsers = new ArrayList<>(rawUsers);
+                sortedUsers.sort(buildDeptUserComparator(deptMap));
+                Map<Long, List<AdminUserDO>> usersByDept = sortedUsers.stream()
+                        .collect(Collectors.groupingBy(u -> u.getDeptId() != null ? u.getDeptId() : -1L,
+                                LinkedHashMap::new, Collectors.toList()));
 
                 List<BpmUserGroupRespVO> treeList = new ArrayList<>();
                 for (Map.Entry<Long, List<AdminUserDO>> entry : usersByDept.entrySet()) {
@@ -642,16 +635,6 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                     treeList.add(group);
                 }
 
-                Long finalCurrentDeptId = currentDeptId;
-                if (finalCurrentDeptId != null) {
-                    treeList.sort((d1, d2) -> {
-                        boolean d1IsCurrent = Objects.equals(d1.getId(), finalCurrentDeptId);
-                        boolean d2IsCurrent = Objects.equals(d2.getId(), finalCurrentDeptId);
-                        if (d1IsCurrent && !d2IsCurrent) return -1;
-                        if (!d1IsCurrent && d2IsCurrent) return 1;
-                        return Long.compare(d1.getId(), d2.getId());
-                    });
-                }
                 node.setCandidateUsers(treeList);
             }
 
@@ -664,12 +647,29 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                         assignedUsersForNode.add(u);
                     }
                 }
+                assignedUsersForNode.sort(buildDeptUserComparator(deptMap));
                 node.setAssignedUsers(UserConvert.INSTANCE.convertSimpleList(assignedUsersForNode, deptMap));
             }
         }
 
         return result;
     }
+
+    /**
+     * 按部门排序、部门编号、部门内人员排序、用户编号的顺序排列。
+     * 未分配部门、未配置排序的数据统一放在后面。
+     */
+    private Comparator<AdminUserDO> buildDeptUserComparator(Map<Long, DeptDO> deptMap) {
+        return Comparator
+                .comparingInt((AdminUserDO user) -> {
+                    DeptDO dept = user.getDeptId() != null ? deptMap.get(user.getDeptId()) : null;
+                    return dept != null && dept.getSort() != null ? dept.getSort() : Integer.MAX_VALUE;
+                })
+                .thenComparing(AdminUserDO::getDeptId, Comparator.nullsLast(Long::compareTo))
+                .thenComparing(AdminUserDO::getSort, Comparator.nullsLast(Long::compareTo))
+                .thenComparing(AdminUserDO::getId, Comparator.nullsLast(Long::compareTo));
+    }
+
     @Override
     public BpmNextTaskRespVO getCurrentNode(Long loginUserId, BpmApprovalDetailReqVO reqVO) {
 

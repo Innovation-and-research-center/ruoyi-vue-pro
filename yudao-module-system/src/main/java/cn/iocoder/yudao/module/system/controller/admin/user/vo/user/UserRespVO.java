@@ -33,9 +33,14 @@ public class UserRespVO{
 
     @Schema(description = "部门ID", example = "我是一个用户")
     private Long deptId;
+    @Schema(description = "实际所属部门编号数组", example = "[1, 2]")
+    private Set<Long> deptIds;
     @Schema(description = "部门名称", example = "IT 部")
     @ExcelProperty("部门名称")
     private String deptName;
+
+    @Schema(description = "当前筛选部门内的排序", example = "1")
+    private Long sort;
 
     @Schema(description = "岗位编号数组", example = "1")
     private Set<Long> postIds;

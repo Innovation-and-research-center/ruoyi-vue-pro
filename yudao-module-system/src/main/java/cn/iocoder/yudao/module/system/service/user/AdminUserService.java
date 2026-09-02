@@ -10,13 +10,11 @@ import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserImportEx
 import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserImportRespVO;
 import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserPageReqVO;
 import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserSaveReqVO;
+import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserUpdateDeptSortReqVO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import javax.validation.Valid;
 
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * 后台用户 Service 接口
@@ -47,6 +45,9 @@ public interface AdminUserService {
      * @param updateReqVO 用户信息
      */
     void updateUser(@Valid UserSaveReqVO updateReqVO);
+
+    /** 调整指定实际所属部门中的用户排序 */
+    void updateDeptUserSort(@Valid UserUpdateDeptSortReqVO reqVO);
 
     /**
      * 更新用户的最后登陆信息
@@ -133,6 +134,8 @@ public interface AdminUserService {
      * @return 用户对象信息
      */
     AdminUserDO getUser(Long id);
+
+    Set<Long> getUserDeptIds(Long id);
 
     /**
      * 获得指定部门的用户数组

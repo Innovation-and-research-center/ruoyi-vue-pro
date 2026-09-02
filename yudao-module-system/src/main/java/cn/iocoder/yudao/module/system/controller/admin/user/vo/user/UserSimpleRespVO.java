@@ -28,6 +28,9 @@ public class UserSimpleRespVO {
     @Schema(description = "部门排序", example = "1")
     private String deptSort;
 
+    @Schema(description = "用户在主部门内的排序", example = "1")
+    private Long sort;
+
 
 
 }

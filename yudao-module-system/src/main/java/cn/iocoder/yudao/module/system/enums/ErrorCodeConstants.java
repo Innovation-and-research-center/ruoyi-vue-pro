@@ -47,6 +47,9 @@ public interface ErrorCodeConstants {
     ErrorCode USER_MOBILE_NOT_EXISTS = new ErrorCode(1_002_003_010, "该手机号尚未注册");
     ErrorCode USER_REGISTER_DISABLED = new ErrorCode(1_002_003_011, "注册功能已关闭");
     ErrorCode TICKET_TIME_OUT = new ErrorCode(1_002_003_012, "票据已经过期");
+    ErrorCode USER_PRIMARY_DEPT_NOT_IN_MEMBERS = new ErrorCode(1_002_003_013, "主部门必须包含在所属部门中");
+    ErrorCode USER_DEPT_MEMBER_SORT_MISMATCH = new ErrorCode(1_002_003_014, "只能调整指定部门中的员工排序");
+    ErrorCode USER_DEPT_MEMBER_SORT_DUPLICATE = new ErrorCode(1_002_003_015, "员工排序编号不能重复");
 
     // ========== 部门模块 1-002-004-000 ==========
     ErrorCode DEPT_NAME_DUPLICATE = new ErrorCode(1_002_004_000, "已经存在该名字的部门");

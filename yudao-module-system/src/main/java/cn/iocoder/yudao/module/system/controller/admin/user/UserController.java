@@ -96,6 +96,14 @@ public class UserController {
         return success(true);
     }
 
+    @PutMapping("/update-dept-sort")
+    @Operation(summary = "调整指定实际所属部门中的用户排序")
+    @PreAuthorize("@ss.hasPermission('system:user:update')")
+    public CommonResult<Boolean> updateDeptUserSort(@Valid @RequestBody UserUpdateDeptSortReqVO reqVO) {
+        userService.updateDeptUserSort(reqVO);
+        return success(true);
+    }
+
     @GetMapping("/page")
     @Operation(summary = "获得用户分页列表")
     @PreAuthorize("@ss.hasPermission('system:user:query')")
@@ -149,7 +157,9 @@ public class UserController {
         }
         // 拼接数据
         DeptDO dept = deptService.getDept(user.getDeptId());
-        return success(UserConvert.INSTANCE.convert(user, dept));
+        UserRespVO result = UserConvert.INSTANCE.convert(user, dept);
+        result.setDeptIds(userService.getUserDeptIds(id));
+        return success(result);
     }
 
     @GetMapping("/export-excel")
