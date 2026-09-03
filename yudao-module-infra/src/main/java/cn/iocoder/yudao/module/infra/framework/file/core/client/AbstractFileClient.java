@@ -2,6 +2,9 @@ package cn.iocoder.yudao.module.infra.framework.file.core.client;
 
 import cn.hutool.core.util.StrUtil;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.util.UriUtils;
+
+import java.nio.charset.StandardCharsets;
 
 /**
  * 文件客户端的抽象类，提供模板方法，减少子类的冗余代码
@@ -72,7 +75,10 @@ public abstract class AbstractFileClient<Config extends FileClientConfig> implem
      * @return URL 访问地址
      */
     protected String formatFileUrl(String domain, String path) {
-        return StrUtil.format("{}/admin-api/infra/file/{}/get/{}", domain, getId(), path);
+        // path 会包含用户上传的原始文件名。按 URL 路径规则编码，避免中文、方括号、#、? 等字符
+        // 生成非法请求地址；encodePath 会保留目录分隔符 "/"。
+        String encodedPath = UriUtils.encodePath(path, StandardCharsets.UTF_8);
+        return StrUtil.format("{}/admin-api/infra/file/{}/get/{}", domain, getId(), encodedPath);
     }
 
 }
