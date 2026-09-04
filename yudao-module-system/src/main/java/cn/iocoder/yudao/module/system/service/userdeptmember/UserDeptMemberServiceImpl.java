@@ -84,19 +84,25 @@ public class UserDeptMemberServiceImpl implements UserDeptMemberService {
         if (new HashSet<>(reqVO.getUserIds()).size() != reqVO.getUserIds().size()) {
             throw exception(USER_DEPT_MEMBER_SORT_DUPLICATE);
         }
-        List<UserDeptMemberDO> members = memberMapper.selectListByDeptIdAndUserIds(
-                reqVO.getDeptId(), reqVO.getUserIds());
-        if (members.size() != reqVO.getUserIds().size()) {
-            throw exception(USER_DEPT_MEMBER_SORT_MISMATCH);
-        }
+        List<UserDeptMemberDO> members = memberMapper.selectListByDeptId(reqVO.getDeptId());
         Map<Long, UserDeptMemberDO> memberMap = members.stream().collect(Collectors.toMap(
                 UserDeptMemberDO::getUserId, Function.identity()));
-        List<Long> sortSlots = members.stream().map(UserDeptMemberDO::getSort).sorted()
-                .collect(Collectors.toList());
-        List<UserDeptMemberDO> updates = new ArrayList<>(reqVO.getUserIds().size());
-        for (int i = 0; i < reqVO.getUserIds().size(); i++) {
-            UserDeptMemberDO member = memberMap.get(reqVO.getUserIds().get(i));
-            updates.add(new UserDeptMemberDO().setId(member.getId()).setSort(sortSlots.get(i)));
+        if (!memberMap.keySet().containsAll(reqVO.getUserIds())) {
+            throw exception(USER_DEPT_MEMBER_SORT_MISMATCH);
+        }
+
+        // 前端可能只提交当前分页。将提交人员放回其原来占用的全局位置，避免影响其他分页，
+        // 再对整个部门统一编号，消除历史重复 sort 导致“保存成功但刷新还原”的问题。
+        Set<Long> requestedUserIds = new HashSet<>(reqVO.getUserIds());
+        Iterator<Long> requestedOrder = reqVO.getUserIds().iterator();
+        List<UserDeptMemberDO> reorderedMembers = new ArrayList<>(members.size());
+        for (UserDeptMemberDO member : members) {
+            reorderedMembers.add(requestedUserIds.contains(member.getUserId())
+                    ? memberMap.get(requestedOrder.next()) : member);
+        }
+        List<UserDeptMemberDO> updates = new ArrayList<>(reorderedMembers.size());
+        for (int i = 0; i < reorderedMembers.size(); i++) {
+            updates.add(new UserDeptMemberDO().setId(reorderedMembers.get(i).getId()).setSort((long) i + 1));
         }
         memberMapper.updateBatch(updates);
     }

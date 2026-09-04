@@ -27,6 +27,13 @@ public interface UserDeptMemberMapper extends BaseMapperX<UserDeptMemberDO> {
                 .in(UserDeptMemberDO::getUserId, userIds));
     }
 
+    default List<UserDeptMemberDO> selectListByDeptId(Long deptId) {
+        return selectList(new LambdaQueryWrapperX<UserDeptMemberDO>()
+                .eq(UserDeptMemberDO::getDeptId, deptId)
+                .orderByAsc(UserDeptMemberDO::getSort)
+                .orderByAsc(UserDeptMemberDO::getUserId));
+    }
+
     default List<UserDeptMemberDO> selectListByDeptIdAndUserIds(Long deptId, Collection<Long> userIds) {
         if (CollUtil.isEmpty(userIds)) {
             return Collections.emptyList();

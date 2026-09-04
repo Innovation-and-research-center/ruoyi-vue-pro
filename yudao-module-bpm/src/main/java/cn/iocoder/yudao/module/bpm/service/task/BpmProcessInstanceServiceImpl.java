@@ -12,6 +12,7 @@ import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.util.collection.CollectionUtils;
 import cn.iocoder.yudao.framework.common.util.date.DateUtils;
 import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
+import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
 import cn.iocoder.yudao.framework.common.util.object.ObjectUtils;
 import cn.iocoder.yudao.framework.common.util.object.PageUtils;
 import cn.iocoder.yudao.framework.common.util.string.StrUtils;
@@ -354,6 +355,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
 
     @Override
+    @DataPermission(enable = false) // 候选范围由流程规则和当前办理人部门控制，避免多部门人员被主部门权限误过滤
     public List<BpmNextTaskRespVO> getNextSelectNodes(Long loginUserId, BpmApprovalDetailReqVO reqVO) {
         // 1.1 从 reqVO 中，读取公共变量
         Long startUserId = loginUserId; // 流程发起人
@@ -596,6 +598,32 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             allAssignedUsers.forEach(u -> {
                 if (u.getDeptId() != null) deptIdsToQuery.add(u.getDeptId());
             });
+        }
+
+        // “部门内循环或同环节移交”的候选范围：当前环节规则候选人 + 当前办理人所在部门的全部人员。
+        // 当前部门人员来自实际部门关系表；相同人员只保留一次，并按当前部门及部门内顺序展示。
+        AdminUserDO loginUser = userService.getUser(loginUserId);
+        Long currentDeptId = loginUser != null ? loginUser.getDeptId() : null;
+        if (currentDeptId != null) {
+            List<AdminUserDO> currentDeptUsers = userService.getUserListByDeptIds(Collections.singleton(currentDeptId))
+                    .stream()
+                    .filter(user -> CommonStatusEnum.ENABLE.getStatus().equals(user.getStatus()))
+                    .map(user -> BeanUtils.toBean(user, AdminUserDO.class)
+                            .setDeptId(currentDeptId))
+                    .collect(Collectors.toList());
+            for (BpmNextTaskRespVO node : result) {
+                if (!node.getTaskDefKey().endsWith("_internal_loop")) {
+                    continue;
+                }
+                Map<Long, AdminUserDO> mergedUsers = new LinkedHashMap<>();
+                List<AdminUserDO> ruleUsers = nodeCandidateMap.get(node.getTaskDefKey());
+                if (CollUtil.isNotEmpty(ruleUsers)) {
+                    ruleUsers.forEach(user -> mergedUsers.put(user.getId(), user));
+                }
+                currentDeptUsers.forEach(user -> mergedUsers.put(user.getId(), user));
+                nodeCandidateMap.put(node.getTaskDefKey(), new ArrayList<>(mergedUsers.values()));
+            }
+            deptIdsToQuery.add(currentDeptId);
         }
 
         // 统一查询所有的部门信息
