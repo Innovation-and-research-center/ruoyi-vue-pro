@@ -11,6 +11,7 @@ import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
 import cn.iocoder.yudao.module.system.framework.sms.core.client.SmsClient;
 import cn.iocoder.yudao.module.system.framework.sms.core.client.dto.SmsReceiveRespDTO;
 import cn.iocoder.yudao.module.system.framework.sms.core.client.dto.SmsSendRespDTO;
+import cn.iocoder.yudao.module.system.framework.sms.core.enums.SmsChannelEnum;
 import cn.iocoder.yudao.module.system.dal.dataobject.sms.SmsChannelDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.sms.SmsTemplateDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
@@ -56,11 +57,15 @@ public class SmsSendServiceImpl implements SmsSendService {
     @Override
     @DataPermission(enable = false) // 发送短信时，无需考虑数据权限
     public Long sendSingleSmsToAdmin(String mobile, Long userId, String templateCode, Map<String, Object> templateParams) {
-        // 如果 mobile 为空，则加载用户编号对应的手机号
+        // 如果未显式指定接收标识，则根据模板实际关联的渠道从用户信息中加载。
+        // DG_WORK 的 receiverIds 需要政务钉 ID，其他短信渠道使用手机号。
         if (StrUtil.isEmpty(mobile)) {
             AdminUserDO user = adminUserService.getUser(userId);
             if (user != null) {
-                mobile = user.getMobile();
+                SmsTemplateDO template = validateSmsTemplate(templateCode);
+                SmsChannelDO channel = validateSmsChannel(template.getChannelId());
+                mobile = SmsChannelEnum.DG_WORK.getCode().equals(channel.getCode())
+                        ? user.getDingId() : user.getMobile();
             }
         }
         // 执行发送

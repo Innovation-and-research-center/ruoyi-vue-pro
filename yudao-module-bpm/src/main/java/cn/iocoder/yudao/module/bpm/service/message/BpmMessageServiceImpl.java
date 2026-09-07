@@ -52,8 +52,6 @@ public class BpmMessageServiceImpl implements BpmMessageService {
         // 1. 校验全局发送开关
         if (!isMessageSendEnable()) {
             log.info("[executeSendMessage][BPM消息发送开关已关闭，跳过发送. userId={}]", userId);
-
-
         }
         // 2. 发送常规短信
         else if (StringUtils.hasText(smsTemplateCode)) {

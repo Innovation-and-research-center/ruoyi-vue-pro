@@ -7,6 +7,7 @@ import cn.iocoder.yudao.framework.common.enums.UserTypeEnum;
 import cn.iocoder.yudao.module.system.framework.sms.core.client.SmsClient;
 import cn.iocoder.yudao.module.system.framework.sms.core.client.dto.SmsReceiveRespDTO;
 import cn.iocoder.yudao.module.system.framework.sms.core.client.dto.SmsSendRespDTO;
+import cn.iocoder.yudao.module.system.framework.sms.core.enums.SmsChannelEnum;
 import cn.iocoder.yudao.framework.test.core.ut.BaseMockitoUnitTest;
 import cn.iocoder.yudao.module.system.dal.dataobject.sms.SmsChannelDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.sms.SmsTemplateDO;
@@ -86,6 +87,48 @@ public class SmsSendServiceImplTest extends BaseMockitoUnitTest {
         assertEquals(smsLogId, resultSmsLogId);
         // 断言调用
         verify(smsProducer).sendSmsSendMessage(eq(smsLogId), eq(user.getMobile()),
+                eq(template.getChannelId()), eq(template.getApiTemplateId()),
+                eq(Lists.newArrayList(new KeyValue<>("code", "1234"), new KeyValue<>("op", "login"))));
+    }
+
+    @Test
+    public void testSendSingleSmsToAdmin_useDingIdWhenDgWorkChannel() {
+        // 准备参数
+        Long userId = randomLongId();
+        String templateCode = randomString();
+        Map<String, Object> templateParams = MapUtil.<String, Object>builder().put("code", "1234")
+                .put("op", "login").build();
+        AdminUserDO user = randomPojo(AdminUserDO.class, o -> {
+            o.setMobile("15601691300");
+            o.setDingId("ding-user-id");
+        });
+        when(adminUserService.getUser(eq(userId))).thenReturn(user);
+
+        // mock 政务钉模板和渠道
+        SmsTemplateDO template = randomPojo(SmsTemplateDO.class, o -> {
+            o.setStatus(CommonStatusEnum.ENABLE.getStatus());
+            o.setContent("验证码为{code}, 操作为{op}");
+            o.setParams(Lists.newArrayList("code", "op"));
+        });
+        when(smsTemplateService.getSmsTemplateByCodeFromCache(eq(templateCode))).thenReturn(template);
+        String content = randomString();
+        when(smsTemplateService.formatSmsTemplateContent(eq(template.getContent()), eq(templateParams)))
+                .thenReturn(content);
+        SmsChannelDO smsChannel = randomPojo(SmsChannelDO.class, o -> {
+            o.setCode(SmsChannelEnum.DG_WORK.getCode());
+            o.setStatus(CommonStatusEnum.ENABLE.getStatus());
+        });
+        when(smsChannelService.getSmsChannel(eq(template.getChannelId()))).thenReturn(smsChannel);
+        Long smsLogId = randomLongId();
+        when(smsLogService.createSmsLog(eq(user.getDingId()), eq(userId), eq(UserTypeEnum.ADMIN.getValue()),
+                eq(Boolean.TRUE), eq(template), eq(content), eq(templateParams))).thenReturn(smsLogId);
+
+        // 调用
+        Long resultSmsLogId = smsSendService.sendSingleSmsToAdmin(null, userId, templateCode, templateParams);
+
+        // 断言政务钉渠道使用 dingId，而不是手机号
+        assertEquals(smsLogId, resultSmsLogId);
+        verify(smsProducer).sendSmsSendMessage(eq(smsLogId), eq(user.getDingId()),
                 eq(template.getChannelId()), eq(template.getApiTemplateId()),
                 eq(Lists.newArrayList(new KeyValue<>("code", "1234"), new KeyValue<>("op", "login"))));
     }
