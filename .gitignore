@@ -58,3 +58,5 @@ yudao-module-bpm/src/main/resources/templates/
 /db
 /db/old
 /.m2
+/docs
+/sql

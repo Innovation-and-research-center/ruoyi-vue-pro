@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.bpm.service.message;
 
+import cn.hutool.core.date.DateUtil;
 import cn.iocoder.yudao.framework.web.config.WebProperties;
 import cn.iocoder.yudao.module.bpm.convert.message.BpmMessageConvert;
 import cn.iocoder.yudao.module.bpm.enums.message.BpmMessageEnum;
@@ -102,7 +103,8 @@ public class BpmMessageServiceImpl implements BpmMessageService {
         templateParams.put("taskName", reqDTO.getTaskName());
         templateParams.put("startUserNickname", reqDTO.getStartUserNickname());
         templateParams.put("detailUrl", getProcessInstanceDetailUrl(reqDTO.getProcessInstanceId()));
-        templateParams.put("dueDate", reqDTO.getDueDate());
+        templateParams.put("dueDate", reqDTO.getDueDate() != null
+                ? DateUtil.format(reqDTO.getDueDate(), "yyyy年MM月dd日 HH时mm分") : "");
         executeSendMessage(reqDTO.getAssigneeUserId(),
                 BpmMessageEnum.TASK_ASSIGNED.getSmsTemplateCode(),
                 BpmMessageEnum.TASK_ASSIGNED_DING.getSmsTemplateCode(), // 需在枚举中补充

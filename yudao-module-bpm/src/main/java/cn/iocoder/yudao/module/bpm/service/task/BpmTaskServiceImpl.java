@@ -29,6 +29,7 @@ import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmTaskCandidateStrategyEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmHttpRequestUtils;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmFormService;
@@ -4123,6 +4124,12 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                                 }
                             }
                         }
+                    }
+
+                    // 登记任务会在流程创建后立即分配给发起人，无需发送新待办通知。
+                    if (BpmRegisterTaskUtils.isRegisterTask(userTaskElement)) {
+                        log.debug("[processTaskAssigned][taskId({}) 为登记节点，跳过分配通知]", taskId);
+                        return;
                     }
 
                     // 3. 【极速异步发短信】：剥离组装数据逻辑，只把网络请求扔到异步线程池！
