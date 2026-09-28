@@ -82,7 +82,6 @@ public class MeetingRoomController {
 
     @GetMapping("/page")
     @Operation(summary = "获得会议室分页")
-    @PreAuthorize("@ss.hasPermission('system:meeting-room:query')")
     public CommonResult<PageResult<MeetingRoomRespVO>> getMeetingRoomPage(@Valid MeetingRoomPageReqVO pageReqVO) {
         PageResult<MeetingRoomDO> pageResult = meetingRoomService.getMeetingRoomPage(pageReqVO);
         return success(BeanUtils.toBean(pageResult, MeetingRoomRespVO.class));

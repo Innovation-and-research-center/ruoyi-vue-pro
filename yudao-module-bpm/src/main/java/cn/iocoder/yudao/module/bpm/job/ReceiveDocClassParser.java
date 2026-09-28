@@ -42,6 +42,10 @@ public final class ReceiveDocClassParser {
                 .sorted(Comparator.comparingInt(String::length).reversed())
                 .collect(Collectors.toList());
 
+        if (labels.contains("征求意见") && normalized.matches(".*征求.+?意见.*")) {
+            return "征求意见";
+        }
+
         for (String label : labels) {
             if (StrUtil.equals(withoutTailBracket, label)) {
                 return label;
