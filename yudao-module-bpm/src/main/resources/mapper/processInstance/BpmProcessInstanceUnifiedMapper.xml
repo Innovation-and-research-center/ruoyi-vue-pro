@@ -4,6 +4,7 @@
 
     <resultMap id="UnifiedResultMap" type="cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmProcessInstanceUnifiedRespVO">
         <id property="id" column="id" />
+        <result property="totalCount" column="totalCount" />
         <result property="name" column="name" />
         <result property="category" column="category" />
         <result property="processDefinitionKey" column="processDefinitionKey" />
@@ -34,7 +35,20 @@
         <bind name="VAR_PROCESS_RESULT" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_INSTANCE_VARIABLE_RESULT" />
         <bind name="VAR_PROCESS_STATUS" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_INSTANCE_VARIABLE_STATUS" />
         <bind name="VAR_PROCESS_REASON" value="@cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants@PROCESS_INSTANCE_VARIABLE_REASON" />
-        (
+        <choose>
+            <when test="reqVO.dataType == '现有数据'">
+                (<include refid="UnifiedCurrentData" />) unified
+            </when>
+            <when test="reqVO.dataType == '历史已办结' or reqVO.dataType == '历史未办结'">
+                (<include refid="UnifiedHistoryData" />) unified
+            </when>
+            <otherwise>
+                (<include refid="UnifiedCurrentData" /> UNION ALL <include refid="UnifiedHistoryData" />) unified
+            </otherwise>
+        </choose>
+    </sql>
+
+    <sql id="UnifiedCurrentData">
             SELECT
                 res.ID_ AS id,
                 res.NAME_ AS name,
@@ -44,36 +58,21 @@
                 CAST(u.dept_id AS VARCHAR) AS "startDeptName",
                 res.START_TIME_ AS "createTime",
                 res.END_TIME_ AS "endTime",
-                (CASE
-                    WHEN (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_)
-                          FROM ACT_HI_VARINST var
-                          WHERE var.PROC_INST_ID_ = res.ID_
-                            AND var.NAME_ = #{VAR_PROCESS_STATUS}
-                          LIMIT 1) = '1' THEN 1
-                    WHEN (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_)
-                          FROM ACT_HI_VARINST var
-                          WHERE var.PROC_INST_ID_ = res.ID_
-                            AND var.NAME_ = #{VAR_PROCESS_STATUS}
-                          LIMIT 1) = '2' THEN 2
-                    WHEN (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_)
-                          FROM ACT_HI_VARINST var
-                          WHERE var.PROC_INST_ID_ = res.ID_
-                            AND var.NAME_ = #{VAR_PROCESS_STATUS}
-                          LIMIT 1) = '3' THEN 3
-                    WHEN (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_)
-                          FROM ACT_HI_VARINST var
-                          WHERE var.PROC_INST_ID_ = res.ID_
-                            AND var.NAME_ = #{VAR_PROCESS_STATUS}
-                          LIMIT 1) = '4' THEN 4
-                    WHEN (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_)
-                          FROM ACT_HI_VARINST var
-                          WHERE var.PROC_INST_ID_ = res.ID_
-                            AND var.NAME_ = #{VAR_PROCESS_STATUS}
-                          LIMIT 1) = '5' THEN 5
-                    WHEN res.END_TIME_ IS NULL THEN 1
-                    WHEN res.END_TIME_ IS NOT NULL AND res.DELETE_REASON_ IS NULL THEN 2
-                    WHEN res.END_TIME_ IS NOT NULL AND (res.DELETE_REASON_ = 'MI_END' OR LOWER(res.DELETE_REASON_) = 'completed') THEN 2
-                    ELSE 3
+                (CASE (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_)
+                       FROM ACT_HI_VARINST var
+                       WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_PROCESS_STATUS}
+                       LIMIT 1)
+                    WHEN '1' THEN 1
+                    WHEN '2' THEN 2
+                    WHEN '3' THEN 3
+                    WHEN '4' THEN 4
+                    WHEN '5' THEN 5
+                    ELSE CASE
+                        WHEN res.END_TIME_ IS NULL THEN 1
+                        WHEN res.END_TIME_ IS NOT NULL AND res.DELETE_REASON_ IS NULL THEN 2
+                        WHEN res.END_TIME_ IS NOT NULL AND (res.DELETE_REASON_ = 'MI_END' OR LOWER(res.DELETE_REASON_) = 'completed') THEN 2
+                        ELSE 3
+                    END
                 END) AS status,
                 (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_) FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_PROCESS_RESULT} LIMIT 1) AS "processResult",
                 (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_) FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_PROCESS_STATUS} LIMIT 1) AS "processStatus",
@@ -136,8 +135,9 @@
                   AND #{reqVO.dataType} = '现有数据'
               </if>
 
-            UNION ALL
+    </sql>
 
+    <sql id="UnifiedHistoryData">
             SELECT
                 CAST(p.proinst_id AS VARCHAR) AS id,
                 p.proinst_name AS name,
@@ -174,7 +174,24 @@
                 CASE WHEN p.end_date IS NULL THEN p.inact ELSE NULL END AS "currTaskName",
                 CASE WHEN p.end_date IS NULL THEN p.intransactor ELSE NULL END AS "currTaskAssignee",
                 COALESCE(rd.send_dept, p.responsible_dept) AS "sourceUnit",
-                rd.source AS source,
+                (
+                    SELECT CASE
+                        WHEN count(f.id) = 0 THEN '网页新建'
+                        WHEN max(NULLIF(f.operation_information, '')) IS NULL THEN '未知来源'
+                        WHEN max(NULLIF(f.operation_information, '')) = '市局公告' THEN '通知公告'
+                        WHEN max(NULLIF(f.operation_information, '')) = '林业局公文' THEN '林业局收文'
+                        WHEN max(NULLIF(f.operation_information, '')) = '省厅公文' THEN '省厅收文'
+                        ELSE max(NULLIF(f.operation_information, ''))
+                    END
+                    FROM bpm_receive_doc r
+                    LEFT JOIN t_file_exchange f
+                      ON f.doc_id = r.id
+                     AND COALESCE(f.deleted, 0) = 0
+                    WHERE r.project_id = p.project_id
+                      AND COALESCE(r.deleted, 0) = 0
+                    GROUP BY r.project_id
+                    LIMIT 1
+                ) AS source,
                 CASE
                     WHEN p.batch_no = 'HIS_WF_UNFINISHED_BEFORE_2026' THEN '历史未办结'
                     ELSE '历史已办结'
@@ -189,19 +206,8 @@
             LEFT JOIN (
                 SELECT r.project_id,
                        MAX(r.id) AS id,
-                       MAX(r.send_dept) AS send_dept,
-                       CASE
-                           WHEN count(f.id) = 0 THEN '网页新建'
-                           WHEN max(NULLIF(f.operation_information, '')) IS NULL THEN '未知来源'
-                           WHEN max(NULLIF(f.operation_information, '')) = '市局公告' THEN '通知公告'
-                           WHEN max(NULLIF(f.operation_information, '')) = '林业局公文' THEN '林业局收文'
-                           WHEN max(NULLIF(f.operation_information, '')) = '省厅公文' THEN '省厅收文'
-                           ELSE max(NULLIF(f.operation_information, ''))
-                       END AS source
+                       MAX(r.send_dept) AS send_dept
                 FROM bpm_receive_doc r
-                LEFT JOIN t_file_exchange f
-                  ON f.doc_id = r.id
-                 AND COALESCE(f.deleted, 0) = 0
                 WHERE COALESCE(r.deleted, 0) = 0
                 GROUP BY r.project_id
             ) rd ON rd.project_id = p.project_id
@@ -266,7 +272,6 @@
                     </otherwise>
                 </choose>
             </if>
-        ) unified
     </sql>
 
     <sql id="UnifiedWhere">
@@ -313,7 +318,7 @@
     </sql>
 
     <select id="selectUnifiedList" resultMap="UnifiedResultMap">
-        SELECT *
+        SELECT unified.*, COUNT(*) OVER() AS "totalCount"
         FROM <include refid="UnifiedData" />
         <include refid="UnifiedWhere" />
         ORDER BY

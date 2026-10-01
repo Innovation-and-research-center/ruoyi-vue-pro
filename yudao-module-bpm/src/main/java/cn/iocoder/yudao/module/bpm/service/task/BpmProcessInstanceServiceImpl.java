@@ -58,6 +58,7 @@ import cn.iocoder.yudao.module.system.controller.admin.dept.vo.dept.DeptListReqV
 import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserSimpleRespVO;
 import cn.iocoder.yudao.module.system.convert.user.UserConvert;
 import cn.iocoder.yudao.module.system.dal.dataobject.dept.DeptDO;
+import cn.iocoder.yudao.module.system.dal.dataobject.permission.RoleDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.enums.permission.RoleCodeEnum;
 import cn.iocoder.yudao.module.system.service.dept.DeptService;
@@ -167,6 +168,8 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
     @Resource
     private BpmProcessInstanceUnifiedMapper unifiedMapper;
+    @Resource
+    private BpmProcessViewScopeService viewScopeService;
 
     // ========== Query 查询相关方法 ==========
 
@@ -1894,49 +1897,63 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
     @Override
     @DataPermission(enable = false)
     public PageResult<BpmProcessInstanceUnifiedRespVO> getUnifiedProcessInstancePage(Long userId, BpmProcessInstanceUnifiedReqVO reqVO) {
-        boolean superAdmin = permissionApi.hasAnyRoles(userId, RoleCodeEnum.SUPER_ADMIN.getCode());
-        Set<String> managedProcessDefinitionKeys = getManagedProcessDefinitionKeys(userId);
-
-        Long count = unifiedMapper.selectUnifiedCount(userId, superAdmin, managedProcessDefinitionKeys, reqVO);
-        if (count == 0) {
-            return PageResult.empty();
+        long startNanos = System.nanoTime();
+        List<RoleDO> userRoles = viewScopeService.getEnabledUserRoles(userId);
+        Set<String> roleCodes = userRoles.stream().map(RoleDO::getCode).collect(Collectors.toSet());
+        boolean superAdmin = roleCodes.contains(RoleCodeEnum.SUPER_ADMIN.getCode());
+        Set<String> managedProcessDefinitionKeys = getManagedProcessDefinitionKeys(roleCodes);
+        if (!superAdmin) {
+            managedProcessDefinitionKeys.addAll(viewScopeService.getRoleKeys(
+                    userRoles.stream().map(RoleDO::getId).collect(Collectors.toSet())));
         }
+        long scopeNanos = System.nanoTime();
 
         List<BpmProcessInstanceUnifiedRespVO> list = unifiedMapper.selectUnifiedList(
                 userId, superAdmin, managedProcessDefinitionKeys, reqVO);
+        long listNanos = System.nanoTime();
+        Long count = list.isEmpty()
+                ? unifiedMapper.selectUnifiedCount(userId, superAdmin, managedProcessDefinitionKeys, reqVO)
+                : list.get(0).getTotalCount();
+        long countNanos = System.nanoTime();
+        if (countNanos - startNanos >= 500_000_000L) {
+            log.warn("办件查询耗时：权限范围={}ms，列表含总数={}ms，空页补查总数={}ms",
+                    (scopeNanos - startNanos) / 1_000_000,
+                    (listNanos - scopeNanos) / 1_000_000,
+                    (countNanos - listNanos) / 1_000_000);
+        }
 
-        return new PageResult<>(list, count);
+        return count == 0 ? PageResult.empty() : new PageResult<>(list, count);
     }
 
     /**
      * 根据系统角色获取当前用户可管理的业务流程 Key。
      */
-    private Set<String> getManagedProcessDefinitionKeys(Long userId) {
+    private Set<String> getManagedProcessDefinitionKeys(Set<String> roleCodes) {
         Set<String> keys = new HashSet<>();
-        if (permissionApi.hasAnyRoles(userId, "receive_admin")) {
+        if (roleCodes.contains("receive_admin")) {
             keys.add("receive_doc");
             keys.add("receice_doc_v2_copy_copy");
         }
-        if (permissionApi.hasAnyRoles(userId, "xzfy_start")) {
+        if (roleCodes.contains("xzfy_start")) {
             keys.add("xzfy");
             keys.add("oa_review");
         }
-        if (permissionApi.hasAnyRoles(userId, "xzss_start")) {
+        if (roleCodes.contains("xzss_start")) {
             keys.add("xzss");
             keys.add("oa_lawsuit");
         }
-        if (permissionApi.hasAnyRoles(userId, "send_start")) {
+        if (roleCodes.contains("send_start")) {
             keys.add("send_doc");
         }
-        if (permissionApi.hasAnyRoles(userId, "leave_admin")) {
+        if (roleCodes.contains("leave_admin")) {
             keys.add("leave");
             keys.add("oa_leave");
         }
-        if (permissionApi.hasAnyRoles(userId, "work_admin")) {
+        if (roleCodes.contains("work_admin")) {
             keys.add("time_explain");
             keys.add("oa_out");
         }
-        if (permissionApi.hasAnyRoles(userId, "conn_admin")) {
+        if (roleCodes.contains("conn_admin")) {
             keys.add("confflow");
             keys.add("conference_report");
         }

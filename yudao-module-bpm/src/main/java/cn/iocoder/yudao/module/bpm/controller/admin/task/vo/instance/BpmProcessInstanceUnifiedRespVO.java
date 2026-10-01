@@ -1,11 +1,14 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 
 import java.time.LocalDateTime;
 
 @Data
 public class BpmProcessInstanceUnifiedRespVO {
+    @JsonIgnore
+    private Long totalCount;           // 分页总数，仅供查询服务使用
     private String id;                 // 办件编号 (ProcessInstanceId)
     private String name;               // 办件名称 (Process Name)
     private String category;           // 办件类型 (Process Definition Category/Name)
