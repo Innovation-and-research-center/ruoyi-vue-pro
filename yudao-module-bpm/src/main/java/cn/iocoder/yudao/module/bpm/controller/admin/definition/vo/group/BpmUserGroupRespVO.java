@@ -22,6 +22,9 @@ public class BpmUserGroupRespVO {
     @Schema(description = "成员编号数组", requiredMode = Schema.RequiredMode.REQUIRED, example = "1,2,3")
     private Set<Long> userIds;
 
+    @Schema(description = "包含角色规则成员的实际成员编号数组；编辑时应提交 userIds（手动成员）")
+    private Set<Long> effectiveUserIds;
+
     @Schema(description = "状态", requiredMode = Schema.RequiredMode.REQUIRED, example = "1")
     private Integer status;
 

@@ -9,6 +9,7 @@ import cn.iocoder.yudao.module.bpm.controller.admin.definition.vo.group.BpmUserG
 import cn.iocoder.yudao.module.bpm.controller.admin.definition.vo.group.BpmUserGroupSaveReqVO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmUserGroupDO;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmUserGroupService;
+import cn.iocoder.yudao.module.bpm.service.definition.BpmUserGroupMembershipService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -31,6 +32,8 @@ public class BpmUserGroupController {
 
     @Resource
     private BpmUserGroupService userGroupService;
+    @Resource
+    private BpmUserGroupMembershipService membershipService;
 
     @PostMapping("/create")
     @Operation(summary = "创建用户组")
@@ -62,7 +65,13 @@ public class BpmUserGroupController {
     @PreAuthorize("@ss.hasPermission('bpm:user-group:query')")
     public CommonResult<BpmUserGroupRespVO> getUserGroup(@RequestParam("id") Long id) {
         BpmUserGroupDO userGroup = userGroupService.getUserGroup(id);
-        return success(BeanUtils.toBean(userGroup, BpmUserGroupRespVO.class));
+        BpmUserGroupRespVO resp = BeanUtils.toBean(userGroup, BpmUserGroupRespVO.class);
+        if (resp != null) {
+            // 原编辑表单提交 userIds；只返回手动成员，避免自动成员在保存时被固化为手动成员。
+            resp.setEffectiveUserIds(userGroup.getUserIds());
+            resp.setUserIds(membershipService.getManualUserIdsByGroup(id));
+        }
+        return success(resp);
     }
 
     @GetMapping("/page")

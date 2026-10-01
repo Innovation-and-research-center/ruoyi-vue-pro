@@ -384,6 +384,12 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
         PdfCommentInfo pishiComment = null;
 
         for (BpmProcessPrintDataRespVO.Task task : taskList) {
+            // 办公室备案只记录流程办理，不填写审批单意见。
+            if (StrUtil.equalsAny(processDefinitionKey, "oa_leave", "oa_out")
+                    && StrUtil.contains(task.getName(), "办公室")
+                    && StrUtil.contains(task.getName(), "备案")) {
+                continue;
+            }
             String userName = StrUtil.blankToDefault(task.getApproveName(), "");
             String commentText = StrUtil.blankToDefault(task.getContent(), "已阅");
             Date commentDate = parseDate(task.getApproveDate());
