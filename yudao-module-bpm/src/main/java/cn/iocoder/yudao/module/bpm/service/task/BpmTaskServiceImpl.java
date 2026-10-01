@@ -3928,6 +3928,13 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                             && getTask(task.getId()) == null) {
                         return;
                     }
+                    if (BpmRegisterTaskUtils.isRegisterTask(userTaskElement)) {
+                        try {
+                            sendJobReceiveRegisterMessageToCandidates(task.getId(), tenantId);
+                        } catch (Exception e) {
+                            log.error("[processTaskCreated][taskId({}) 发送待认领通知失败]", task.getId(), e);
+                        }
+                    }
                     // 特殊情况一：【人工审核】审批人为空，根据配置是否要自动通过、自动拒绝
                     if (ObjectUtil.equal(approveType, BpmUserTaskApproveTypeEnum.USER.getType())) {
                         // 如果有审批人、拥有人、候选人，则说明不满足情况一，不自动通过、不自动拒绝
@@ -3962,6 +3969,51 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     private boolean hasCandidateUsers(String taskId) {
         return taskService.getIdentityLinksForTask(taskId).stream()
                 .anyMatch(link -> "candidate".equals(link.getType()) && StrUtil.isNotBlank(link.getUserId()));
+    }
+
+    private void sendJobReceiveRegisterMessageToCandidates(String taskId, Long tenantId) {
+        Task currentTask = getTask(taskId);
+        if (currentTask == null || StrUtil.isNotBlank(currentTask.getAssignee())) {
+            return;
+        }
+        ProcessInstance instance = processInstanceService.getProcessInstance(currentTask.getProcessInstanceId());
+        if (instance == null || instance.getProcessVariables() == null
+                || !Boolean.TRUE.equals(instance.getProcessVariables().get(PROCESS_RECEIVE_JOB_CREATED))) {
+            return;
+        }
+        Set<Long> candidateUserIds = taskService.getIdentityLinksForTask(taskId).stream()
+                .filter(link -> "candidate".equals(link.getType()) && StrUtil.isNotBlank(link.getUserId()))
+                .map(link -> NumberUtils.parseLong(link.getUserId()))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (candidateUserIds.isEmpty()) {
+            log.warn("[sendJobReceiveRegisterMessageToCandidates][taskId({}) 没有候选人]", taskId);
+            return;
+        }
+        AdminUserRespDTO startUser = adminUserApi.getUser(Long.valueOf(instance.getStartUserId()));
+        if (startUser == null) {
+            log.warn("[sendJobReceiveRegisterMessageToCandidates][taskId({}) 找不到流程发起人]", taskId);
+            return;
+        }
+        BpmMessageSendWhenTaskCreatedReqDTO messageDTO = BpmTaskConvert.INSTANCE.convert(instance, startUser, currentTask);
+        messageDTO.setStartUserNickname("系统自动");
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            try {
+                TenantUtils.execute(tenantId, () -> {
+                    for (Long candidateUserId : candidateUserIds) {
+                        try {
+                            messageDTO.setAssigneeUserId(candidateUserId);
+                            messageService.sendMessageWhenTaskClaimable(messageDTO);
+                        } catch (Exception e) {
+                            log.error("[sendJobReceiveRegisterMessageToCandidates][taskId({}) 候选人({}) 通知失败]",
+                                    taskId, candidateUserId, e);
+                        }
+                    }
+                });
+            } catch (Exception e) {
+                log.error("[sendJobReceiveRegisterMessageToCandidates][taskId({}) 异步通知失败]", taskId, e);
+            }
+        });
     }
 
     /**

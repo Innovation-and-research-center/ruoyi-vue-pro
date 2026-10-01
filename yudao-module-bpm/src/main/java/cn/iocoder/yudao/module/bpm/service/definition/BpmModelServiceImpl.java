@@ -15,6 +15,7 @@ import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmFormDO;
 import cn.iocoder.yudao.module.bpm.enums.definition.BpmModelFormTypeEnum;
 import cn.iocoder.yudao.module.bpm.enums.definition.BpmModelTypeEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmReasonEnum;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.candidate.BpmTaskCandidateInvoker;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmTaskCandidateStrategyEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
@@ -50,6 +51,7 @@ import java.util.Objects;
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertMap;
 import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
+import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_STATUS;
 import static cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils.parseCandidateStrategy;
 
 /**
@@ -294,6 +296,8 @@ public class BpmModelServiceImpl implements BpmModelService {
         List<ProcessInstance> processInstances = runtimeService.createProcessInstanceQuery()
                 .processDefinitionKey(model.getKey()).list();
         processInstances.forEach(processInstance -> {
+            runtimeService.setVariable(processInstance.getId(), PROCESS_INSTANCE_VARIABLE_STATUS,
+                    BpmProcessInstanceStatusEnum.CANCEL.getStatus());
             runtimeService.deleteProcessInstance(processInstance.getId(),
                     BpmReasonEnum.CANCEL_BY_SYSTEM.getReason());
             historyService.deleteHistoricProcessInstance(processInstance.getId());

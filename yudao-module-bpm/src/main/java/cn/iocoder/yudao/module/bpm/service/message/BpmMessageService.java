@@ -38,6 +38,11 @@ public interface BpmMessageService {
     void sendMessageWhenTaskAssigned(@Valid BpmMessageSendWhenTaskCreatedReqDTO reqDTO);
 
     /**
+     * 向待认领任务的候选人发送通知
+     */
+    void sendMessageWhenTaskClaimable(@Valid BpmMessageSendWhenTaskCreatedReqDTO reqDTO);
+
+    /**
      * 发送任务审批超时的消息
      *
      * @param reqDTO 发送信息

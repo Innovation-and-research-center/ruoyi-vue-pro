@@ -40,9 +40,12 @@ public class BpmMessageServiceImpl implements BpmMessageService {
 
     private boolean isMessageSendEnable() {
         try {
-            // TODO: 3. 替换为实际读取“配置管理”参数的代码，例如根据键值获取：
-             String enableStr = configApi.getConfigValueByKey("bpm.message.send.enable");
-             return Boolean.parseBoolean(enableStr);
+            String enableStr = configApi.getConfigValueByKey("bpm.message.send.enable");
+            if (enableStr == null) {
+                return false;
+            }
+            String value = enableStr.trim();
+            return "true".equalsIgnoreCase(value) || "1".equals(value) || "发送".equals(value);
         } catch (Exception e) {
             log.error("[isMessageSendEnable][读取流程消息发送开关异常]", e);
             return false; // 发生异常时建议降级为不发送
@@ -109,6 +112,20 @@ public class BpmMessageServiceImpl implements BpmMessageService {
                 BpmMessageEnum.TASK_ASSIGNED.getSmsTemplateCode(),
                 BpmMessageEnum.TASK_ASSIGNED_DING.getSmsTemplateCode(), // 需在枚举中补充
                 templateParams);
+    }
+
+    @Override
+    public void sendMessageWhenTaskClaimable(BpmMessageSendWhenTaskCreatedReqDTO reqDTO) {
+        Map<String, Object> templateParams = new HashMap<>();
+        templateParams.put("processInstanceName", reqDTO.getProcessInstanceName());
+        templateParams.put("taskName", reqDTO.getTaskName());
+        templateParams.put("startUserNickname", reqDTO.getStartUserNickname());
+        templateParams.put("detailUrl", getProcessInstanceDetailUrl(reqDTO.getProcessInstanceId()));
+        templateParams.put("dueDate", reqDTO.getDueDate() != null
+                ? DateUtil.format(reqDTO.getDueDate(), "yyyy年MM月dd日 HH时mm分") : "");
+        executeSendMessage(reqDTO.getAssigneeUserId(),
+                BpmMessageEnum.TASK_ASSIGNED.getSmsTemplateCode(),
+                BpmMessageEnum.TASK_ASSIGNED_DING.getSmsTemplateCode(), templateParams);
     }
 
 
