@@ -416,6 +416,19 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                 throw exception(PROCESS_INSTANCE_NOT_EXISTS);
             }
             sourceElement = bpmnModel.getFlowElement(task.getTaskDefinitionKey());
+            if (task.getTaskLocalVariables() != null
+                    && task.getTaskLocalVariables().containsKey("internal_source_task_id")) {
+                List<BpmNextTaskRespVO> outgoingNodes = new ArrayList<>();
+                analyzeOutgoingFlows((FlowNode) sourceElement, outgoingNodes, null, Collections.emptyMap());
+                for (BpmNextTaskRespVO node : outgoingNodes) {
+                    if ("end".equals(node.getTaskDefKey())) {
+                        node.setTaskName("办理完成");
+                        node.setFlowName("办理完成");
+                        return Collections.singletonList(node);
+                    }
+                }
+                // 没有结束出口时，继续按当前节点原有规则查询下一步。
+            }
         }
 
         // 登记节点的“发送”语义就是提交登记并选择下一办理人，统一允许查询下一节点。
