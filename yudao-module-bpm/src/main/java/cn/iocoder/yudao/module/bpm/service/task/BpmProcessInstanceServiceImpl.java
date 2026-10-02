@@ -50,6 +50,7 @@ import cn.iocoder.yudao.module.bpm.service.definition.BpmProcessDefinitionServic
 import cn.iocoder.yudao.module.bpm.service.definition.BpmUserGroupService;
 import cn.iocoder.yudao.module.bpm.service.message.BpmMessageService;
 import cn.iocoder.yudao.module.bpm.util.BpmQueryUtils;
+import cn.iocoder.yudao.module.infra.api.config.ConfigApi;
 import cn.iocoder.yudao.module.system.api.dept.DeptApi;
 import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
@@ -128,6 +129,11 @@ import static org.flowable.bpmn.constants.BpmnXMLConstants.*;
 @Slf4j
 public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService {
 
+    /** 流程标识:节点 ID。未配置参数时，默认只对这三个负责人节点筛选。 */
+    private static final String SAME_DEPT_CANDIDATE_NODES_CONFIG = "bpm.same-dept-candidate.nodes";
+    private static final String DEFAULT_SAME_DEPT_CANDIDATE_NODES =
+            "conference_report:Activity_1h0l7v8,oa_leave:Activity_1s93b00,oa_out:Activity_0578ggz";
+
     @Resource
     private RuntimeService runtimeService;
     @Resource
@@ -162,6 +168,9 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
     @Resource
     private AdminUserService userService;
+
+    @Resource
+    private ConfigApi configApi;
 
     @Resource
     private DeptService deptService;
@@ -492,6 +501,9 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         }
 
         Map<String, List<AdminUserDO>> nodeCandidateMap = new HashMap<>();
+        Map<String, Map<Long, List<AdminUserDO>>> sameDeptCandidateMap = new HashMap<>();
+        Set<String> sameDeptCandidateNodes = getSameDeptCandidateNodes();
+        Set<Long> submitterDeptIds = null;
         Set<Long> deptIdsToQuery = new HashSet<>();
 
         // =========================================================================================
@@ -586,6 +598,31 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                 CandidateRule rule = parseCandidateRule(node.getExtensionProperties());
                 if (rule != null) {
                     List<AdminUserDO> users = getCandidateUsers(rule.getType(), rule.getValue());
+                    if (sameDeptCandidateNodes.contains(processDefinition.getKey() + ":" + node.getTaskDefKey())) {
+                        if (submitterDeptIds == null) {
+                            submitterDeptIds = new LinkedHashSet<>(userService.getUserDeptIds(loginUserId));
+                            AdminUserDO submitter = userService.getUser(loginUserId);
+                            if (submitter != null && submitter.getDeptId() != null
+                                    && submitterDeptIds.remove(submitter.getDeptId())) {
+                                Set<Long> orderedDeptIds = new LinkedHashSet<>();
+                                orderedDeptIds.add(submitter.getDeptId());
+                                orderedDeptIds.addAll(submitterDeptIds);
+                                submitterDeptIds = orderedDeptIds;
+                            }
+                        }
+                        Map<Long, List<AdminUserDO>> usersByDept = getSameDeptCandidates(users, submitterDeptIds);
+                        sameDeptCandidateMap.put(node.getTaskDefKey(), usersByDept);
+                        users = usersByDept.values().stream().flatMap(List::stream).collect(Collectors.toList());
+                        deptIdsToQuery.addAll(usersByDept.keySet());
+                        Map<String, String> responseProperties = new HashMap<>(node.getExtensionProperties());
+                        responseProperties.put("same_dept_candidate_filter", "1");
+                        if (users.isEmpty()) {
+                            // 旧前端在候选列表为空时会凭这两个字段重新拉取完整角色/用户组，需关闭兜底。
+                            responseProperties.remove("choose_rule");
+                            responseProperties.remove("rule_value");
+                        }
+                        node.setExtensionProperties(responseProperties);
+                    }
                     if (CollUtil.isNotEmpty(users)) {
                         nodeCandidateMap.put(node.getTaskDefKey(), users);
                         users.forEach(u -> {
@@ -598,6 +635,11 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             // 收集已分配的人员 ID，准备统一查库
             if (selectedAssigneesMap.containsKey(node.getTaskDefKey())) {
                 List<Long> assignedIds = Convert.toList(Long.class, selectedAssigneesMap.get(node.getTaskDefKey()));
+                if (CollUtil.isNotEmpty(assignedIds) && sameDeptCandidateMap.containsKey(node.getTaskDefKey())) {
+                    Set<Long> allowedIds = sameDeptCandidateMap.get(node.getTaskDefKey()).values().stream()
+                            .flatMap(List::stream).map(AdminUserDO::getId).collect(Collectors.toSet());
+                    assignedIds = assignedIds.stream().filter(allowedIds::contains).collect(Collectors.toList());
+                }
                 if (CollUtil.isNotEmpty(assignedIds)) {
                     node.setAssignedUserIds(assignedIds);
                     allAssignedUserIdsToQuery.addAll(assignedIds);
@@ -652,14 +694,17 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         for (BpmNextTaskRespVO node : result) {
             // 组装候选人员树结构
             List<AdminUserDO> rawUsers = nodeCandidateMap.get(node.getTaskDefKey());
-            if (CollUtil.isNotEmpty(rawUsers)) {
+            if (sameDeptCandidateMap.containsKey(node.getTaskDefKey()) || CollUtil.isNotEmpty(rawUsers)) {
                 // 先按部门排序 + 部门内人员排序，再使用 LinkedHashMap 分组，
                 // 确保返回给前端的部门顺序和人员顺序都稳定可预期。
-                List<AdminUserDO> sortedUsers = new ArrayList<>(rawUsers);
-                sortedUsers.sort(buildDeptUserComparator(deptMap));
-                Map<Long, List<AdminUserDO>> usersByDept = sortedUsers.stream()
-                        .collect(Collectors.groupingBy(u -> u.getDeptId() != null ? u.getDeptId() : -1L,
-                                LinkedHashMap::new, Collectors.toList()));
+                Map<Long, List<AdminUserDO>> usersByDept = sameDeptCandidateMap.get(node.getTaskDefKey());
+                if (usersByDept == null) {
+                    List<AdminUserDO> sortedUsers = new ArrayList<>(rawUsers);
+                    sortedUsers.sort(buildDeptUserComparator(deptMap));
+                    usersByDept = sortedUsers.stream()
+                            .collect(Collectors.groupingBy(u -> u.getDeptId() != null ? u.getDeptId() : -1L,
+                                    LinkedHashMap::new, Collectors.toList()));
+                }
 
                 List<BpmUserGroupRespVO> treeList = new ArrayList<>();
                 for (Map.Entry<Long, List<AdminUserDO>> entry : usersByDept.entrySet()) {
@@ -696,6 +741,39 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             }
         }
 
+        return result;
+    }
+
+    private Set<String> getSameDeptCandidateNodes() {
+        String configuredNodes = configApi.getConfigValueByKey(SAME_DEPT_CANDIDATE_NODES_CONFIG);
+        String nodes = configuredNodes != null ? configuredNodes : DEFAULT_SAME_DEPT_CANDIDATE_NODES;
+        return Arrays.stream(nodes.split(","))
+                .map(String::trim)
+                .filter(StrUtil::isNotEmpty)
+                .collect(Collectors.toSet());
+    }
+
+    /** 先取节点配置的角色/用户组成员，再按提交人与候选人的实际所属科室取交集。 */
+    private Map<Long, List<AdminUserDO>> getSameDeptCandidates(List<AdminUserDO> candidates, Set<Long> submitterDeptIds) {
+        Map<Long, List<AdminUserDO>> result = new LinkedHashMap<>();
+        if (CollUtil.isEmpty(candidates) || CollUtil.isEmpty(submitterDeptIds)) {
+            return result;
+        }
+        Map<Long, AdminUserDO> candidateById = CollectionUtils.convertMap(candidates, AdminUserDO::getId);
+        Set<Long> shownUserIds = new HashSet<>();
+        for (Long deptId : submitterDeptIds) {
+            List<AdminUserDO> matched = userService.getUserListByDeptIds(Collections.singleton(deptId)).stream()
+                    .filter(member -> candidateById.containsKey(member.getId()))
+                    // el-tree 的 node-key 使用人员 ID，同一候选人只在第一个共同科室展示一次。
+                    .filter(member -> shownUserIds.add(member.getId()))
+                    .map(member -> BeanUtils.toBean(candidateById.get(member.getId()), AdminUserDO.class)
+                            .setDeptId(deptId).setSort(member.getSort()))
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+            if (CollUtil.isNotEmpty(matched)) {
+                result.put(deptId, matched);
+            }
+        }
         return result;
     }
 
