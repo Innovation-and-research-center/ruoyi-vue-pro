@@ -60,3 +60,6 @@ yudao-module-bpm/src/main/resources/templates/
 /.m2
 /docs
 /sql
+/yudao-module-bpm/src/main/resources
+/yudao-module-bpm/src/test
+/yudao-module-bpm/src/test/resources
