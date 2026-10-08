@@ -405,6 +405,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
         FlowElement sourceElement = null;
         Task task = null; // 提取到外部声明，便于获取实例 ID
+        boolean restrictedInternalLoop = false;
 
         if (reqVO.getTaskId() == null) {
             if (StrUtil.isNotBlank(reqVO.getActivityId())) {
@@ -427,22 +428,16 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             sourceElement = bpmnModel.getFlowElement(task.getTaskDefinitionKey());
             if (task.getTaskLocalVariables() != null
                     && task.getTaskLocalVariables().containsKey("internal_source_task_id")) {
-                List<BpmNextTaskRespVO> outgoingNodes = new ArrayList<>();
-                analyzeOutgoingFlows((FlowNode) sourceElement, outgoingNodes, null, Collections.emptyMap());
-                for (BpmNextTaskRespVO node : outgoingNodes) {
-                    if ("end".equals(node.getTaskDefKey())) {
-                        node.setTaskName("办理完成");
-                        node.setFlowName("办理完成");
-                        return Collections.singletonList(node);
-                    }
-                }
-                // 没有结束出口时，继续按当前节点原有规则查询下一步。
+                CandidateRule currentRule = parseCandidateRule(parseAllProperties(sourceElement));
+                restrictedInternalLoop = getCandidateUsers(currentRule.getType(), currentRule.getValue()).stream()
+                        .noneMatch(user -> Objects.equals(user.getId(), loginUserId));
             }
         }
 
         // 登记节点的“发送”语义就是提交登记并选择下一办理人，统一允许查询下一节点。
         // 普通任务节点仍然由 select_manually=1 控制，避免改变已有流程行为。
-        if (!BpmRegisterTaskUtils.isRegisterTask(sourceElement) && !checkManualSelectProperty(sourceElement)) {
+        if (!restrictedInternalLoop && !BpmRegisterTaskUtils.isRegisterTask(sourceElement)
+                && !checkManualSelectProperty(sourceElement)) {
             return Collections.emptyList(); // 如果没开启手动选人，直接返回空
         }
         List<BpmNextTaskRespVO> result = new ArrayList<>();
@@ -451,16 +446,23 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             // 解析当前节点的拓展属性
             Map<String, String> sourceProperties = parseAllProperties(sourceElement);
             // 判断是否开启了内循环标识
-            if ("1".equals(sourceProperties.get("loop_flag"))) {
+            if (restrictedInternalLoop || "1".equals(sourceProperties.get("loop_flag"))) {
                 BpmNextTaskRespVO loopNode = new BpmNextTaskRespVO();
                 loopNode.setTaskDefKey(sourceElement.getId() + "_internal_loop");
                 loopNode.setTaskName("部门内循环或同环节移交");
                 loopNode.setFlowName("部门内循环或同环节移交");
                 loopNode.setFlowSort(2);
-                loopNode.setExtensionProperties(sourceProperties);
+                Map<String, String> loopProperties = new HashMap<>(sourceProperties);
+                if (restrictedInternalLoop) {
+                    // 本部门候选人由实际部门关系提供，避免前端按用户组兜底加载其他部门人员。
+                    loopProperties.remove("choose_rule");
+                    loopProperties.remove("rule_value");
+                    loopNode.setCandidateUsers(Collections.emptyList());
+                }
+                loopNode.setExtensionProperties(loopProperties);
                 result.add(loopNode);
             }
-            if ("1".equals(sourceProperties.get("specified_flag"))) {
+            if (!restrictedInternalLoop && "1".equals(sourceProperties.get("specified_flag"))) {
                 BpmNextTaskRespVO specifiedNode = new BpmNextTaskRespVO();
                 // 拼接后缀以区分普通节点
                 specifiedNode.setTaskDefKey(sourceElement.getId() + "_specified");
@@ -490,7 +492,8 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         }
 
         if (sourceElement instanceof FlowNode) {
-            analyzeOutgoingFlows((FlowNode) sourceElement, result,null, processVariables);
+            analyzeOutgoingFlows((FlowNode) sourceElement, result, null,
+                    restrictedInternalLoop ? Collections.emptyMap() : processVariables);
 //            if(reqVO.getTaskId() == null){
 //                analyzeOutgoingFlows((FlowNode) sourceElement, result,null, processVariables);
 //            }
@@ -498,6 +501,17 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 //                analyzeOutgoingFlows((FlowNode) sourceElement, result, null,null);
 //            }
 
+        }
+
+        if (restrictedInternalLoop) {
+            BpmNextTaskRespVO completionNode = result.stream().filter(node -> "end".equals(node.getTaskDefKey()))
+                    .findFirst().orElse(null);
+            result.removeIf(node -> !node.getTaskDefKey().endsWith("_internal_loop")
+                    && node != completionNode);
+            if (completionNode != null) {
+                completionNode.setTaskName("办理完成");
+                completionNode.setFlowName("办理完成");
+            }
         }
 
         Map<String, List<AdminUserDO>> nodeCandidateMap = new HashMap<>();
@@ -658,7 +672,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             });
         }
 
-        // “部门内循环或同环节移交”的候选范围：当前环节规则候选人 + 当前办理人所在部门的全部人员。
+        // 普通办理人：环节规则候选人 + 本部门人员；非用户组的内循环办理人：仅本部门人员。
         // 当前部门人员来自实际部门关系表；相同人员只保留一次，并按当前部门及部门内顺序展示。
         AdminUserDO loginUser = userService.getUser(loginUserId);
         Long currentDeptId = loginUser != null ? loginUser.getDeptId() : null;
@@ -675,7 +689,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                 }
                 Map<Long, AdminUserDO> mergedUsers = new LinkedHashMap<>();
                 List<AdminUserDO> ruleUsers = nodeCandidateMap.get(node.getTaskDefKey());
-                if (CollUtil.isNotEmpty(ruleUsers)) {
+                if (!restrictedInternalLoop && CollUtil.isNotEmpty(ruleUsers)) {
                     ruleUsers.forEach(user -> mergedUsers.put(user.getId(), user));
                 }
                 currentDeptUsers.forEach(user -> mergedUsers.put(user.getId(), user));
