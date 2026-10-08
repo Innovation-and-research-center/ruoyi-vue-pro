@@ -6,6 +6,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
+import cn.iocoder.yudao.framework.tenant.core.context.TenantContextHolder;
 import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserSaveReqVO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.service.logger.LoginLogService;
@@ -137,6 +138,9 @@ public class SsoController {
             }
 
             String dingId = userInfoJson.getStr("ding_id");
+            // SSO 用户统一归属租户 1，查询和创建均启用租户隔离。
+            TenantContextHolder.setTenantId(1L);
+            TenantContextHolder.setIgnore(false);
             AdminUserDO finalUser = adminUserService.getUserByMobile(userPhone);
             // ================== 第四步：核心匹配逻辑：以手机号为准 ==================
             if (finalUser == null) {

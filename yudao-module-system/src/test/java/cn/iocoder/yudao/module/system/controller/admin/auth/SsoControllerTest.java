@@ -4,9 +4,11 @@ import cn.hutool.core.codec.Base64;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
+import cn.iocoder.yudao.framework.tenant.core.context.TenantContextHolder;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.service.user.AdminUserService;
 import cn.iocoder.yudao.module.system.util.AESUtils;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,6 +28,8 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
@@ -53,6 +57,13 @@ public class SsoControllerTest {
     void setUp() {
         // 注入 @Value 属性
         ReflectionTestUtils.setField(ssoController, "frontendUrl", FRONTEND_URL);
+        TenantContextHolder.clear();
+        TenantContextHolder.setIgnore(true);
+    }
+
+    @AfterEach
+    void tearDown() {
+        TenantContextHolder.clear();
     }
 
     /**
@@ -126,7 +137,11 @@ public class SsoControllerTest {
             aesUtilsMock.when(() -> AESUtils.decrypt(anyString(), anyString())).thenReturn("18200006666_1234");
 
             // Mock 查询手机号不存在
-            when(adminUserService.getUserByMobile("18200006666")).thenReturn(null);
+            when(adminUserService.getUserByMobile("18200006666")).thenAnswer(invocation -> {
+                assertEquals(1L, TenantContextHolder.getTenantId());
+                assertFalse(TenantContextHolder.isIgnore());
+                return null;
+            });
             // Mock 查询用户名不冲突
             when(adminUserService.getUserByUsername("ymgd")).thenReturn(null);
 
@@ -194,7 +209,11 @@ public class SsoControllerTest {
             existingUser.setDingId("oldDingId"); // 数据库中是旧的 dingId
 
             // 查到已存在用户
-            when(adminUserService.getUserByMobile("18200006666")).thenReturn(existingUser);
+            when(adminUserService.getUserByMobile("18200006666")).thenAnswer(invocation -> {
+                assertEquals(1L, TenantContextHolder.getTenantId());
+                assertFalse(TenantContextHolder.isIgnore());
+                return existingUser;
+            });
             when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
 
             ssoController.ssoLogin(params, response);

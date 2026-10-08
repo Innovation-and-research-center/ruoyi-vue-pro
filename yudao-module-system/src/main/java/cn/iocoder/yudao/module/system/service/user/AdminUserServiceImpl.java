@@ -610,6 +610,7 @@ public class AdminUserServiceImpl implements AdminUserService {
 
         // 2.1 构建并插入新用户
         AdminUserDO user = new AdminUserDO();
+        user.setTenantId(1L);
         user.setUsername(username);
         user.setMobile(mobile);
         user.setNickname(StrUtil.isNotBlank(nickname) ? nickname : username);
