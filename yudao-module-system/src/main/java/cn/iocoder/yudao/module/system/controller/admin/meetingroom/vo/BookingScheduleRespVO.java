@@ -22,6 +22,7 @@ public class BookingScheduleRespVO {
         private String department;
         private LocalDateTime startTime;
         private LocalDateTime endTime;
+        private Integer attendNumber; // 参加人数
         private String subject;
         private Boolean isMyBooking; // 辅助字段：是不是我约的（用于前端判断颜色）
     }

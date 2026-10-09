@@ -190,6 +190,7 @@ public class MeetingServiceImpl implements MeetingService {
                         detail.setNickName(b.getStaffName());
                         detail.setDepartment(b.getDepartment());
                         detail.setTelephone(b.getTelephone());
+                        detail.setSubject(b.getMeetingAbstract());
                         detail.setIsMyBooking(b.getUserId().equals(currentUserId));
                         return detail;
                     }).collect(Collectors.toList());
