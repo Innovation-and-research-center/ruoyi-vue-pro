@@ -1,6 +1,9 @@
 package cn.iocoder.yudao.module.infra.api.config;
 
 import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
+import cn.iocoder.yudao.module.infra.api.config.dto.ConfigRespDTO;
+import java.util.List;
+import java.util.stream.Collectors;
 import cn.iocoder.yudao.module.infra.controller.admin.config.vo.ConfigSaveReqVO;
 import cn.iocoder.yudao.module.infra.dal.dataobject.config.ConfigDO;
 import cn.iocoder.yudao.module.infra.service.config.ConfigService;
@@ -20,6 +23,18 @@ public class ConfigApiImpl implements ConfigApi {
 
     @Resource
     private ConfigService configService;
+
+    @Override
+    public List<ConfigRespDTO> getConfigsByKeyPrefix(String prefix) {
+        return configService.getConfigsByKeyPrefix(prefix).stream().map(config -> {
+            ConfigRespDTO dto = new ConfigRespDTO();
+            dto.setId(config.getId());
+            dto.setName(config.getName());
+            dto.setKey(config.getConfigKey());
+            dto.setValue(config.getValue());
+            return dto;
+        }).collect(Collectors.toList());
+    }
 
     @Override
     public String getConfigValueByKey(String key) {

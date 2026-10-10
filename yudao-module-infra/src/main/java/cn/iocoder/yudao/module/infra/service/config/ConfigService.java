@@ -60,6 +60,8 @@ public interface ConfigService {
      */
     ConfigDO getConfigByKey(String key);
 
+    List<ConfigDO> getConfigsByKeyPrefix(String prefix);
+
     /**
      * 获得参数配置分页列表
      *

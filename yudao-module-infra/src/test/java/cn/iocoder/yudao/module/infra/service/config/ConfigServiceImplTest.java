@@ -35,6 +35,24 @@ public class ConfigServiceImplTest extends BaseDbUnitTest {
     private ConfigMapper configMapper;
 
     @Test
+    public void testGetConfigsByKeyPrefix_onlyMatchesPrefixInCreationOrder() {
+        ConfigDO first = randomConfigDO(o -> o.setConfigKey("bpm.send-user-group.main"));
+        ConfigDO second = randomConfigDO(o -> o.setConfigKey("bpm.send-user-group.other"));
+        ConfigDO unrelated = randomConfigDO(o -> o.setConfigKey("other.bpm.send-user-group.main"));
+        configMapper.insert(first);
+        configMapper.insert(second);
+        configMapper.insert(unrelated);
+        configMapper.insert(randomConfigDO(o -> o.setConfigKey("bpm.send-user-grouping.other")));
+
+        java.util.List<ConfigDO> configs = configService.getConfigsByKeyPrefix("bpm.send-user-group.");
+        assertEquals(2, configs.size());
+        assertEquals(first.getId(), configs.get(0).getId());
+        assertEquals(second.getId(), configs.get(1).getId());
+        assertTrue(configService.getConfigsByKeyPrefix("").isEmpty());
+        assertTrue(configService.getConfigsByKeyPrefix(null).isEmpty());
+    }
+
+    @Test
     public void testCreateConfig_success() {
         // 准备参数
         ConfigSaveReqVO reqVO = randomPojo(ConfigSaveReqVO.class)

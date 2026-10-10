@@ -1,6 +1,7 @@
 package cn.iocoder.yudao.module.infra.service.config;
 
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
+import cn.iocoder.yudao.framework.mybatis.core.query.LambdaQueryWrapperX;
 import cn.iocoder.yudao.module.infra.controller.admin.config.vo.ConfigPageReqVO;
 import cn.iocoder.yudao.module.infra.controller.admin.config.vo.ConfigSaveReqVO;
 import cn.iocoder.yudao.module.infra.convert.config.ConfigConvert;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
 
 import java.util.List;
+import java.util.Collections;
 
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.iocoder.yudao.module.infra.enums.ErrorCodeConstants.*;
@@ -28,6 +30,16 @@ public class ConfigServiceImpl implements ConfigService {
 
     @Resource
     private ConfigMapper configMapper;
+
+    @Override
+    public List<ConfigDO> getConfigsByKeyPrefix(String prefix) {
+        if (prefix == null || prefix.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+        return configMapper.selectList(new LambdaQueryWrapperX<ConfigDO>()
+                .likeRight(ConfigDO::getConfigKey, prefix)
+                .orderByAsc(ConfigDO::getId));
+    }
 
     @Override
     public Long createConfig(ConfigSaveReqVO createReqVO) {
