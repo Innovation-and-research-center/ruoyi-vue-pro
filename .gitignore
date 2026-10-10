@@ -84,3 +84,4 @@ yudao-module-bpm/src/main/resources/templates/
 !/sql/kingbase/comment-template.sql
 !/sql/kingbase/comment-template-import.sql
 !/sql/kingbase/prepare-personal-comment-import.py
+/output
