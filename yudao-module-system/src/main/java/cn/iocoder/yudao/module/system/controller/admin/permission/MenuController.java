@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.system.controller.admin.permission;
 
+import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
@@ -69,6 +70,7 @@ public class MenuController {
     @GetMapping("/list")
     @Operation(summary = "获取菜单列表", description = "用于【菜单管理】界面")
     @PreAuthorize("@ss.hasPermission('system:menu:query')")
+    @ApiAccessLog(enable = false)
     public CommonResult<List<MenuRespVO>> getMenuList(MenuListReqVO reqVO) {
         List<MenuDO> list = menuService.getMenuList(reqVO);
         list.sort(Comparator.comparing(MenuDO::getSort));
@@ -78,6 +80,7 @@ public class MenuController {
     @GetMapping({"/list-all-simple", "simple-list"})
     @Operation(summary = "获取菜单精简信息列表",
             description = "只包含被开启的菜单，用于【角色分配菜单】功能的选项。在多租户的场景下，会只返回租户所在套餐有的菜单")
+    @ApiAccessLog(enable = false)
     public CommonResult<List<MenuSimpleRespVO>> getSimpleMenuList() {
         List<MenuDO> list = menuService.getMenuListByTenant(
                 new MenuListReqVO().setStatus(CommonStatusEnum.ENABLE.getStatus()));

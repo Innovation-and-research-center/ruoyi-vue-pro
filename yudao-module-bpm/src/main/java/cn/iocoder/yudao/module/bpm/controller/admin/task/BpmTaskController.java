@@ -2,6 +2,7 @@ package cn.iocoder.yudao.module.bpm.controller.admin.task;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.util.number.NumberUtils;
@@ -374,6 +375,7 @@ public class BpmTaskController {
 
     @GetMapping("/get-count")
     @Operation(summary = "获得当前用户的待办和已办任务数量")
+    @ApiAccessLog(enable = false)
     public CommonResult<BpmTaskCountRespVO> getTaskCount() {
         Long userId = getLoginUserId();
         BpmTaskCountRespVO respVO = taskService.getTaskCount(userId);

@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.definition;
 
+import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import cn.hutool.core.collection.CollUtil;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
@@ -103,6 +104,7 @@ public class BpmProcessDefinitionController {
 
     @GetMapping("/simple-list")
     @Operation(summary = "获得流程定义精简列表", description = "只包含未挂起的流程，主要用于前端的下拉选项")
+    @ApiAccessLog(enable = false)
     public CommonResult<List<BpmProcessDefinitionRespVO>> getSimpleProcessDefinitionList() {
         // 只查询未挂起的流程
         List<ProcessDefinition> list = processDefinitionService.getProcessDefinitionListBySuspensionState(

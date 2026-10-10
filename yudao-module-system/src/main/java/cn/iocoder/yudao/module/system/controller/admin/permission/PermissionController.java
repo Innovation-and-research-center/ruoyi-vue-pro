@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.system.controller.admin.permission;
 
+import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import cn.hutool.core.collection.CollUtil;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.module.system.controller.admin.permission.vo.permission.PermissionAssignRoleDataScopeReqVO;
@@ -39,6 +40,7 @@ public class PermissionController {
     @Parameter(name = "roleId", description = "角色编号", required = true)
     @GetMapping("/list-role-menus")
     @PreAuthorize("@ss.hasPermission('system:permission:assign-role-menu')")
+    @ApiAccessLog(enable = false)
     public CommonResult<Set<Long>> getRoleMenuList(Long roleId) {
         return success(permissionService.getRoleMenuListByRoleId(roleId));
     }
@@ -67,6 +69,7 @@ public class PermissionController {
     @Parameter(name = "userId", description = "用户编号", required = true)
     @GetMapping("/list-user-roles")
     @PreAuthorize("@ss.hasPermission('system:permission:assign-user-role')")
+    @ApiAccessLog(enable = false)
     public CommonResult<Set<Long>> listAdminRoles(@RequestParam("userId") Long userId) {
         return success(permissionService.getUserRoleIdListByUserId(userId));
     }

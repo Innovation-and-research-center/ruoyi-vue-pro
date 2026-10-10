@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.system.controller.admin.auth;
 
+import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
@@ -96,6 +97,7 @@ public class AuthController {
 
     @GetMapping("/get-permission-info")
     @Operation(summary = "获取登录用户的权限信息")
+    @ApiAccessLog(enable = false)
     public CommonResult<AuthPermissionInfoRespVO> getPermissionInfo() {
         // 1.1 获得用户信息
         AdminUserDO user = userService.getUser(getLoginUserId());

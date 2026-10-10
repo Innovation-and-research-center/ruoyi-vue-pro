@@ -75,6 +75,7 @@ public class DictDataController {
     @GetMapping(value = {"/list-all-simple", "simple-list"})
     @Operation(summary = "获得全部字典数据列表", description = "一般用于管理后台缓存字典数据在本地")
     // 无需添加权限认证，因为前端全局都需要
+    @ApiAccessLog(enable = false)
     public CommonResult<List<DictDataSimpleRespVO>> getSimpleDictDataList() {
         List<DictDataDO> list = dictDataService.getDictDataList(
                 CommonStatusEnum.ENABLE.getStatus(), null);
@@ -84,6 +85,7 @@ public class DictDataController {
     @GetMapping("/page")
     @Operation(summary = "获得字典类型的分页")
 //    @PreAuthorize("@ss.hasPermission('system:dict:query')")
+    @ApiAccessLog(enable = false)
     public CommonResult<PageResult<DictDataRespVO>> getDictTypePage(@Valid DictDataPageReqVO pageReqVO) {
         PageResult<DictDataDO> pageResult = dictDataService.getDictDataPage(pageReqVO);
         return success(BeanUtils.toBean(pageResult, DictDataRespVO.class));

@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.system.controller.admin.sms;
 
+import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
@@ -82,6 +83,7 @@ public class SmsChannelController {
 
     @GetMapping({"/list-all-simple", "/simple-list"})
     @Operation(summary = "获得短信渠道精简列表", description = "包含被禁用的短信渠道")
+    @ApiAccessLog(enable = false)
     public CommonResult<List<SmsChannelSimpleRespVO>> getSimpleSmsChannelList() {
         List<SmsChannelDO> list = smsChannelService.getSmsChannelList();
         list.sort(Comparator.comparing(SmsChannelDO::getId));

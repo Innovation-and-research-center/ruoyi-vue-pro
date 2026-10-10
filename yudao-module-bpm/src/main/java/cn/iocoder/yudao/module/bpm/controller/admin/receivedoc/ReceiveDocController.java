@@ -400,6 +400,7 @@ public class ReceiveDocController {
 
     @GetMapping("/get-pending-count")
     @Operation(summary = "获得待收文数量")
+    @ApiAccessLog(enable = false)
     public CommonResult<Long> getPendingCount() {
         return success(receiveDocService.getPendingCount());
     }

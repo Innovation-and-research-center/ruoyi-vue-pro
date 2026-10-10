@@ -74,6 +74,7 @@ public class DictTypeController {
     @GetMapping("/page")
     @Operation(summary = "获得字典类型的分页列表")
     @PreAuthorize("@ss.hasPermission('system:dict:query')")
+    @ApiAccessLog(enable = false)
     public CommonResult<PageResult<DictTypeRespVO>> pageDictTypes(@Valid DictTypePageReqVO pageReqVO) {
         PageResult<DictTypeDO> pageResult = dictTypeService.getDictTypePage(pageReqVO);
         return success(BeanUtils.toBean(pageResult, DictTypeRespVO.class));
@@ -91,6 +92,7 @@ public class DictTypeController {
     @GetMapping(value = {"/list-all-simple", "simple-list"})
     @Operation(summary = "获得全部字典类型列表", description = "包括开启 + 禁用的字典类型，主要用于前端的下拉选项")
     // 无需添加权限认证，因为前端全局都需要
+    @ApiAccessLog(enable = false)
     public CommonResult<List<DictTypeSimpleRespVO>> getSimpleDictTypeList() {
         List<DictTypeDO> list = dictTypeService.getDictTypeList();
         return success(BeanUtils.toBean(list, DictTypeSimpleRespVO.class));

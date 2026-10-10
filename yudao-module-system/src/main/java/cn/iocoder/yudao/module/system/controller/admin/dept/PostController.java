@@ -75,6 +75,7 @@ public class PostController {
 
     @GetMapping(value = {"/list-all-simple", "simple-list"})
     @Operation(summary = "获取岗位全列表", description = "只包含被开启的岗位，主要用于前端的下拉选项")
+    @ApiAccessLog(enable = false)
     public CommonResult<List<PostSimpleRespVO>> getSimplePostList() {
         // 获得岗位列表，只要开启状态的
         List<PostDO> list = postService.getPostList(null, Collections.singleton(CommonStatusEnum.ENABLE.getStatus()));

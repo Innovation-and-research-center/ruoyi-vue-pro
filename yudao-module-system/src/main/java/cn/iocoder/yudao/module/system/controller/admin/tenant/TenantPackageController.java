@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.system.controller.admin.tenant;
 
+import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
@@ -84,6 +85,7 @@ public class TenantPackageController {
 
     @GetMapping({"/get-simple-list", "simple-list"})
     @Operation(summary = "获取租户套餐精简信息列表", description = "只包含被开启的租户套餐，主要用于前端的下拉选项")
+    @ApiAccessLog(enable = false)
     public CommonResult<List<TenantPackageSimpleRespVO>> getTenantPackageList() {
         List<TenantPackageDO> list = tenantPackageService.getTenantPackageListByStatus(CommonStatusEnum.ENABLE.getStatus());
         return success(BeanUtils.toBean(list, TenantPackageSimpleRespVO.class));

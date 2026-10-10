@@ -52,6 +52,7 @@ public class TenantController {
     @PermitAll
     @TenantIgnore
     @Operation(summary = "获取租户精简信息列表", description = "只包含被开启的租户，用于【首页】功能的选择租户选项")
+    @ApiAccessLog(enable = false)
     public CommonResult<List<TenantRespVO>> getTenantSimpleList() {
         List<TenantDO> list = tenantService.getTenantListByStatus(CommonStatusEnum.ENABLE.getStatus());
         return success(convertList(list, tenantDO ->

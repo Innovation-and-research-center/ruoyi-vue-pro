@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.definition;
 
+import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
@@ -66,6 +67,7 @@ public class BpmFormController {
 
     @GetMapping({"/list-all-simple", "/simple-list"})
     @Operation(summary = "获得动态表单的精简列表", description = "用于表单下拉框")
+    @ApiAccessLog(enable = false)
     public CommonResult<List<BpmFormRespVO>> getFormSimpleList() {
         List<BpmFormDO> list = formService.getFormList();
         return success(convertList(list, formDO -> // 只返回 id、name 字段

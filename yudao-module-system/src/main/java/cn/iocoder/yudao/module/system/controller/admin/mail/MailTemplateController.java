@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.system.controller.admin.mail;
 
+import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
@@ -82,6 +83,7 @@ public class MailTemplateController {
 
     @GetMapping({"/list-all-simple", "simple-list"})
     @Operation(summary = "获得邮件模版精简列表")
+    @ApiAccessLog(enable = false)
     public CommonResult<List<MailTemplateSimpleRespVO>> getSimpleTemplateList() {
         List<MailTemplateDO> list = mailTempleService.getMailTemplateList();
         return success(BeanUtils.toBean(list, MailTemplateSimpleRespVO.class));

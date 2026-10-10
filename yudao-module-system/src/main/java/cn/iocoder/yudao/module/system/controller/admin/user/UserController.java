@@ -122,6 +122,7 @@ public class UserController {
 
     @GetMapping({"/list-all-simple", "/simple-list"})
     @Operation(summary = "获取用户精简信息列表", description = "只包含被开启的用户，主要用于前端的下拉选项")
+    @ApiAccessLog(enable = false)
     public CommonResult<List<UserSimpleRespVO>> getSimpleUserList() {
         List<AdminUserDO> list = userService.getUserListByStatus();
         // 拼接数据

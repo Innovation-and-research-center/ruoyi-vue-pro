@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.definition;
 
+import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
@@ -85,6 +86,7 @@ public class BpmCategoryController {
 
     @GetMapping("/simple-list")
     @Operation(summary = "获取流程分类的精简信息列表", description = "只包含被开启的分类，主要用于前端的下拉选项")
+    @ApiAccessLog(enable = false)
     public CommonResult<List<BpmCategoryRespVO>> getCategorySimpleList() {
         List<BpmCategoryDO> list = categoryService.getCategoryListByStatus(CommonStatusEnum.ENABLE.getStatus());
         list.sort(Comparator.comparingInt(BpmCategoryDO::getSort));

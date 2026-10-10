@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.system.controller.admin.user;
 
+import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import cn.hutool.core.collection.CollUtil;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
@@ -50,6 +51,7 @@ public class UserProfileController {
     @GetMapping("/get")
     @Operation(summary = "获得登录用户信息")
     @DataPermission(enable = false) // 关闭数据权限，避免只查看自己时，查询不到部门。
+    @ApiAccessLog(enable = false)
     public CommonResult<UserProfileRespVO> getUserProfile() {
         // 获得用户基本信息
         AdminUserDO user = userService.getUser(getLoginUserId());

@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.bpm.controller.admin.definition;
 
+import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
@@ -84,6 +85,7 @@ public class BpmUserGroupController {
 
     @GetMapping("/simple-list")
     @Operation(summary = "获取用户组精简信息列表", description = "只包含被开启的用户组，主要用于前端的下拉选项")
+    @ApiAccessLog(enable = false)
     public CommonResult<List<BpmUserGroupRespVO>> getUserGroupSimpleList() {
         List<BpmUserGroupDO> list = userGroupService.getUserGroupListByStatus(CommonStatusEnum.ENABLE.getStatus());
         return success(convertList(list, group -> new BpmUserGroupRespVO().setId(group.getId()).setName(group.getName())));

@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.system.controller.admin.dept;
 
+import cn.iocoder.yudao.framework.apilog.core.annotation.ApiAccessLog;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
@@ -68,6 +69,7 @@ public class DeptController {
     @GetMapping("/list")
     @Operation(summary = "获取部门列表")
     @PreAuthorize("@ss.hasPermission('system:dept:query')")
+    @ApiAccessLog(enable = false)
     public CommonResult<List<DeptRespVO>> getDeptList(DeptListReqVO reqVO) {
         List<DeptDO> list = deptService.getDeptList(reqVO);
         return success(BeanUtils.toBean(list, DeptRespVO.class));
@@ -75,6 +77,7 @@ public class DeptController {
 
     @GetMapping(value = {"/list-all-simple", "/simple-list"})
     @Operation(summary = "获取部门精简信息列表", description = "只包含被开启的部门，主要用于前端的下拉选项")
+    @ApiAccessLog(enable = false)
     public CommonResult<List<DeptSimpleRespVO>> getSimpleDeptList() {
         List<DeptDO> list = deptService.getDeptList(
                 new DeptListReqVO().setStatus(CommonStatusEnum.ENABLE.getStatus()));
