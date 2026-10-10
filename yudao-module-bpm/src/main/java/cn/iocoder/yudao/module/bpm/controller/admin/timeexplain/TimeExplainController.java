@@ -190,14 +190,12 @@ public class TimeExplainController {
         Map<Long, AdminUserRespDTO> userMap = adminUserApi.getUserMap(userIds);
         normalizeHistoryStatus(result.getList());
         result.getList().forEach(vo ->{
-            if (vo.getUserName() != null && !vo.getUserName().isEmpty()) {
-                vo.setNickName(vo.getUserName());
-                return;
-            }
             AdminUserRespDTO user = userMap.get(getApplyUserId(vo));
-            if (user != null) {
+            if (user != null && StrUtil.isNotBlank(user.getNickname())) {
+                vo.setUserName(user.getNickname());
                 vo.setNickName(user.getNickname());
-                // 如果需要部门或其他信息，也可以在这里设置
+            } else {
+                vo.setNickName(vo.getUserName());
             }
         });
         return success(result);

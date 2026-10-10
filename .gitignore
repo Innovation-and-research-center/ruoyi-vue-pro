@@ -63,3 +63,24 @@ yudao-module-bpm/src/main/resources/templates/
 /yudao-module-bpm/src/main/resources
 /yudao-module-bpm/src/test
 /yudao-module-bpm/src/test/resources
+
+# Opinion template migration and focused tests
+!/sql/
+/sql/*
+!/sql/postgresql/
+/sql/postgresql/*
+!/sql/postgresql/comment-template.sql
+!/sql/postgresql/comment-template-import.sql
+!/yudao-module-bpm/src/test/
+/yudao-module-bpm/src/test/*
+!/yudao-module-bpm/src/test/java/
+/yudao-module-bpm/src/test/java/**
+!/yudao-module-bpm/src/test/java/**/
+!/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/service/commenttemplate/*.java
+
+# Kingbase opinion template scripts
+!/sql/kingbase/
+/sql/kingbase/*
+!/sql/kingbase/comment-template.sql
+!/sql/kingbase/comment-template-import.sql
+!/sql/kingbase/prepare-personal-comment-import.py

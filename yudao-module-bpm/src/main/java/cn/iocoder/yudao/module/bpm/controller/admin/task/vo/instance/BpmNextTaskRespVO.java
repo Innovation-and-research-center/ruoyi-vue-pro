@@ -26,6 +26,9 @@ public class BpmNextTaskRespVO {
 
     private List<BpmUserGroupRespVO> candidateUsers;
 
+    /** 分组调整前的候选人顺序，用于保持默认选人行为。 */
+    private List<Long> candidateUserOrderIds;
+
     private String flowName;
 
     private Integer flowSort;

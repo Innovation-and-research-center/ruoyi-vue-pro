@@ -127,7 +127,7 @@ public class TimeExplainServiceImpl implements TimeExplainService {
         AdminUserDO user = userService.getUser(userId);
         TimeExplainDO out = BeanUtils.toBean(createReqVO, TimeExplainDO.class)
                 .setUserId( userId).setStatus(Long.valueOf(BpmTaskStatusEnum.RUNNING.getStatus()))
-                .setUserName(user.getUsername())
+                .setUserName(user.getNickname())
                 .setFirstType("外出").setSecondType("因公外出");
         timeExplainMapper.insert(out);
 

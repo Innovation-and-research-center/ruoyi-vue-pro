@@ -51,6 +51,7 @@ import cn.iocoder.yudao.module.bpm.service.definition.BpmUserGroupService;
 import cn.iocoder.yudao.module.bpm.service.message.BpmMessageService;
 import cn.iocoder.yudao.module.bpm.util.BpmQueryUtils;
 import cn.iocoder.yudao.module.infra.api.config.ConfigApi;
+import cn.iocoder.yudao.module.infra.api.config.dto.ConfigRespDTO;
 import cn.iocoder.yudao.module.system.api.dept.DeptApi;
 import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
@@ -133,6 +134,8 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
     private static final String SAME_DEPT_CANDIDATE_NODES_CONFIG = "bpm.same-dept-candidate.nodes";
     private static final String DEFAULT_SAME_DEPT_CANDIDATE_NODES =
             "conference_report:Activity_1h0l7v8,oa_leave:Activity_1s93b00,oa_out:Activity_0578ggz";
+
+    private static final String SEND_USER_GROUP_PREFIX = "bpm.send-user-group.";
 
     @Resource
     private RuntimeService runtimeService;
@@ -705,6 +708,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             deptMap = CollectionUtils.convertMap(deptList, DeptDO::getId);
         }
 
+        List<ConfigRespDTO> sendUserGroups = configApi.getConfigsByKeyPrefix(SEND_USER_GROUP_PREFIX);
         for (BpmNextTaskRespVO node : result) {
             // 组装候选人员树结构
             List<AdminUserDO> rawUsers = nodeCandidateMap.get(node.getTaskDefKey());
@@ -738,7 +742,26 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                     treeList.add(group);
                 }
 
-                node.setCandidateUsers(treeList);
+                BpmUserGroupRespVO currentDeptGroup = node.getTaskDefKey().endsWith("_internal_loop")
+                        ? treeList.stream().filter(group -> Objects.equals(group.getId(), currentDeptId))
+                                .findFirst().orElse(null) : null;
+                if (currentDeptGroup != null) {
+                    treeList.remove(currentDeptGroup);
+                    treeList.add(0, currentDeptGroup);
+                }
+                node.setCandidateUserOrderIds(treeList.stream()
+                        .flatMap(group -> group.getChildren().stream())
+                        .map(UserSimpleRespVO::getId)
+                        .distinct().collect(Collectors.toList()));
+                if (currentDeptGroup != null) {
+                    // 内循环优先展示本部门，其他部门人员再按发送分组配置展示。
+                    List<BpmUserGroupRespVO> candidateGroups = new ArrayList<>();
+                    candidateGroups.add(currentDeptGroup);
+                    candidateGroups.addAll(groupConfiguredCandidates(treeList.subList(1, treeList.size()), sendUserGroups));
+                    node.setCandidateUsers(candidateGroups);
+                } else {
+                    node.setCandidateUsers(groupConfiguredCandidates(treeList, sendUserGroups));
+                }
             }
 
             // 组装已设置的任务人员详细信息
@@ -756,6 +779,50 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         }
 
         return result;
+    }
+
+    /** 仅移动已有候选人的展示分组；多组包含同一人员时，先创建的配置优先。 */
+    static List<BpmUserGroupRespVO> groupConfiguredCandidates(List<BpmUserGroupRespVO> groups,
+                                                            List<ConfigRespDTO> configs) {
+        if (CollUtil.isEmpty(configs)) return groups;
+        Map<Long, UserSimpleRespVO> candidates = new LinkedHashMap<>();
+        groups.forEach(group -> group.getChildren().forEach(user -> candidates.putIfAbsent(user.getId(), user)));
+        Set<Long> movedIds = new HashSet<>();
+        List<BpmUserGroupRespVO> configuredGroups = new ArrayList<>();
+        for (ConfigRespDTO config : configs) {
+            if (config.getId() == null || config.getId() <= 0 || StrUtil.isBlank(config.getName())
+                    || StrUtil.isBlank(config.getValue())) continue;
+            List<UserSimpleRespVO> members = new ArrayList<>();
+            for (String value : config.getValue().split(",")) {
+                Long id;
+                try {
+                    id = Long.valueOf(value.trim());
+                } catch (NumberFormatException ignored) {
+                    continue;
+                }
+                if (candidates.containsKey(id) && movedIds.add(id)) members.add(candidates.get(id));
+            }
+            if (members.isEmpty()) continue;
+            BpmUserGroupRespVO group = new BpmUserGroupRespVO();
+            // 部门和用户 ID 为正数；-1 已用于未分配部门，配置分组使用其他负数。
+            group.setId(-config.getId() - 1);
+            group.setName(config.getName());
+            group.setChildren(members);
+            configuredGroups.add(group);
+        }
+        if (configuredGroups.isEmpty()) return groups;
+        for (BpmUserGroupRespVO original : groups) {
+            List<UserSimpleRespVO> remaining =
+                    original.getChildren().stream().filter(user -> !movedIds.contains(user.getId()))
+                            .collect(Collectors.toList());
+            if (remaining.isEmpty()) continue;
+            BpmUserGroupRespVO group = new BpmUserGroupRespVO();
+            group.setId(original.getId());
+            group.setName(original.getName());
+            group.setChildren(remaining);
+            configuredGroups.add(group);
+        }
+        return configuredGroups;
     }
 
     private Set<String> getSameDeptCandidateNodes() {
