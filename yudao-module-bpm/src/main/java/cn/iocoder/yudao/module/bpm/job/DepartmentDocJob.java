@@ -9,7 +9,6 @@ import cn.hutool.core.util.URLUtil;
 import cn.hutool.http.HttpRequest;
 import cn.hutool.http.HttpResponse;
 import cn.hutool.json.JSONUtil;
-import cn.iocoder.yudao.framework.common.exception.ServiceException;
 import cn.iocoder.yudao.framework.quartz.core.handler.JobHandler;
 import cn.iocoder.yudao.framework.tenant.core.context.TenantContextHolder;
 import cn.iocoder.yudao.framework.tenant.core.job.TenantJob;
@@ -49,7 +48,6 @@ public class DepartmentDocJob implements JobHandler {
 
     private static final int PAGE_SIZE = 100;
     private static final int TIMEOUT = 30000;
-    private static final int SAVE_RETRY_COUNT = 20;
     private static final String DOC_UNIQUE_PREFIX = "zbm-";
     @Resource
     private ConfigApi configApi;
@@ -238,7 +236,7 @@ public class DepartmentDocJob implements JobHandler {
         }
         receiveDocDO.setFileList(attachList);
 
-        Long receiveDocId = saveJobReceiveDocWithRetry(userId, receiveDocDO, receiveTime);
+        Long receiveDocId = receiveDocService.saveJobReceiveDoc(userId, receiveDocDO);
 
         FileExchangeSaveReqVO exchangeVO = new FileExchangeSaveReqVO();
         exchangeVO.setOperationDate(LocalDateTime.now().withNano(0));
@@ -262,31 +260,6 @@ public class DepartmentDocJob implements JobHandler {
         receiveDocDO.setDocSequence(numberReceiveNumber);
         receiveDocDO.setReceiveDocNumber(String.format("%d-%s-%04d",
                 receiveTime.getYear(), receiveDocDO.getDocClass(), numberReceiveNumber));
-    }
-
-    private Long saveJobReceiveDocWithRetry(Long userId, ReceiveDocSaveReqVO receiveDocDO, LocalDateTime receiveTime) {
-        ServiceException lastException = null;
-        for (int i = 1; i <= SAVE_RETRY_COUNT; i++) {
-            try {
-                return receiveDocService.saveJobReceiveDoc(userId, receiveDocDO);
-            } catch (ServiceException e) {
-                if (!StrUtil.equals(e.getMessage(), "收文编号重复")) {
-                    throw e;
-                }
-                lastException = e;
-                log.warn("【两办转部门收文】收文编号重复，递增编号后重试, attempt: {}, receiveDocNumber: {}, subject: {}",
-                        i, receiveDocDO.getReceiveDocNumber(), receiveDocDO.getSubject());
-                incrementReceiveDocNumber(receiveDocDO, receiveTime);
-            }
-        }
-        throw lastException;
-    }
-
-    private void incrementReceiveDocNumber(ReceiveDocSaveReqVO receiveDocDO, LocalDateTime receiveTime) {
-        Long nextSequence = receiveDocDO.getDocSequence() == null ? 1L : receiveDocDO.getDocSequence() + 1;
-        receiveDocDO.setDocSequence(nextSequence);
-        receiveDocDO.setReceiveDocNumber(String.format("%d-%s-%04d",
-                receiveTime.getYear(), receiveDocDO.getDocClass(), nextSequence));
     }
 
     private DepartmentDocDetail getDetail(String domain, String cnIdos) {

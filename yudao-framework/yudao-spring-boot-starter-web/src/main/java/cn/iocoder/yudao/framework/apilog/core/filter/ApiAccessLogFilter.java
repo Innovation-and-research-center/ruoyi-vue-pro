@@ -25,6 +25,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.servlet.HandlerMapping;
 
 import javax.servlet.FilterChain;
 import javax.servlet.ServletException;
@@ -101,6 +102,13 @@ public class ApiAccessLogFilter extends ApiRequestFilter {
                                       Map<String, String> queryString, String requestBody, Exception ex) {
         // 判断：是否要记录操作日志
         HandlerMethod handlerMethod = (HandlerMethod) request.getAttribute(ATTRIBUTE_HANDLER_METHOD);
+        if (handlerMethod == null) {
+            // 自定义拦截器未提供方法信息时，使用 Spring MVC 标准属性读取日志注解。
+            Object handler = request.getAttribute(HandlerMapping.BEST_MATCHING_HANDLER_ATTRIBUTE);
+            if (handler instanceof HandlerMethod) {
+                handlerMethod = (HandlerMethod) handler;
+            }
+        }
         ApiAccessLog accessLogAnnotation = null;
         if (handlerMethod != null) {
             accessLogAnnotation = handlerMethod.getMethodAnnotation(ApiAccessLog.class);

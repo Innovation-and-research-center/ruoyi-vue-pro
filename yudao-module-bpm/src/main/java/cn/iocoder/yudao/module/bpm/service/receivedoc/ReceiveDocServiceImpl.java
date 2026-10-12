@@ -75,6 +75,8 @@ import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVari
 @Slf4j
 public class ReceiveDocServiceImpl implements ReceiveDocService {
 
+    private static final int NUMBER_ATTEMPT_LIMIT = 20;
+
     public static final String PROCESS_KEY = RECEIVE;
 
     public static final String PROCESS_KEY_CHANGE = ELECTRIC;
@@ -196,7 +198,22 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
             createReqVO.setProcessVariables(processVariables);
         }
         processVariables.put(PROCESS_RECEIVE_JOB_CREATED, true);
-        return saveReceiveDocInternal(userId, createReqVO, false);
+        ReceiveDocDO receiveDoc = prepareJobReceiveDocForInsert(createReqVO);
+        return saveJobReceiveDocInternal(userId, createReqVO, receiveDoc);
+    }
+
+    // Job 专用：候选检查已完成，直接插入；不再次查重，也不重试任何持久化或流程异常。
+    private Long saveJobReceiveDocInternal(Long userId, ReceiveDocSaveReqVO createReqVO, ReceiveDocDO receiveDoc) {
+        receiveDoc.setCreator(String.valueOf(userId));
+        receiveDocMapper.insert(receiveDoc);
+        createReceiveDocAttachList(receiveDoc.getId(), createReqVO.getFileList());
+        Map<String, Object> processInstanceVariables = buildReceiveDocProcessVariables(createReqVO, "收文");
+        String processInstanceId = createReceiveDocProcessInstance(userId, receiveDoc.getId(), createReqVO,
+                processInstanceVariables);
+        receiveDocMapper.updateById(new ReceiveDocDO().setId(receiveDoc.getId())
+                .setProcessInstanceId(processInstanceId)
+                .setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
+        return receiveDoc.getId();
     }
 
     private Long saveReceiveDocInternal(Long userId, ReceiveDocSaveReqVO createReqVO, boolean claimRegisterTask) {
@@ -250,6 +267,56 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         receiveDocMapper.updateById(new ReceiveDocDO().setId(receiveDocId)
                 .setProcessInstanceId(processInstanceId)
                 .setStatus(BpmTaskStatusEnum.RUNNING.getStatus().shortValue()));
+    }
+
+    // 仅供 Job 使用，在写入附件和流程前解决编号冲突。
+    ReceiveDocDO prepareJobReceiveDocForInsert(ReceiveDocSaveReqVO request) {
+        String number = request.getReceiveDocNumber();
+        Long sequence = extractSequenceFromNumber(number);
+        if (sequence == null || sequence < 0) {
+            throw exception(RECEIVE_DOC_ERROR);
+        }
+        String prefix = number.substring(0, number.lastIndexOf('-') + 1);
+        String availableNumber = number;
+        for (int attempt = 0; attempt < NUMBER_ATTEMPT_LIMIT; attempt++) {
+            if (!isSequenceOccupied(availableNumber)) {
+                ReceiveDocDO receiveDoc = BeanUtils.toBean(request, ReceiveDocDO.class);
+                receiveDoc.setReceiveDocNumber(availableNumber);
+                receiveDoc.setDocSequence(sequence);
+                request.setReceiveDocNumber(availableNumber);
+                request.setDocSequence(sequence);
+                return receiveDoc;
+            }
+            if (attempt + 1 < NUMBER_ATTEMPT_LIMIT) {
+                if (sequence == Long.MAX_VALUE) {
+                    throw exception(RECEIVE_DOC_ERROR);
+                }
+                sequence++;
+                availableNumber = prefix + String.format("%04d", sequence);
+            }
+        }
+        log.warn("收文编号连续 {} 次被占用，停止保存，候选编号: {}", NUMBER_ATTEMPT_LIMIT, availableNumber);
+        throw exception(RECEIVE_DOC_EXISTS);
+    }
+
+    private long findAvailableSequence(String docClass, String year, long sequence) {
+        if (sequence < 1) {
+            throw exception(RECEIVE_DOC_ERROR);
+        }
+        for (int attempt = 0; attempt < NUMBER_ATTEMPT_LIMIT; attempt++) {
+            String number = String.format("%d-%s-%04d", Integer.parseInt(year), docClass, sequence);
+            if (!isSequenceOccupied(number)) {
+                return sequence;
+            }
+            if (attempt + 1 < NUMBER_ATTEMPT_LIMIT) {
+                if (sequence == Long.MAX_VALUE) {
+                    throw exception(RECEIVE_DOC_ERROR);
+                }
+                sequence++;
+            }
+        }
+        log.warn("收文取号连续 {} 次被占用，年份: {}, 文种: {}", NUMBER_ATTEMPT_LIMIT, year, docClass);
+        throw exception(RECEIVE_DOC_EXISTS);
     }
 
     private Long extractSequenceFromNumber(String docNumber) {
@@ -344,7 +411,7 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
                         )
                 );
 
-        return  executeMaxQuery(query);
+        return findAvailableSequence(docClass, year, executeMaxQuery(query));
     }
 
     private boolean isSequenceOccupied(String documentSequence) {
