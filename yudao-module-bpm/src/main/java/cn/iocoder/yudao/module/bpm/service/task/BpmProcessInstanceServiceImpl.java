@@ -524,7 +524,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         Set<Long> deptIdsToQuery = new HashSet<>();
 
         // =========================================================================================
-        // 【终极无死角方案：真实任务表(含候选人) + 历史变量表 双管齐下】
+        // 已接收人员仅来自有效任务，历史选人变量不代表当前有效的接收记录。
         // =========================================================================================
         Map<String, Object> selectedAssigneesMap = new HashMap<>();
         Set<String> targetTaskKeys = result.stream().map(BpmNextTaskRespVO::getTaskDefKey).collect(Collectors.toSet());
@@ -532,12 +532,18 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         if (task != null && task.getProcessInstanceId() != null) {
             String processInstanceId = task.getProcessInstanceId();
 
-            // 途径 1：从真实任务表提取 (处理并行分支/会签已经生成的实际任务)
+            // 包含局部状态，以排除退回和撤回取消的接收记录。
             List<org.flowable.task.api.history.HistoricTaskInstance> historicTasks = historyService.createHistoricTaskInstanceQuery()
                     .processInstanceId(processInstanceId)
+                    .includeTaskLocalVariables()
                     .list();
 
             for (org.flowable.task.api.history.HistoricTaskInstance hiTask : historicTasks) {
+                Integer status = hiTask.getTaskLocalVariables() != null ? FlowableUtils.getTaskStatus(hiTask) : null;
+                if (BpmTaskStatusEnum.CANCEL.getStatus().equals(status)
+                        || BpmTaskStatusEnum.RETURN.getStatus().equals(status)) {
+                    continue;
+                }
                 String taskKey = hiTask.getTaskDefinitionKey();
 
                 if (targetTaskKeys.contains(taskKey)) {
@@ -570,40 +576,6 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                         selectedAssigneesMap.put(taskKey, existingIds);
                     }
                 }
-            }
-
-            // 途径 2：从历史变量表提取 (处理预测出来的但还没走到、未生成真实任务的节点)
-            List<org.flowable.variable.api.history.HistoricVariableInstance> varInstances = historyService.createHistoricVariableInstanceQuery()
-                    .processInstanceId(processInstanceId)
-                    .variableName(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES)
-                    .list();
-
-            for (org.flowable.variable.api.history.HistoricVariableInstance var : varInstances) {
-                if (var.getValue() instanceof Map) {
-                    Map<String, Object> mapValue = (Map<String, Object>) var.getValue();
-                    for (Map.Entry<String, Object> entry : mapValue.entrySet()) {
-                        String taskKey = entry.getKey();
-                        if (!targetTaskKeys.contains(taskKey)) continue;
-
-                        List<Long> userIds = Convert.toList(Long.class, entry.getValue());
-                        if (CollUtil.isNotEmpty(userIds)) {
-                            List<Long> existingIds = selectedAssigneesMap.containsKey(taskKey) ?
-                                    Convert.toList(Long.class, selectedAssigneesMap.get(taskKey)) : new ArrayList<>();
-                            for (Long id : userIds) {
-                                if (!existingIds.contains(id)) existingIds.add(id);
-                            }
-                            selectedAssigneesMap.put(taskKey, existingIds);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 途径 3：兜底从前端传入的流程变量获取
-        if (selectedAssigneesMap.isEmpty()) {
-            Object assigneesObj = processVariables.get(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_START_USER_SELECT_ASSIGNEES);
-            if (assigneesObj instanceof Map) {
-                selectedAssigneesMap.putAll((Map<String, Object>) assigneesObj);
             }
         }
         // =========================================================================================

@@ -5,7 +5,6 @@ import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.lang.TypeReference;
 import cn.hutool.core.util.StrUtil;
-import cn.hutool.core.util.URLUtil;
 import cn.hutool.crypto.SecureUtil;
 import cn.hutool.http.HttpRequest;
 import cn.hutool.http.HttpResponse;
@@ -252,25 +251,10 @@ public class ForestryDocJob implements JobHandler {
             byte[] fileBytes = response.bodyBytes();
             if (fileBytes == null || fileBytes.length == 0) return null;
 
-            String finalFileName = fileDTO.getFileName();
-
-            // C# 逻辑复现：尝试从 Content-Disposition 获取真实文件名
-            // 只有当文件名看起来是默认构造的(如 title.pdf)或者明确需要解析时才覆盖
+            // 按响应头参数解析文件名，避免把后续 filename* 等参数混入存储路径
             String disposition = response.header("Content-Disposition");
-            if (StrUtil.isNotEmpty(disposition) && disposition.contains("filename=")) {
-                String extractName = StrUtil.subAfter(disposition, "filename=", true);
-                // 去除可能存在的引号
-                extractName = StrUtil.strip(extractName, "\"");
-                // URL Decode
-                extractName = URLUtil.decode(extractName);
-                if (StrUtil.isNotEmpty(extractName)) {
-                    finalFileName = extractName;
-                    log.info("【林业局收文】从Header解析到文件名: {}", finalFileName);
-                }
-            }
-
-            // 过滤非法字符
-            finalFileName = FileUtil.cleanInvalid(finalFileName);
+            String finalFileName = ForestryAttachmentFileName.resolve(disposition, fileDTO.getFileName());
+            log.info("【林业局收文】附件文件名: {}", finalFileName);
 
             // 上传
             FileDO fileDO = fileService.createFileReturnId(fileBytes, finalFileName, null, null);
