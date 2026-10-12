@@ -376,9 +376,13 @@ public class BpmTaskController {
     @GetMapping("/get-count")
     @Operation(summary = "获得当前用户的待办和已办任务数量")
     @ApiAccessLog(enable = false)
-    public CommonResult<BpmTaskCountRespVO> getTaskCount() {
+    public CommonResult<BpmTaskCountRespVO> getTaskCount(
+            @RequestParam(value = "includeProcessCounts", defaultValue = "false") boolean includeProcessCounts) {
         Long userId = getLoginUserId();
         BpmTaskCountRespVO respVO = taskService.getTaskCount(userId);
+        if (includeProcessCounts) {
+            respVO.setTodoCountsByProcess(taskService.getTodoCountsByProcess(userId));
+        }
         return success(respVO);
 
     }

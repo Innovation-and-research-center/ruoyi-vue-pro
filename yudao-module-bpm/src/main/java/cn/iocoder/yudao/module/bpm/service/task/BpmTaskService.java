@@ -352,6 +352,8 @@ public interface BpmTaskService {
 
     BpmTaskCountRespVO getTaskCount(long userId);
 
+    Map<String, Long> getTodoCountsByProcess(long userId);
+
     void finishProcessInstanceByAdmin(Long userId, String processInstanceId, String reason);
 
     void batchApproveTaskIfEnd(Long userId, BpmTaskBatchApproveReqVO reqVO);

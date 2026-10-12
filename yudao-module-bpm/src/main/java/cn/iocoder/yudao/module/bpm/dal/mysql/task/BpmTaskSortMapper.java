@@ -1,6 +1,7 @@
 package cn.iocoder.yudao.module.bpm.dal.mysql.task;
 
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskPageReqVO;
+import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskCountRespVO;
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskRespVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -9,6 +10,8 @@ import java.util.List;
 
 @Mapper
 public interface BpmTaskSortMapper {
+
+    List<BpmTaskCountRespVO.ProcessCount> selectTodoCountsByProcess(@Param("userId") Long userId);
 
     List<String> selectTodoTaskIds(@Param("userId") Long userId,
                                    @Param("reqVO") BpmTaskPageReqVO reqVO);

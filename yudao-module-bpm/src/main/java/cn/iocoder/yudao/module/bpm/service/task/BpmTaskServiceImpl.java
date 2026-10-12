@@ -4322,6 +4322,15 @@ public class BpmTaskServiceImpl implements BpmTaskService {
 
     }
 
+    @Override
+    public Map<String, Long> getTodoCountsByProcess(long userId) {
+        Map<String, Long> counts = new HashMap<>();
+        for (BpmTaskCountRespVO.ProcessCount count : taskSortMapper.selectTodoCountsByProcess(userId)) {
+            counts.put(count.getProcessDefinitionKey(), count.getTaskCount());
+        }
+        return counts;
+    }
+
     /**
      * 获得自身的代理对象，解决 AOP 生效问题
      *
