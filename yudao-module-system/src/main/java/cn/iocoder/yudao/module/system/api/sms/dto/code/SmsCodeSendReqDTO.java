@@ -22,6 +22,9 @@ public class SmsCodeSendReqDTO {
     @Mobile
     @NotEmpty(message = "手机号不能为空")
     private String mobile;
+    /** 实际接收手机号；为空时使用 mobile，验证码始终绑定 mobile */
+    @Mobile
+    private String receiveMobile;
     /**
      * 发送场景
      */

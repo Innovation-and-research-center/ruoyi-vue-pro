@@ -130,6 +130,7 @@ public class AdminAuthServiceImpl implements AdminAuthService {
     }
 
     @Override
+    @DataPermission(enable = false)
     public void sendSmsCode(AuthSmsSendReqVO reqVO) {
         // 如果是重置密码场景，需要校验图形验证码是否正确
         if (Objects.equals(SmsSceneEnum.ADMIN_MEMBER_RESET_PASSWORD.getScene(), reqVO.getScene())) {
@@ -140,26 +141,43 @@ public class AdminAuthServiceImpl implements AdminAuthService {
         }
 
         // 登录场景，验证是否存在
-        if (userService.getUserByMobile(reqVO.getMobile()) == null) {
-            throw exception(AUTH_MOBILE_NOT_EXISTS);
+        boolean loginScene = Objects.equals(SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene(), reqVO.getScene());
+        AdminUserDO user = loginScene ? userService.getUserByUsername(reqVO.getUsername())
+                : userService.getUserByMobile(reqVO.getMobile());
+        if (user == null) {
+            throw exception(loginScene ? USER_NOT_EXISTS : AUTH_MOBILE_NOT_EXISTS);
+        }
+        if (loginScene) {
+            validateSmsLoginUser(user, reqVO.getUsername());
         }
         // 发送验证码
-        smsCodeApi.sendSmsCode(AuthConvert.INSTANCE.convert(reqVO).setCreateIp(getClientIP()));
+        smsCodeApi.sendSmsCode(AuthConvert.INSTANCE.convert(reqVO).setCreateIp(getClientIP())
+                .setMobile(loginScene ? user.getMobile() : reqVO.getMobile())
+                .setReceiveMobile(loginScene ? StrUtil.blankToDefault(user.getSmsMobile(), user.getMobile()) : null));
     }
 
     @Override
+    @DataPermission(enable = false)
     public AuthLoginRespVO smsLogin(AuthSmsLoginReqVO reqVO) {
-        // 校验验证码
-        smsCodeApi.useSmsCode(AuthConvert.INSTANCE.convert(reqVO, SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene(), getClientIP()));
-
         // 获得用户信息
-        AdminUserDO user = userService.getUserByMobile(reqVO.getMobile());
+        AdminUserDO user = userService.getUserByUsername(reqVO.getUsername());
         if (user == null) {
             throw exception(USER_NOT_EXISTS);
         }
+        validateSmsLoginUser(user, reqVO.getUsername());
+        // 按用户名确定账号，验证码绑定该账号的默认手机号，不按接收号码反查用户
+        smsCodeApi.useSmsCode(AuthConvert.INSTANCE.convert(reqVO, SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene(), getClientIP())
+                .setMobile(user.getMobile()));
 
         // 创建 Token 令牌，记录登录日志
-        return createTokenAfterLoginSuccess(user.getId(), reqVO.getMobile(), LoginLogTypeEnum.LOGIN_MOBILE);
+        return createTokenAfterLoginSuccess(user.getId(), reqVO.getUsername(), LoginLogTypeEnum.LOGIN_MOBILE);
+    }
+
+    private void validateSmsLoginUser(AdminUserDO user, String username) {
+        if (CommonStatusEnum.isDisable(user.getStatus())) {
+            createLoginLog(user.getId(), username, LoginLogTypeEnum.LOGIN_MOBILE, LoginResultEnum.USER_DISABLED);
+            throw exception(AUTH_LOGIN_USER_DISABLED);
+        }
     }
 
     private void createLoginLog(Long userId, String username,

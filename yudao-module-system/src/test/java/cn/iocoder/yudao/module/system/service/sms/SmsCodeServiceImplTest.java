@@ -45,6 +45,7 @@ public class SmsCodeServiceImplTest extends BaseDbUnitTest {
 
     @BeforeEach
     public void setUp() {
+        when(smsCodeProperties.getAdminLoginTemplateCode()).thenReturn("login_code");
         when(smsCodeProperties.getExpireTimes()).thenReturn(Duration.ofMinutes(5));
         when(smsCodeProperties.getSendFrequency()).thenReturn(Duration.ofMinutes(1));
         when(smsCodeProperties.getSendMaximumQuantityPerDay()).thenReturn(10);
@@ -57,6 +58,7 @@ public class SmsCodeServiceImplTest extends BaseDbUnitTest {
         // 准备参数
         SmsCodeSendReqDTO reqDTO = randomPojo(SmsCodeSendReqDTO.class, o -> {
             o.setMobile("15601691300");
+            o.setReceiveMobile(null);
             o.setScene(SmsSceneEnum.MEMBER_LOGIN.getScene());
         });
 
@@ -71,6 +73,55 @@ public class SmsCodeServiceImplTest extends BaseDbUnitTest {
         // 断言调用
         verify(smsSendService).sendSingleSms(eq(reqDTO.getMobile()), isNull(), isNull(),
                 eq("user-sms-login"), eq(MapUtil.of("code", "9999")));
+    }
+
+    @Test
+    public void sendSmsCode_alternateMobileBoundToLoginMobile() {
+        SmsCodeSendReqDTO reqDTO = new SmsCodeSendReqDTO().setMobile("13800138000")
+                .setReceiveMobile("13900139000").setScene(SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene())
+                .setCreateIp("127.0.0.1");
+        smsCodeService.sendSmsCode(reqDTO);
+        verify(smsSendService).sendSingleSms(eq("13900139000"), isNull(), isNull(),
+                eq("login_code"), eq(MapUtil.of("code", "9999")));
+        assertEquals("13800138000", smsCodeMapper.selectOne(null).getMobile());
+        assertServiceException(() -> smsCodeService.useSmsCode(new SmsCodeUseReqDTO()
+                .setMobile("13900139000").setCode("9999").setScene(reqDTO.getScene()).setUsedIp("127.0.0.1")),
+                SMS_CODE_NOT_FOUND);
+        SmsCodeUseReqDTO useReqDTO = new SmsCodeUseReqDTO().setMobile(reqDTO.getMobile())
+                .setCode("9999").setScene(reqDTO.getScene()).setUsedIp("127.0.0.1");
+        smsCodeService.useSmsCode(useReqDTO);
+        assertServiceException(() -> smsCodeService.useSmsCode(useReqDTO), SMS_CODE_USED);
+    }
+
+    @Test
+    public void loginCodeUsesSixDigitsAndConfiguredTemplate() {
+        when(smsCodeProperties.getBeginCode()).thenReturn(100000);
+        when(smsCodeProperties.getEndCode()).thenReturn(999999);
+        SmsCodeSendReqDTO reqDTO = new SmsCodeSendReqDTO().setMobile("13800138000")
+                .setScene(SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene()).setCreateIp("127.0.0.1");
+        smsCodeService.sendSmsCode(reqDTO);
+        String code = smsCodeMapper.selectOne(null).getCode();
+        assertTrue(code.matches("[1-9][0-9]{5}"));
+        verify(smsSendService).sendSingleSms(eq(reqDTO.getMobile()), isNull(), isNull(),
+                eq("login_code"), eq(MapUtil.of("code", code)));
+    }
+
+    @Test
+    public void sharedReceiverDoesNotShareLoginCode() {
+        SmsCodeSendReqDTO alice = new SmsCodeSendReqDTO().setMobile("13800138000")
+                .setReceiveMobile("13800138000").setScene(SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene())
+                .setCreateIp("127.0.0.1");
+        smsCodeService.sendSmsCode(alice);
+        when(smsCodeProperties.getBeginCode()).thenReturn(8888);
+        when(smsCodeProperties.getEndCode()).thenReturn(8888);
+        SmsCodeSendReqDTO bob = new SmsCodeSendReqDTO().setMobile("13900139000")
+                .setReceiveMobile(alice.getMobile()).setScene(alice.getScene()).setCreateIp("127.0.0.1");
+        smsCodeService.sendSmsCode(bob);
+        assertServiceException(() -> smsCodeService.useSmsCode(new SmsCodeUseReqDTO()
+                .setMobile(alice.getMobile()).setScene(alice.getScene()).setCode("8888").setUsedIp("127.0.0.1")),
+                SMS_CODE_NOT_FOUND);
+        smsCodeService.useSmsCode(new SmsCodeUseReqDTO().setMobile(bob.getMobile())
+                .setScene(bob.getScene()).setCode("8888").setUsedIp("127.0.0.1"));
     }
 
     @Test

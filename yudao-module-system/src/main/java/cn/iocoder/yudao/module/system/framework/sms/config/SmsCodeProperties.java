@@ -5,12 +5,17 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
 import javax.validation.constraints.NotNull;
+import javax.validation.constraints.NotBlank;
 import java.time.Duration;
 
 @ConfigurationProperties(prefix = "yudao.sms-code")
 @Validated
 @Data
 public class SmsCodeProperties {
+
+    /** 后台登录短信模板编码，模板关联臻善短信通道 */
+    @NotBlank(message = "登录短信模板编码不能为空")
+    private String adminLoginTemplateCode = "login_code";
 
     /**
      * 过期时间

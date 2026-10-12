@@ -53,6 +53,9 @@ public class UserRespVO{
     @ExcelProperty("手机号码")
     private String mobile;
 
+    @Schema(description = "验证码接收手机号，留空使用手机号码")
+    private String smsMobile;
+
     @Schema(description = "用户性别，参见 SexEnum 枚举类", example = "1")
     @ExcelProperty(value = "用户性别", converter = DictConvert.class)
     @DictFormat(DictTypeConstants.USER_SEX)

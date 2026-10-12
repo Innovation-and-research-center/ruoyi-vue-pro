@@ -25,6 +25,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 import javax.annotation.Resource;
 import javax.validation.Validation;
@@ -37,6 +38,8 @@ import static cn.iocoder.yudao.framework.test.core.util.RandomUtils.randomPojo;
 import static cn.iocoder.yudao.framework.test.core.util.RandomUtils.randomString;
 import static cn.iocoder.yudao.module.system.enums.ErrorCodeConstants.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -62,6 +65,8 @@ public class AdminAuthServiceImplTest extends BaseDbUnitTest {
     private MemberService memberService;
     @MockBean
     private Validator validator;
+    @MockBean
+    private StringRedisTemplate stringRedisTemplate;
 
     @BeforeEach
     public void setUp() {
@@ -187,19 +192,113 @@ public class AdminAuthServiceImplTest extends BaseDbUnitTest {
         // 准备参数
         String mobile = randomString();
         Integer scene = SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene();
-        AuthSmsSendReqVO reqVO = new AuthSmsSendReqVO(mobile, scene);
+        AuthSmsSendReqVO reqVO = AuthSmsSendReqVO.builder().username("alice").scene(scene).build();
         // mock 方法（用户信息）
-        AdminUserDO user = randomPojo(AdminUserDO.class);
-        when(userService.getUserByMobile(eq(mobile))).thenReturn(user);
+        AdminUserDO user = randomPojo(AdminUserDO.class, o -> o.setMobile(mobile)
+                .setSmsMobile(null).setStatus(CommonStatusEnum.ENABLE.getStatus()));
+        when(userService.getUserByUsername(eq(reqVO.getUsername()))).thenReturn(user);
 
         // 调用
         authService.sendSmsCode(reqVO);
         // 断言
         verify(smsCodeApi).sendSmsCode(argThat(sendReqDTO -> {
             assertEquals(mobile, sendReqDTO.getMobile());
+            assertEquals(mobile, sendReqDTO.getReceiveMobile());
             assertEquals(scene, sendReqDTO.getScene());
             return true;
         }));
+    }
+
+    @Test
+    public void testSendSmsCode_alternateMobile() {
+        AuthSmsSendReqVO reqVO = AuthSmsSendReqVO.builder().username("alice").scene(SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene()).build();
+        when(userService.getUserByUsername(reqVO.getUsername())).thenReturn(new AdminUserDO()
+                .setMobile("13800138000").setSmsMobile("13900139000")
+                .setStatus(CommonStatusEnum.ENABLE.getStatus()));
+
+        authService.sendSmsCode(reqVO);
+
+        verify(smsCodeApi).sendSmsCode(argThat(dto -> "13800138000".equals(dto.getMobile())
+                && "13900139000".equals(dto.getReceiveMobile())));
+    }
+
+    @Test
+    public void testSendSmsCode_blankAlternateMobile() {
+        AuthSmsSendReqVO reqVO = AuthSmsSendReqVO.builder().username("alice").scene(SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene()).build();
+        when(userService.getUserByUsername(reqVO.getUsername())).thenReturn(new AdminUserDO()
+                .setMobile("13800138000").setSmsMobile("").setStatus(CommonStatusEnum.ENABLE.getStatus()));
+        authService.sendSmsCode(reqVO);
+        verify(smsCodeApi).sendSmsCode(argThat(dto -> "13800138000".equals(dto.getReceiveMobile())));
+    }
+
+    @Test
+    public void testSmsRequestValidation() {
+        Validator requestValidator = (Validator) ReflectUtil.getFieldValue(authService, "validator");
+        assertTrue(requestValidator.validate(AuthSmsSendReqVO.builder().username("alice")
+                .scene(SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene()).build()).isEmpty());
+        assertFalse(requestValidator.validate(AuthSmsSendReqVO.builder().mobile("13800138000")
+                .scene(SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene()).build()).isEmpty());
+        assertTrue(requestValidator.validate(AuthSmsSendReqVO.builder().mobile("13800138000")
+                .scene(SmsSceneEnum.ADMIN_MEMBER_RESET_PASSWORD.getScene()).build()).isEmpty());
+        assertFalse(requestValidator.validate(new AuthSmsLoginReqVO(" ", "123456")).isEmpty());
+    }
+
+    @Test
+    public void testSendSmsCode_receiverIsAnotherUsersDefaultMobile() {
+        AdminUserDO alice = new AdminUserDO().setId(1L).setUsername("alice")
+                .setMobile("13800138000").setStatus(CommonStatusEnum.ENABLE.getStatus());
+        AdminUserDO bob = new AdminUserDO().setId(2L).setUsername("bob")
+                .setMobile("13900139000").setSmsMobile(alice.getMobile())
+                .setStatus(CommonStatusEnum.ENABLE.getStatus());
+        when(userService.getUserByUsername("alice")).thenReturn(alice);
+        when(userService.getUserByUsername("bob")).thenReturn(bob);
+        authService.sendSmsCode(AuthSmsSendReqVO.builder().username("alice")
+                .scene(SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene()).build());
+        authService.sendSmsCode(AuthSmsSendReqVO.builder().username("bob")
+                .scene(SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene()).build());
+        verify(smsCodeApi).sendSmsCode(argThat(dto -> alice.getMobile().equals(dto.getMobile())
+                && alice.getMobile().equals(dto.getReceiveMobile())));
+        verify(smsCodeApi).sendSmsCode(argThat(dto -> bob.getMobile().equals(dto.getMobile())
+                && alice.getMobile().equals(dto.getReceiveMobile())));
+        verify(userService, never()).getUserByMobile(anyString());
+    }
+
+    @Test
+    public void testSmsLogin_unknownUsername() {
+        AuthSmsLoginReqVO reqVO = new AuthSmsLoginReqVO("alice", "123456");
+        assertServiceException(() -> authService.smsLogin(reqVO), USER_NOT_EXISTS);
+        verifyNoInteractions(smsCodeApi, oauth2TokenService);
+    }
+
+    @Test
+    public void testSmsLogin_invalidCode() {
+        AuthSmsLoginReqVO reqVO = new AuthSmsLoginReqVO("alice", "123456");
+        when(userService.getUserByUsername(reqVO.getUsername())).thenReturn(new AdminUserDO()
+                .setId(1L).setSmsMobile("13900139000").setStatus(CommonStatusEnum.ENABLE.getStatus()));
+        doThrow(cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception(SMS_CODE_NOT_FOUND))
+                .when(smsCodeApi).useSmsCode(any());
+        assertServiceException(() -> authService.smsLogin(reqVO), SMS_CODE_NOT_FOUND);
+        verifyNoInteractions(oauth2TokenService);
+    }
+
+    @Test
+    public void testSmsLogin_disabled() {
+        AuthSmsLoginReqVO reqVO = new AuthSmsLoginReqVO("alice", "123456");
+        when(userService.getUserByUsername(reqVO.getUsername())).thenReturn(new AdminUserDO()
+                .setId(1L).setStatus(CommonStatusEnum.DISABLE.getStatus()));
+
+        assertServiceException(() -> authService.smsLogin(reqVO), AUTH_LOGIN_USER_DISABLED);
+        verifyNoInteractions(smsCodeApi, oauth2TokenService);
+    }
+
+    @Test
+    public void testSendSmsCode_disabled() {
+        AuthSmsSendReqVO reqVO = AuthSmsSendReqVO.builder().username("alice").scene(SmsSceneEnum.ADMIN_MEMBER_LOGIN.getScene()).build();
+        when(userService.getUserByUsername(reqVO.getUsername())).thenReturn(new AdminUserDO()
+                .setId(1L).setStatus(CommonStatusEnum.DISABLE.getStatus()));
+
+        assertServiceException(() -> authService.sendSmsCode(reqVO), AUTH_LOGIN_USER_DISABLED);
+        verifyNoInteractions(smsCodeApi);
     }
 
     @Test
@@ -207,7 +306,7 @@ public class AdminAuthServiceImplTest extends BaseDbUnitTest {
         // 准备参数
         String mobile = randomString();
         String code = randomString();
-        AuthSmsLoginReqVO reqVO = new AuthSmsLoginReqVO(mobile, code);
+        AuthSmsLoginReqVO reqVO = new AuthSmsLoginReqVO("alice", code);
         // mock 方法（验证码）
         doNothing().when(smsCodeApi).useSmsCode((argThat(smsCodeUseReqDTO -> {
             assertEquals(mobile, smsCodeUseReqDTO.getMobile());
@@ -216,8 +315,9 @@ public class AdminAuthServiceImplTest extends BaseDbUnitTest {
             return true;
         })));
         // mock 方法（用户信息）
-        AdminUserDO user = randomPojo(AdminUserDO.class, o -> o.setId(1L));
-        when(userService.getUserByMobile(eq(mobile))).thenReturn(user);
+        AdminUserDO user = randomPojo(AdminUserDO.class, o -> o.setId(1L).setMobile(mobile)
+                .setStatus(CommonStatusEnum.ENABLE.getStatus()));
+        when(userService.getUserByUsername(eq(reqVO.getUsername()))).thenReturn(user);
         // mock 缓存登录用户到 Redis
         OAuth2AccessTokenDO accessTokenDO = randomPojo(OAuth2AccessTokenDO.class, o -> o.setUserId(1L)
                 .setUserType(UserTypeEnum.ADMIN.getValue()));

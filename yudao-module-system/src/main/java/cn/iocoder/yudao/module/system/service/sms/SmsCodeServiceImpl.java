@@ -3,6 +3,7 @@ package cn.iocoder.yudao.module.system.service.sms;
 import cn.hutool.core.date.LocalDateTimeUtil;
 import cn.hutool.core.lang.Assert;
 import cn.hutool.core.map.MapUtil;
+import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.module.system.api.sms.dto.code.SmsCodeSendReqDTO;
 import cn.iocoder.yudao.module.system.api.sms.dto.code.SmsCodeUseReqDTO;
 import cn.iocoder.yudao.module.system.api.sms.dto.code.SmsCodeValidateReqDTO;
@@ -14,9 +15,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
 
 import javax.annotation.Resource;
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 
-import static cn.hutool.core.util.RandomUtil.randomInt;
 import static cn.iocoder.yudao.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static cn.iocoder.yudao.framework.common.util.date.DateUtils.isToday;
 import static cn.iocoder.yudao.module.system.enums.ErrorCodeConstants.*;
@@ -29,6 +30,8 @@ import static cn.iocoder.yudao.module.system.enums.ErrorCodeConstants.*;
 @Service
 @Validated
 public class SmsCodeServiceImpl implements SmsCodeService {
+
+    private static final SecureRandom CODE_RANDOM = new SecureRandom();
 
     @Resource
     private SmsCodeProperties smsCodeProperties;
@@ -46,8 +49,11 @@ public class SmsCodeServiceImpl implements SmsCodeService {
         // 创建验证码
         String code = createSmsCode(reqDTO.getMobile(), reqDTO.getScene(), reqDTO.getCreateIp());
         // 发送验证码
-        smsSendService.sendSingleSms(reqDTO.getMobile(), null, null,
-                sceneEnum.getTemplateCode(), MapUtil.of("code", code));
+        String receiveMobile = StrUtil.blankToDefault(reqDTO.getReceiveMobile(), reqDTO.getMobile());
+        String templateCode = sceneEnum == SmsSceneEnum.ADMIN_MEMBER_LOGIN
+                ? smsCodeProperties.getAdminLoginTemplateCode() : sceneEnum.getTemplateCode();
+        smsSendService.sendSingleSms(receiveMobile, null, null,
+                templateCode, MapUtil.of("code", code));
     }
 
     private String createSmsCode(String mobile, Integer scene, String ip) {
@@ -68,7 +74,8 @@ public class SmsCodeServiceImpl implements SmsCodeService {
 
         // 创建验证码记录
         String code = String.format("%0" + smsCodeProperties.getEndCode().toString().length() + "d",
-                randomInt(smsCodeProperties.getBeginCode(), smsCodeProperties.getEndCode() + 1));
+                smsCodeProperties.getBeginCode() + CODE_RANDOM.nextInt(
+                        smsCodeProperties.getEndCode() - smsCodeProperties.getBeginCode() + 1));
         SmsCodeDO newSmsCode = SmsCodeDO.builder().mobile(mobile).code(code).scene(scene)
                 .todayIndex(lastSmsCode != null && isToday(lastSmsCode.getCreateTime()) ? lastSmsCode.getTodayIndex() + 1 : 1)
                 .createIp(ip).used(false).build();

@@ -333,8 +333,9 @@ yudao:
     expire-times: 10m
     send-frequency: 1m
     send-maximum-quantity-per-day: 10
-    begin-code: 9999 # 这里配置 9999 的原因是，测试方便。
-    end-code: 9999 # 这里配置 9999 的原因是，测试方便。
+    begin-code: 100000
+    end-code: 999999
+    admin-login-template-code: login_code # 登录短信模板编码，模板关联臻善短信通道
   trade:
     order:
       pay-expire-time: 2h # 支付的过期时间

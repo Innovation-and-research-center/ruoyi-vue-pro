@@ -57,6 +57,11 @@ public class UserSaveReqVO {
     @DiffLogField(name = "手机号码")
     private String mobile;
 
+    @Schema(description = "验证码接收手机号，留空使用手机号码", example = "15601691300")
+    @Mobile
+    @DiffLogField(name = "验证码接收手机号")
+    private String smsMobile;
+
     @Schema(description = "用户性别，参见 SexEnum 枚举类", example = "1")
     @DiffLogField(name = "用户性别", function = SexParseFunction.NAME)
     private Integer sex;

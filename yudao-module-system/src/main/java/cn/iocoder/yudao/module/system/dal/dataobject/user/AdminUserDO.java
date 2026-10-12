@@ -68,6 +68,8 @@ public class AdminUserDO extends TenantBaseDO {
      * 手机号码
      */
     private String mobile;
+    /** 短信登录验证码接收手机号，为空时使用 mobile */
+    private String smsMobile;
     /**
      * 用户性别
      *
