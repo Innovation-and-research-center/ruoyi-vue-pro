@@ -109,7 +109,7 @@ public class BpmMessageServiceImpl implements BpmMessageService {
         templateParams.put("dueDate", reqDTO.getDueDate() != null
                 ? DateUtil.format(reqDTO.getDueDate(), "yyyy年MM月dd日 HH时mm分") : "");
         executeSendMessage(reqDTO.getAssigneeUserId(),
-                BpmMessageEnum.TASK_ASSIGNED.getSmsTemplateCode(),
+                Boolean.FALSE.equals(reqDTO.getSendSms()) ? null : BpmMessageEnum.TASK_ASSIGNED.getSmsTemplateCode(),
                 BpmMessageEnum.TASK_ASSIGNED_DING.getSmsTemplateCode(), // 需在枚举中补充
                 templateParams);
     }
@@ -124,7 +124,7 @@ public class BpmMessageServiceImpl implements BpmMessageService {
         templateParams.put("dueDate", reqDTO.getDueDate() != null
                 ? DateUtil.format(reqDTO.getDueDate(), "yyyy年MM月dd日 HH时mm分") : "");
         executeSendMessage(reqDTO.getAssigneeUserId(),
-                BpmMessageEnum.TASK_ASSIGNED.getSmsTemplateCode(),
+                Boolean.FALSE.equals(reqDTO.getSendSms()) ? null : BpmMessageEnum.TASK_ASSIGNED.getSmsTemplateCode(),
                 BpmMessageEnum.TASK_ASSIGNED_DING.getSmsTemplateCode(), templateParams);
     }
 

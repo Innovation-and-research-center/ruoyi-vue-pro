@@ -11,6 +11,9 @@ import java.util.Map;
 @Data
 public class BpmTaskApproveReqVO {
 
+    /** 本次分派是否发送短信；未传时兼容原有发送行为。 */
+    private Boolean sendSms;
+
     @Schema(description = "任务编号", requiredMode = Schema.RequiredMode.REQUIRED, example = "1024")
     @NotEmpty(message = "任务编号不能为空")
     private String id;

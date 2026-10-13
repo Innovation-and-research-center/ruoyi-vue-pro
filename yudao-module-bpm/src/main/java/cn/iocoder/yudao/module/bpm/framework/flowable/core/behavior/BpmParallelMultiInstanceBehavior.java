@@ -5,6 +5,7 @@ import cn.iocoder.yudao.framework.common.util.collection.SetUtils;
 import cn.iocoder.yudao.module.bpm.enums.definition.BpmChildProcessMultiInstanceSourceTypeEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.candidate.BpmTaskCandidateInvoker;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmTaskSmsPolicy;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
 import lombok.Setter;
@@ -74,6 +75,7 @@ public class BpmParallelMultiInstanceBehavior extends ParallelMultiInstanceBehav
                 }
                 execution.setVariableLocal(super.collectionVariable, assigneeUserIds);
             }
+            BpmTaskSmsPolicy.captureMembers(execution, assigneeUserIds);
             return assigneeUserIds.size();
         }
 

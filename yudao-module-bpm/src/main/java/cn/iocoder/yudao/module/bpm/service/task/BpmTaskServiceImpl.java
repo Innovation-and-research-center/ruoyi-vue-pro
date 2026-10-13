@@ -30,6 +30,7 @@ import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmTaskCandidat
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmHttpRequestUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmTaskSmsPolicy;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmFormService;
@@ -1083,6 +1084,9 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             processVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, localAssigneeMap);
         }
 
+        // 通知控制数据只由服务端维护，禁止表单或旧的全局变量回写覆盖。
+        processVariables.keySet().removeIf(BpmTaskSmsPolicy::isInternal);
+
         // 更新下一节点变量
         if (StrUtil.isNotEmpty(reqVO.getNextNode())) {
             processVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_NEXT_NODE, reqVO.getNextNode());
@@ -1170,6 +1174,32 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             runtimeService.setVariablesLocal(localVariableExecutionId, localIsolatedVariables);
         }
 
+        // 保存本次明确选择人员的短信意愿；待目标任务实际生成时消费。
+        Map<String, Object> smsRoutingVariables = new HashMap<>(variables);
+        smsRoutingVariables.putAll(localIsolatedVariables);
+        List<FlowNode> smsTargetNodes = new ArrayList<>();
+        for (FlowNode node : getNextFlowNodes(currentFlowElement, bpmnModel, smsRoutingVariables)) {
+            collectEffectiveUserTasks(node, smsTargetNodes);
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, List<Long>> actualSelections = (Map<String, List<Long>>) smsRoutingVariables.get(
+                BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+        for (FlowNode target : smsTargetNodes) {
+            List<Long> requested = nextNodeAssignees == null ? null : nextNodeAssignees.get(target.getId());
+            if (CollUtil.isNotEmpty(requested)) {
+                List<Long> recipients = new ArrayList<>(requested);
+                if (ObjUtil.equals(parseCandidateStrategy(target), BpmTaskCandidateStrategyEnum.MANUAL_SELECTED.getStrategy())
+                        && actualSelections != null && actualSelections.containsKey(target.getId())) {
+                    recipients.retainAll(actualSelections.get(target.getId()));
+                }
+                BpmTaskSmsPolicy.prepare(runtimeService, localVariableExecutionId,
+                        Collections.singletonMap(target.getId(), recipients), reqVO.getSendSms());
+            } else if (!ObjUtil.equals(parseCandidateStrategy(target), BpmTaskCandidateStrategyEnum.MANUAL_SELECTED.getStrategy())) {
+                // 角色/表达式等自动选人目标，在目标实例初始化时应用并消费该默认值。
+                BpmTaskSmsPolicy.prepareDefault(runtimeService, localVariableExecutionId, target.getId(), reqVO.getSendSms());
+            }
+        }
+
         // =================================================================================
         // 【标准加签】：同环节动态追加审批人 (使用 Flowable 原生 API)
         // =================================================================================
@@ -1222,6 +1252,8 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                     collUserList.add(addSignUserId);
                 }
 
+                BpmTaskSmsPolicy.prepare(runtimeService, miRootExecutionId,
+                        Collections.singletonMap(task.getTaskDefinitionKey(), Collections.singletonList(addSignUserId)), reqVO.getSendSms());
                 Map<String, Object> miVars = new HashMap<>();
                 miVars.put(elementVarName, userIdStr);
 
@@ -4050,6 +4082,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         String processDefinitionId = task.getProcessDefinitionId();
         String taskDefinitionKey = task.getTaskDefinitionKey();
         String assignee = task.getAssignee();
+        final boolean sendSms = !Boolean.FALSE.equals(taskService.getVariableLocal(taskId, BpmTaskSmsPolicy.TASK_SEND_SMS));
 
         // 1. 【核心防御】：提取当前任务自带的租户 ID，防止后台线程执行时丢失上下文
         final Long tenantId = cn.hutool.core.util.NumberUtil.parseLong(task.getTenantId(), 1L);
@@ -4187,6 +4220,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                     // 3. 【极速异步发短信】：剥离组装数据逻辑，只把网络请求扔到异步线程池！
                     AdminUserRespDTO startUser = adminUserApi.getUser(Long.valueOf(processInstance.getStartUserId()));
                     BpmMessageSendWhenTaskCreatedReqDTO messageDTO = BpmTaskConvert.INSTANCE.convert(processInstance, startUser, task);
+                    messageDTO.setSendSms(sendSms);
 
                     java.util.concurrent.CompletableFuture.runAsync(() -> {
                         TenantUtils.execute(tenantId, () -> {

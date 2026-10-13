@@ -4,6 +4,7 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.candidate.BpmTaskCandidateInvoker;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmTaskSmsPolicy;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.bpmn.model.UserTask;
@@ -55,6 +56,8 @@ public class BpmUserTaskActivityBehavior extends UserTaskActivityBehavior {
         }
         // 第一步，获得任务的候选用户
         Long assigneeUserId = calculateTaskCandidateUsers(execution);
+        // 在分配事件触发前固定到任务，异步通知不再依赖可变的执行流上下文。
+        task.setVariableLocal(BpmTaskSmsPolicy.TASK_SEND_SMS, BpmTaskSmsPolicy.forMember(execution, assigneeUserId));
         // 第二步，设置作为负责人
         if (assigneeUserId != null) {
             TaskHelper.changeTaskAssignee(task, String.valueOf(assigneeUserId));

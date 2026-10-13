@@ -12,6 +12,9 @@ import java.util.Date;
 @Data
 public class BpmMessageSendWhenTaskCreatedReqDTO {
 
+    /** 本次分派是否发送短信；未传时兼容原有发送行为。 */
+    private Boolean sendSms;
+
     /**
      * 流程实例的编号
      */
