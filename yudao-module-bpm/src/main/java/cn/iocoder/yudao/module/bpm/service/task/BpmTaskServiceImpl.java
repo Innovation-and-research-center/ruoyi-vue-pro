@@ -12,6 +12,7 @@ import cn.iocoder.yudao.framework.common.util.number.NumberUtils;
 import cn.iocoder.yudao.framework.common.util.object.ObjectUtils;
 import cn.iocoder.yudao.framework.common.util.object.PageUtils;
 import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
+import cn.iocoder.yudao.framework.datapermission.core.util.DataPermissionUtils;
 import cn.iocoder.yudao.framework.tenant.core.util.TenantUtils;
 import cn.iocoder.yudao.framework.web.core.util.WebFrameworkUtils;
 import cn.iocoder.yudao.module.bpm.controller.admin.definition.vo.model.BpmModelMetaInfoVO;
@@ -4022,7 +4023,8 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             log.warn("[sendJobReceiveRegisterMessageToCandidates][taskId({}) 没有候选人]", taskId);
             return;
         }
-        AdminUserRespDTO startUser = adminUserApi.getUser(Long.valueOf(instance.getStartUserId()));
+        AdminUserRespDTO startUser = DataPermissionUtils.executeIgnore(
+                () -> adminUserApi.getUser(Long.valueOf(instance.getStartUserId())));
         if (startUser == null) {
             log.warn("[sendJobReceiveRegisterMessageToCandidates][taskId({}) 找不到流程发起人]", taskId);
             return;

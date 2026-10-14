@@ -17,6 +17,7 @@ import cn.iocoder.yudao.framework.common.util.object.ObjectUtils;
 import cn.iocoder.yudao.framework.common.util.object.PageUtils;
 import cn.iocoder.yudao.framework.common.util.string.StrUtils;
 import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
+import cn.iocoder.yudao.framework.datapermission.core.util.DataPermissionUtils;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.controller.admin.definition.vo.model.BpmModelMetaInfoVO;
 import cn.iocoder.yudao.module.bpm.controller.admin.definition.vo.model.simple.BpmSimpleModelNodeVO;
@@ -1790,7 +1791,12 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         if (titleSetting == null || !BooleanUtil.isTrue(titleSetting.getEnable())) {
             return definition.getName();
         }
-        AdminUserRespDTO user = adminUserApi.getUser(userId);
+        // 事务提交后的标题回调不再处于创建流程时的 @DataPermission 作用域。
+        AdminUserRespDTO user = DataPermissionUtils.executeIgnore(() -> adminUserApi.getUser(userId));
+        if (user == null) {
+            log.warn("[generateProcessInstanceName][发起人({})不存在，使用流程定义名称]", userId);
+            return definition.getName();
+        }
         Map<String, Object> cloneVariables = new HashMap<>(variables);
         cloneVariables.put(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_START_USER_ID, user.getNickname());
         cloneVariables.put(BpmnVariableConstants.PROCESS_START_TIME, DateUtil.now());
