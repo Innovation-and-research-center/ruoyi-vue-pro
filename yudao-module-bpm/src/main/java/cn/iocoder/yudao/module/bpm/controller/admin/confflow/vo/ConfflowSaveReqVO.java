@@ -75,6 +75,9 @@ public class ConfflowSaveReqVO {
     @Schema(description = "下一节点审批人", example = "assist")
     private Map<String, List<Long>> nextNodeAssignees;
 
+    @Schema(description = "是否发送本次派发的待办短信，未传默认发送")
+    private Boolean sendSms;
+
     @Schema(description = "发起人自选审批人 Map", example = "{taskKey1: [1, 2]}")
     private Map<String, List<Long>> startUserSelectAssignees;
 

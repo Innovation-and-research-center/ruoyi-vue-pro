@@ -90,7 +90,7 @@ public class XzfyServiceImpl implements XzfyService {
     @Transactional(rollbackFor = Exception.class)
     public Long createXzfy(Long userId,XzfySaveReqVO createReqVO) {
         XzfyDO xzfy = createXzfyAndProcess(userId, createReqVO);
-        bpmRegisterTaskService.completeOnSubmit(userId, xzfy.getProcessInstanceId(), buildProcessVariables(createReqVO));
+        bpmRegisterTaskService.completeOnSubmit(userId, xzfy.getProcessInstanceId(), buildProcessVariables(createReqVO), createReqVO.getSendSms());
         return xzfy.getId();
     }
 
@@ -109,7 +109,7 @@ public class XzfyServiceImpl implements XzfyService {
         if (xzfy == null) throw exception(XZFY_NOT_EXISTS);
         updateReqVO.setXmGuid(xzfy.getXmGuid());
         updateXzfy(updateReqVO);
-        bpmRegisterTaskService.completeOnSubmit(userId, xzfy.getProcessInstanceId(), buildProcessVariables(updateReqVO));
+        bpmRegisterTaskService.completeOnSubmit(userId, xzfy.getProcessInstanceId(), buildProcessVariables(updateReqVO), updateReqVO.getSendSms());
     }
 
     private XzfyDO createXzfyAndProcess(Long userId, XzfySaveReqVO createReqVO) {

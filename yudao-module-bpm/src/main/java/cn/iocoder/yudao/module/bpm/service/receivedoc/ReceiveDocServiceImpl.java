@@ -18,6 +18,7 @@ import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmReceiveRegisterTaskUtils;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmTaskSmsPolicy;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
 import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import cn.iocoder.yudao.module.bpm.service.task.BpmTaskService;
@@ -160,7 +161,7 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
                 new BpmProcessInstanceCreateReqDTO().setProcessDefinitionKey(resolveReceiveDocProcessKey(createReqVO))
                         .setVariables(processInstanceVariables).setBusinessKey(String.valueOf(receiveDoc.getId()))
                         .setStartUserSelectAssignees(createReqVO.getStartUserSelectAssignees()));
-        int completedCount = completeManualReceiveRegisterTask(userId, processInstanceId, processInstanceVariables);
+        int completedCount = completeManualReceiveRegisterTask(userId, processInstanceId, processInstanceVariables, createReqVO.getSendSms());
         if (completedCount == 0) {
             throw exception(RECEIVE_DOC_REGISTER_TASK_NOT_ACTIVE);
         }
@@ -260,7 +261,7 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         if (StrUtil.isBlank(processInstanceId)) {
             processInstanceId = createReceiveDocProcessInstance(userId, receiveDocId, createReqVO, processInstanceVariables);
         }
-        int completedCount = completeManualReceiveRegisterTask(userId, processInstanceId, processInstanceVariables);
+        int completedCount = completeManualReceiveRegisterTask(userId, processInstanceId, processInstanceVariables, createReqVO.getSendSms());
         if (completedCount == 0) {
             throw exception(RECEIVE_DOC_REGISTER_TASK_NOT_ACTIVE);
         }
@@ -466,7 +467,7 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         }
         syncProcessInstanceTitle(processInstanceId,
                 StrUtil.blankToDefault(updateReqVO.getSubject(), oldReceiveDoc.getSubject()));
-        int completedCount = completeManualReceiveRegisterTask(userId, processInstanceId, processInstanceVariables);
+        int completedCount = completeManualReceiveRegisterTask(userId, processInstanceId, processInstanceVariables, updateReqVO.getSendSms());
         if (completedCount == 0) {
             throw exception(RECEIVE_DOC_REGISTER_TASK_NOT_ACTIVE);
         }
@@ -529,7 +530,8 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         }
     }
 
-    private int completeManualReceiveRegisterTask(Long userId, String processInstanceId, Map<String, Object> processInstanceVariables) {
+    private int completeManualReceiveRegisterTask(Long userId, String processInstanceId,
+                                                  Map<String, Object> processInstanceVariables, Boolean sendSms) {
         String userIdStr = String.valueOf(userId);
         int completedCount = 0;
         for (int i = 0; i < 20; i++) {
@@ -555,6 +557,12 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
                         BpmTaskStatusEnum.APPROVE.getStatus());
                 flowableTaskService.setVariableLocal(task.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON,
                         "系统自动完成来文登记");
+                // 登记发送绕过 approveTask；在完成登记前为本次选中的接收人保存短信选择。
+                // 登记是流程首节点，使用流程实例作用域，目标多实例初始化时消费，避免登记执行被销毁后丢失。
+                @SuppressWarnings("unchecked")
+                Map<String, List<Long>> recipients = (Map<String, List<Long>>) processInstanceVariables.get(
+                        BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+                BpmTaskSmsPolicy.prepare(runtimeService, processInstanceId, recipients, sendSms);
                 flowableTaskService.complete(task.getId(), processInstanceVariables);
                 completedCount++;
             }

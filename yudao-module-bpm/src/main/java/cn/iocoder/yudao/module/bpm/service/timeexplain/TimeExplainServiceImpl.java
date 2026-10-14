@@ -100,7 +100,7 @@ public class TimeExplainServiceImpl implements TimeExplainService {
     @Transactional(rollbackFor = Exception.class)
     public Long createOut(Long userId, TimeExplainSaveReqVO createReqVO) {
         TimeExplainDO out = createOutAndProcess(userId, createReqVO);
-        bpmRegisterTaskService.completeOnSubmit(userId, out.getProcessInstanceId(), buildProcessVariables(userId, createReqVO));
+        bpmRegisterTaskService.completeOnSubmit(userId, out.getProcessInstanceId(), buildProcessVariables(userId, createReqVO), createReqVO.getSendSms());
         return out.getId();
     }
 
@@ -119,7 +119,7 @@ public class TimeExplainServiceImpl implements TimeExplainService {
         if (out == null) throw exception(TIME_EXPLAIN_NOT_EXISTS);
         normalizePeriodTime(updateReqVO);
         updateTimeExplain(updateReqVO);
-        bpmRegisterTaskService.completeOnSubmit(userId, out.getProcessInstanceId(), buildProcessVariables(userId, updateReqVO));
+        bpmRegisterTaskService.completeOnSubmit(userId, out.getProcessInstanceId(), buildProcessVariables(userId, updateReqVO), updateReqVO.getSendSms());
     }
 
     private TimeExplainDO createOutAndProcess(Long userId, TimeExplainSaveReqVO createReqVO) {

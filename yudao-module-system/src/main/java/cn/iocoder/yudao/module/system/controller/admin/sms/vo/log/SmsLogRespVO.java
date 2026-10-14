@@ -62,6 +62,10 @@ public class SmsLogRespVO {
     @ExcelProperty("用户编号")
     private Long userId;
 
+    @Schema(description = "用户名称，优先显示昵称")
+    @ExcelProperty("用户名称")
+    private String userName;
+
     @Schema(description = "用户类型", example = "1")
     @ExcelProperty(value = "用户类型", converter = DictConvert.class)
     @DictFormat(DictTypeConstants.USER_TYPE)

@@ -56,6 +56,9 @@ public class LeaveSaveReqVO {
     @Schema(description = "下一节点审批人", example = "assist")
     private Map<String, List<Long>> nextNodeAssignees;
 
+    @Schema(description = "是否发送本次派发的待办短信，未传默认发送")
+    private Boolean sendSms;
+
     @Schema(description = "流程变量")
     private Map<String, Object> processVariables;
 

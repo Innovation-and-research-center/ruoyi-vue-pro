@@ -83,7 +83,7 @@ public class XzssServiceImpl implements XzssService {
     @Transactional(rollbackFor = Exception.class)
     public Long createXzss(Long userId,XzssSaveReqVO createReqVO) {
         XzssDO xzss = createXzssAndProcess(userId, createReqVO);
-        bpmRegisterTaskService.completeOnSubmit(userId, xzss.getProcessInstanceId(), buildProcessVariables(createReqVO));
+        bpmRegisterTaskService.completeOnSubmit(userId, xzss.getProcessInstanceId(), buildProcessVariables(createReqVO), createReqVO.getSendSms());
         return xzss.getId();
     }
 
@@ -102,7 +102,7 @@ public class XzssServiceImpl implements XzssService {
         if (xzss == null) throw exception(XZSS_NOT_EXISTS);
         updateReqVO.setXmGuid(xzss.getXmGuid());
         updateXzss(updateReqVO);
-        bpmRegisterTaskService.completeOnSubmit(userId, xzss.getProcessInstanceId(), buildProcessVariables(updateReqVO));
+        bpmRegisterTaskService.completeOnSubmit(userId, xzss.getProcessInstanceId(), buildProcessVariables(updateReqVO), updateReqVO.getSendSms());
     }
 
     private XzssDO createXzssAndProcess(Long userId, XzssSaveReqVO createReqVO) {

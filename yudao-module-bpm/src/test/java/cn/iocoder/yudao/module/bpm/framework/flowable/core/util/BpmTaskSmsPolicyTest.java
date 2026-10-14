@@ -47,6 +47,71 @@ class BpmTaskSmsPolicyTest {
     }
 
     @Test
+    void commonRegistrationSubmitHonorsSmsAndExcludesFutureRecipients() throws Exception {
+        cn.iocoder.yudao.module.bpm.service.task.BpmRegisterTaskServiceImpl service =
+                new cn.iocoder.yudao.module.bpm.service.task.BpmRegisterTaskServiceImpl();
+        for (String field : Arrays.asList("runtimeService", "flowableTaskService", "repositoryService")) {
+            java.lang.reflect.Field dependency = service.getClass().getDeclaredField(field);
+            dependency.setAccessible(true);
+            dependency.set(service, "runtimeService".equals(field) ? engine.getRuntimeService()
+                    : "flowableTaskService".equals(field) ? engine.getTaskService() : engine.getRepositoryService());
+        }
+        for (boolean sequential : Arrays.asList(false, true)) {
+            for (Boolean sendSms : Arrays.asList(false, true, null)) {
+                String instance = start(sequential, false, true);
+                Map<String, List<Long>> recipients = new HashMap<>();
+                recipients.put("target", Arrays.asList(4L, 5L, 6L));
+                recipients.put("after", Collections.singletonList(7L)); // 预选后续办理人，不属本次派发
+                Map<String, Object> variables = new HashMap<>();
+                variables.put(cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants
+                        .PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, recipients);
+                int completed = sendSms == null ? service.completeOnSubmit(1L, instance, variables)
+                        : service.completeOnSubmit(1L, instance, variables, sendSms);
+                assertEquals(1, completed);
+                assertTrue(engine.getRuntimeService().getVariables(instance).keySet().stream()
+                        .noneMatch(k -> k.startsWith("bpm_task_sms_pending_")));
+                for (int user = 4; user <= 6; user++) {
+                    assertPolicy(instance, String.valueOf(user), !Boolean.FALSE.equals(sendSms));
+                    engine.getTaskService().complete(task(instance, String.valueOf(user)).getId());
+                }
+                assertPolicy(instance, "7", true);
+            }
+        }
+    }
+
+    @Test
+    void receiveRegistrationDirectCompletionHonorsSmsChoice() throws Exception {
+        for (Boolean sendSms : Arrays.asList(false, true, null)) {
+            String instance = start(false, false);
+            cn.iocoder.yudao.module.bpm.service.receivedoc.ReceiveDocServiceImpl service =
+                    new cn.iocoder.yudao.module.bpm.service.receivedoc.ReceiveDocServiceImpl();
+            java.lang.reflect.Field runtime = service.getClass().getDeclaredField("runtimeService");
+            runtime.setAccessible(true);
+            runtime.set(service, engine.getRuntimeService());
+            java.lang.reflect.Field tasks = service.getClass().getDeclaredField("flowableTaskService");
+            tasks.setAccessible(true);
+            tasks.set(service, engine.getTaskService());
+            Map<String, Object> variables = new HashMap<>();
+            variables.put(cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants
+                            .PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES,
+                    Collections.singletonMap("target", Arrays.asList(4L, 5L, 6L)));
+            java.lang.reflect.Method complete = service.getClass().getDeclaredMethod(
+                    "completeManualReceiveRegisterTask", Long.class, String.class, Map.class, Boolean.class);
+            complete.setAccessible(true);
+            assertEquals(3, complete.invoke(service, 1L, instance, variables, sendSms));
+            for (int i = 4; i <= 6; i++) {
+                assertPolicy(instance, String.valueOf(i), !Boolean.FALSE.equals(sendSms));
+            }
+            assertTrue(engine.getRuntimeService().getVariables(instance).keySet().stream()
+                    .noneMatch(k -> k.startsWith("bpm_task_sms_pending_")));
+            for (Task task : engine.getTaskService().createTaskQuery().processInstanceId(instance).list()) {
+                engine.getTaskService().complete(task.getId());
+            }
+            assertPolicy(instance, "7", true);
+        }
+    }
+
+    @Test
     void delayedParallelRecipientsKeepEachApproversChoiceAndDefaultDoesNotLeak() {
         String instance = start(false, false);
         finishSource(instance, 1L, 4L, true);
@@ -138,19 +203,47 @@ class BpmTaskSmsPolicyTest {
     }
 
     private String start(boolean sequential, boolean async) {
+        return start(sequential, async, false);
+    }
+
+    private String start(boolean sequential, boolean async, boolean register) {
         BpmnModel model = new BpmnModel();
         org.flowable.bpmn.model.Process process = new org.flowable.bpmn.model.Process();
         process.setId("sms");
         model.addProcess(process);
         StartEvent start = new StartEvent(); start.setId("start"); process.addFlowElement(start);
         for (String id : Arrays.asList("source", "target", "after")) {
-            UserTask task = new UserTask(); task.setId(id); task.setName(id);
+            UserTask task = new UserTask(); task.setId(id); task.setName("source".equals(id) ? "来文登记" : id);
             MultiInstanceLoopCharacteristics mi = new MultiInstanceLoopCharacteristics();
             mi.setInputDataItem("${users}");
             mi.setElementVariable("user");
             mi.setSequential("target".equals(id) && sequential);
             mi.setCompletionCondition("${nrOfCompletedInstances >= nrOfInstances}");
             task.setLoopCharacteristics(mi);
+            if (register && "source".equals(id)) {
+                task.setLoopCharacteristics(null);
+                ExtensionElement properties = new ExtensionElement();
+                properties.setName("properties");
+                properties.setNamespace("http://flowable.org/bpmn");
+                properties.setNamespacePrefix("flowable");
+                for (String[] pair : new String[][]{{"business_node_type", "register"},
+                        {"register_submit_mode", "complete_on_submit"}}) {
+                    ExtensionElement property = new ExtensionElement();
+                    property.setName("property");
+                    property.setNamespace("http://flowable.org/bpmn");
+                    property.setNamespacePrefix("flowable");
+                    property.addAttribute(new ExtensionAttribute("name", pair[0]));
+                    property.addAttribute(new ExtensionAttribute("value", pair[1]));
+                    properties.addChildElement(property);
+                }
+                task.addExtensionElement(properties);
+                ExtensionElement strategy = new ExtensionElement();
+                strategy.setName("candidateStrategy");
+                strategy.setNamespace("http://flowable.org/bpmn");
+                strategy.setNamespacePrefix("flowable");
+                strategy.setElementText("36");
+                task.addExtensionElement(strategy);
+            }
             task.setAsynchronous("target".equals(id) && async);
             process.addFlowElement(task);
         }

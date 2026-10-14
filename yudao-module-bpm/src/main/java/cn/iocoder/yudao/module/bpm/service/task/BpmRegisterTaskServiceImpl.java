@@ -5,6 +5,8 @@ import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmTaskSmsPolicy;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.task.api.Task;
@@ -31,6 +33,8 @@ public class BpmRegisterTaskServiceImpl implements BpmRegisterTaskService {
     private org.flowable.engine.TaskService flowableTaskService;
     @Resource
     private org.flowable.engine.RepositoryService repositoryService;
+    @Resource
+    private org.flowable.engine.RuntimeService runtimeService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -56,7 +60,7 @@ public class BpmRegisterTaskServiceImpl implements BpmRegisterTaskService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public int completeOnSubmit(Long userId, String processInstanceId,
-                                Map<String, Object> processVariables) {
+                                Map<String, Object> processVariables, Boolean sendSms) {
         if (userId == null || StrUtil.isBlank(processInstanceId)) {
             return 0;
         }
@@ -76,6 +80,24 @@ public class BpmRegisterTaskServiceImpl implements BpmRegisterTaskService {
                     BpmTaskStatusEnum.APPROVE.getStatus());
             flowableTaskService.setVariableLocal(task.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON,
                     "提交业务表单并完成登记");
+            // 仅为登记本次实际选择的下一节点保存策略，排除诉讼/复议预选的后续办理人。
+            if (processVariables != null) {
+                @SuppressWarnings("unchecked")
+                Map<String, List<Long>> selections = (Map<String, List<Long>>) processVariables.get(
+                        BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+                if (selections != null) {
+                    BpmnModel model = repositoryService.getBpmnModel(task.getProcessDefinitionId());
+                    Map<String, List<Long>> recipients = new java.util.HashMap<>();
+                    BpmnModelUtils.getNextFlowNodes(
+                            BpmnModelUtils.getFlowElementById(model, task.getTaskDefinitionKey()), model,
+                            processVariables).forEach(node -> {
+                        if (selections.containsKey(node.getId())) {
+                            recipients.put(node.getId(), selections.get(node.getId()));
+                        }
+                    });
+                    BpmTaskSmsPolicy.prepare(runtimeService, processInstanceId, recipients, sendSms);
+                }
+            }
             flowableTaskService.complete(task.getId(), processVariables);
         }
         return registerTasks.size();

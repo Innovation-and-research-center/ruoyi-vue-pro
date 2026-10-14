@@ -3607,7 +3607,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             boolean alreadyHasMyTask = activeTasksInSourceNode.stream()
                     .anyMatch(t -> userId.toString().equals(t.getAssignee()));
             if (alreadyHasMyTask) {
-                throw new RuntimeException("撤回失败：您在该环节已有运行中的任务，无需重复撤回");
+                throw exception(TASK_WITHDRAW_FAIL_ALREADY_RUNNING);
             }
 
             updateTaskStatusAndReason(taskId, BpmTaskStatusEnum.CANCEL.getStatus(), BpmReasonEnum.CANCEL_BY_WITHDRAW.getReason());
@@ -3670,13 +3670,13 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                     Map<String, String> downstreamContext = getHistoricTaskReturnBranchContext(ht.getId());
                     String downstreamBatchId = downstreamContext.get(taskInstance.getTaskDefinitionKey());
                     if (StrUtil.equals(sourceReturnBatchId, downstreamBatchId)) {
-                        throw new RuntimeException("撤回失败：下游已有节点完成审批，流程已部分流转，禁止撤回！");
+                        throw exception(TASK_WITHDRAW_FAIL_DOWNSTREAM_APPROVED);
                     }
                     continue;
                 }
                 long timeDiff = Math.abs(ht.getCreateTime().getTime() - realNodeOutflowTime);
                 if (timeDiff <= 1000) {
-                    throw new RuntimeException("撤回失败：下游已有节点完成审批，流程已部分流转，禁止撤回！");
+                    throw exception(TASK_WITHDRAW_FAIL_DOWNSTREAM_APPROVED);
                 }
             }
         }

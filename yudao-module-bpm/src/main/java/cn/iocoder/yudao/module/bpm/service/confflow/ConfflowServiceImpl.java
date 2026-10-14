@@ -137,7 +137,7 @@ public class ConfflowServiceImpl implements ConfflowService {
     private void startProcess(Long userId, Long confflowId, ConfflowSaveReqVO reqVO) {
         Map<String, Object> processInstanceVariables = buildProcessVariables(reqVO);
         String processInstanceId = createProcessInstance(userId, confflowId, reqVO, processInstanceVariables);
-        completeRegisterTask(userId, processInstanceId, processInstanceVariables);
+        completeRegisterTask(userId, processInstanceId, processInstanceVariables, reqVO.getSendSms());
         updateProcessInfo(confflowId, processInstanceId);
     }
 
@@ -176,14 +176,14 @@ public class ConfflowServiceImpl implements ConfflowService {
         if (StrUtil.isBlank(processInstanceId)) {
             processInstanceId = createProcessInstance(userId, confflowId, reqVO, processInstanceVariables);
         }
-        completeRegisterTask(userId, processInstanceId, processInstanceVariables);
+        completeRegisterTask(userId, processInstanceId, processInstanceVariables, reqVO.getSendSms());
         updateProcessInfo(confflowId, processInstanceId);
     }
 
     private void completeRegisterTask(Long userId, String processInstanceId,
-                                      Map<String, Object> processInstanceVariables) {
+                                      Map<String, Object> processInstanceVariables, Boolean sendSms) {
         int completedCount = bpmRegisterTaskService.completeOnSubmit(userId, processInstanceId,
-                processInstanceVariables);
+                processInstanceVariables, sendSms);
         if (completedCount == 0) {
             throw exception(CONFFLOW_REGISTER_TASK_NOT_ACTIVE);
         }

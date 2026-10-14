@@ -74,34 +74,37 @@
                         ELSE 3
                     END
                 END) AS status,
-                (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_) FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_PROCESS_RESULT} LIMIT 1) AS "processResult",
-                (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_) FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_PROCESS_STATUS} LIMIT 1) AS "processStatus",
-                (SELECT var.TEXT_ FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_PROCESS_REASON} LIMIT 1) AS "processReason",
-                (SELECT string_agg(t.NAME_, ', ') FROM ACT_RU_TASK t WHERE t.PROC_INST_ID_ = res.ID_) AS "currTaskName",
-                (SELECT string_agg(tu.nickname, ', ') FROM ACT_RU_TASK t LEFT JOIN system_users tu ON t.ASSIGNEE_ = CAST(tu.id AS VARCHAR) WHERE t.PROC_INST_ID_ = res.ID_) AS "currTaskAssignee",
-                (SELECT var.TEXT_ FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_SOURCE_UNIT} LIMIT 1) AS "sourceUnit",
-                (
-                    SELECT CASE
-                        WHEN count(f.id) = 0 THEN '网页新建'
-                        WHEN max(NULLIF(f.operation_information, '')) IS NULL THEN '未知来源'
-                        WHEN max(NULLIF(f.operation_information, '')) = '市局公告' THEN '通知公告'
-                        WHEN max(NULLIF(f.operation_information, '')) = '林业局公文' THEN '林业局收文'
-                        WHEN max(NULLIF(f.operation_information, '')) = '省厅公文' THEN '省厅收文'
-                        ELSE max(NULLIF(f.operation_information, ''))
-                    END
-                    FROM bpm_receive_doc receive_doc
-                    LEFT JOIN t_file_exchange f
-                      ON f.doc_id = receive_doc.id
-                     AND COALESCE(f.deleted, 0) = 0
-                    WHERE receive_doc.process_instance_id = res.ID_
-                      AND COALESCE(receive_doc.deleted, 0) = 0
-                    GROUP BY receive_doc.id
-                    LIMIT 1
-                ) AS source,
+                <choose>
+                    <when test="reqVO.processResult != null"><include refid="CurrentDisplayProcessResult"><property name="instanceId" value="res.ID_" /></include></when>
+                    <otherwise>CAST(NULL AS VARCHAR)</otherwise>
+                </choose> AS "processResult",
+                CAST(NULL AS VARCHAR) AS "processStatus",
+                CAST(NULL AS VARCHAR) AS "processReason",
+                <choose>
+                    <when test="reqVO.orderField == 'currTaskName' and validSort"><include refid="CurrentDisplayCurrTaskName"><property name="instanceId" value="res.ID_" /></include></when>
+                    <otherwise>CAST(NULL AS VARCHAR)</otherwise>
+                </choose> AS "currTaskName",
+                <choose>
+                    <when test="reqVO.orderField == 'currTaskAssignee' and validSort"><include refid="CurrentDisplayCurrTaskAssignee"><property name="instanceId" value="res.ID_" /></include></when>
+                    <otherwise>CAST(NULL AS VARCHAR)</otherwise>
+                </choose> AS "currTaskAssignee",
+                <choose>
+                    <when test="(reqVO.startDeptName != null and reqVO.startDeptName != '') or (reqVO.orderField == 'sourceUnit' and validSort)"><include refid="CurrentDisplaySourceUnit"><property name="instanceId" value="res.ID_" /></include></when>
+                    <otherwise>CAST(NULL AS VARCHAR)</otherwise>
+                </choose> AS "sourceUnit",
+                <choose>
+                    <when test="reqVO.orderField == 'source' and validSort"><include refid="CurrentDisplaySource"><property name="instanceId" value="res.ID_" /></include></when>
+                    <otherwise>CAST(NULL AS VARCHAR)</otherwise>
+                </choose> AS source,
                 '现有数据' AS "dataType",
-                (SELECT var.TEXT_ FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_URGENCY} LIMIT 1) AS "urgencyDegree",
-                (SELECT CASE WHEN var.LONG_ IS NOT NULL THEN to_char(to_timestamp(var.LONG_ / 1000), 'YYYY-MM-DD HH24:MI:SS') ELSE var.TEXT_ END
-                    FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = res.ID_ AND var.NAME_ = #{VAR_DEADLINE} LIMIT 1) AS "deadlineDate",
+                <choose>
+                    <when test="reqVO.orderField == 'urgencyDegree' and validSort"><include refid="CurrentDisplayUrgencyDegree"><property name="instanceId" value="res.ID_" /></include></when>
+                    <otherwise>CAST(NULL AS VARCHAR)</otherwise>
+                </choose> AS "urgencyDegree",
+                <choose>
+                    <when test="reqVO.overdueDays != null or (reqVO.orderField == 'deadlineDate' and validSort)"><include refid="CurrentDisplayDeadlineDate"><property name="instanceId" value="res.ID_" /></include></when>
+                    <otherwise>CAST(NULL AS VARCHAR)</otherwise>
+                </choose> AS "deadlineDate",
                 FALSE AS "isHistory",
                 NULL AS "projectId",
                 'flowable' AS "sourceType",
@@ -174,24 +177,10 @@
                 CASE WHEN p.end_date IS NULL THEN p.inact ELSE NULL END AS "currTaskName",
                 CASE WHEN p.end_date IS NULL THEN p.intransactor ELSE NULL END AS "currTaskAssignee",
                 COALESCE(rd.send_dept, p.responsible_dept) AS "sourceUnit",
-                (
-                    SELECT CASE
-                        WHEN count(f.id) = 0 THEN '网页新建'
-                        WHEN max(NULLIF(f.operation_information, '')) IS NULL THEN '未知来源'
-                        WHEN max(NULLIF(f.operation_information, '')) = '市局公告' THEN '通知公告'
-                        WHEN max(NULLIF(f.operation_information, '')) = '林业局公文' THEN '林业局收文'
-                        WHEN max(NULLIF(f.operation_information, '')) = '省厅公文' THEN '省厅收文'
-                        ELSE max(NULLIF(f.operation_information, ''))
-                    END
-                    FROM bpm_receive_doc r
-                    LEFT JOIN t_file_exchange f
-                      ON f.doc_id = r.id
-                     AND COALESCE(f.deleted, 0) = 0
-                    WHERE r.project_id = p.project_id
-                      AND COALESCE(r.deleted, 0) = 0
-                    GROUP BY r.project_id
-                    LIMIT 1
-                ) AS source,
+                <choose>
+                    <when test="reqVO.orderField == 'source' and validSort"><include refid="HistoryDisplaySource"><property name="projectId" value="p.project_id" /></include></when>
+                    <otherwise>CAST(NULL AS VARCHAR)</otherwise>
+                </choose> AS source,
                 CASE
                     WHEN p.batch_no = 'HIS_WF_UNFINISHED_BEFORE_2026' THEN '历史未办结'
                     ELSE '历史已办结'
@@ -317,10 +306,7 @@
         </where>
     </sql>
 
-    <select id="selectUnifiedList" resultMap="UnifiedResultMap">
-        SELECT unified.*, COUNT(*) OVER() AS "totalCount"
-        FROM <include refid="UnifiedData" />
-        <include refid="UnifiedWhere" />
+    <sql id="UnifiedOrderBy">
         ORDER BY
         <choose>
             <when test="reqVO.orderField == 'name' and reqVO.orderDirection == 'asc'">unified.name ASC</when>
@@ -348,10 +334,151 @@
             <otherwise>unified."createTime" DESC</otherwise>
         </choose>
         , unified."sortId" DESC
-        LIMIT #{reqVO.pageSize} OFFSET (#{reqVO.pageNo} - 1) * #{reqVO.pageSize}
+    </sql>
+
+    <!-- instanceId / projectId 仅由 include 的固定表别名替换，不接收请求参数。 -->
+    <sql id="CurrentDisplayProcessResult">
+        (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_) FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = ${instanceId} AND var.NAME_ = #{VAR_PROCESS_RESULT} LIMIT 1)
+    </sql>
+
+    <sql id="CurrentDisplayProcessStatus">
+        (SELECT COALESCE(CAST(var.LONG_ AS VARCHAR), var.TEXT_) FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = ${instanceId} AND var.NAME_ = #{VAR_PROCESS_STATUS} LIMIT 1)
+    </sql>
+
+    <sql id="CurrentDisplayProcessReason">
+        (SELECT var.TEXT_ FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = ${instanceId} AND var.NAME_ = #{VAR_PROCESS_REASON} LIMIT 1)
+    </sql>
+
+    <sql id="CurrentDisplayCurrTaskName">
+        (SELECT string_agg(t.NAME_, ', ') FROM ACT_RU_TASK t WHERE t.PROC_INST_ID_ = ${instanceId})
+    </sql>
+
+    <sql id="CurrentDisplayCurrTaskAssignee">
+        (SELECT string_agg(tu.nickname, ', ') FROM ACT_RU_TASK t LEFT JOIN system_users tu ON t.ASSIGNEE_ = CAST(tu.id AS VARCHAR) WHERE t.PROC_INST_ID_ = ${instanceId})
+    </sql>
+
+    <sql id="CurrentDisplaySourceUnit">
+        (SELECT var.TEXT_ FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = ${instanceId} AND var.NAME_ = #{VAR_SOURCE_UNIT} LIMIT 1)
+    </sql>
+
+    <sql id="CurrentDisplaySource">
+        (
+            SELECT CASE
+                WHEN count(f.id) = 0 THEN '网页新建'
+                WHEN max(NULLIF(f.operation_information, '')) IS NULL THEN '未知来源'
+                WHEN max(NULLIF(f.operation_information, '')) = '市局公告' THEN '通知公告'
+                WHEN max(NULLIF(f.operation_information, '')) = '林业局公文' THEN '林业局收文'
+                WHEN max(NULLIF(f.operation_information, '')) = '省厅公文' THEN '省厅收文'
+                ELSE max(NULLIF(f.operation_information, ''))
+            END
+            FROM bpm_receive_doc receive_doc
+            LEFT JOIN t_file_exchange f
+              ON f.doc_id = receive_doc.id
+             AND COALESCE(f.deleted, 0) = 0
+            WHERE receive_doc.process_instance_id = ${instanceId}
+              AND COALESCE(receive_doc.deleted, 0) = 0
+            GROUP BY receive_doc.id
+            LIMIT 1
+        )
+    </sql>
+
+    <sql id="CurrentDisplayUrgencyDegree">
+        (SELECT var.TEXT_ FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = ${instanceId} AND var.NAME_ = #{VAR_URGENCY} LIMIT 1)
+    </sql>
+
+    <sql id="CurrentDisplayDeadlineDate">
+        (SELECT CASE WHEN var.LONG_ IS NOT NULL THEN to_char(to_timestamp(var.LONG_ / 1000), 'YYYY-MM-DD HH24:MI:SS') ELSE var.TEXT_ END
+                    FROM ACT_HI_VARINST var WHERE var.PROC_INST_ID_ = ${instanceId} AND var.NAME_ = #{VAR_DEADLINE} LIMIT 1)
+    </sql>
+
+    <sql id="HistoryDisplaySource">
+        (
+            SELECT CASE
+                WHEN count(f.id) = 0 THEN '网页新建'
+                WHEN max(NULLIF(f.operation_information, '')) IS NULL THEN '未知来源'
+                WHEN max(NULLIF(f.operation_information, '')) = '市局公告' THEN '通知公告'
+                WHEN max(NULLIF(f.operation_information, '')) = '林业局公文' THEN '林业局收文'
+                WHEN max(NULLIF(f.operation_information, '')) = '省厅公文' THEN '省厅收文'
+                ELSE max(NULLIF(f.operation_information, ''))
+            END
+            FROM bpm_receive_doc r
+            LEFT JOIN t_file_exchange f
+              ON f.doc_id = r.id
+             AND COALESCE(f.deleted, 0) = 0
+            WHERE r.project_id = ${projectId}
+              AND COALESCE(r.deleted, 0) = 0
+            GROUP BY r.project_id
+            LIMIT 1
+        )
+    </sql>
+
+    <!--
+      分页前只计算筛选和排序需要的展示字段；分页后补齐其余字段。
+      保留原有权限、关联、标量子查询和排序，不用聚合或重新关联改变行数。
+      总数与列表仍在同一条语句的快照内读取。
+    -->
+    <select id="selectUnifiedList" resultMap="UnifiedResultMap">
+        <bind name="validSort" value="reqVO.orderDirection == 'asc' or reqVO.orderDirection == 'desc'" />
+        SELECT
+            unified.id,
+            unified.name,
+            unified.category,
+            unified."processDefinitionKey",
+            unified."startUserNickname",
+            unified."startDeptName",
+            unified."createTime",
+            unified."endTime",
+            unified.status,
+            <choose>
+                <when test="reqVO.processResult != null">unified."processResult"</when>
+                <otherwise>CASE WHEN unified."isHistory" THEN unified."processResult" ELSE <include refid="CurrentDisplayProcessResult"><property name="instanceId" value="unified.id" /></include> END</otherwise>
+            </choose> AS "processResult",
+            CASE WHEN unified."isHistory" THEN unified."processStatus" ELSE <include refid="CurrentDisplayProcessStatus"><property name="instanceId" value="unified.id" /></include> END AS "processStatus",
+            CASE WHEN unified."isHistory" THEN unified."processReason" ELSE <include refid="CurrentDisplayProcessReason"><property name="instanceId" value="unified.id" /></include> END AS "processReason",
+            <choose>
+                <when test="reqVO.orderField == 'currTaskName' and validSort">unified."currTaskName"</when>
+                <otherwise>CASE WHEN unified."isHistory" THEN unified."currTaskName" ELSE <include refid="CurrentDisplayCurrTaskName"><property name="instanceId" value="unified.id" /></include> END</otherwise>
+            </choose> AS "currTaskName",
+            <choose>
+                <when test="reqVO.orderField == 'currTaskAssignee' and validSort">unified."currTaskAssignee"</when>
+                <otherwise>CASE WHEN unified."isHistory" THEN unified."currTaskAssignee" ELSE <include refid="CurrentDisplayCurrTaskAssignee"><property name="instanceId" value="unified.id" /></include> END</otherwise>
+            </choose> AS "currTaskAssignee",
+            <choose>
+                <when test="(reqVO.startDeptName != null and reqVO.startDeptName != '') or (reqVO.orderField == 'sourceUnit' and validSort)">unified."sourceUnit"</when>
+                <otherwise>CASE WHEN unified."isHistory" THEN unified."sourceUnit" ELSE <include refid="CurrentDisplaySourceUnit"><property name="instanceId" value="unified.id" /></include> END</otherwise>
+            </choose> AS "sourceUnit",
+            <choose>
+                <when test="reqVO.orderField == 'source' and validSort">unified.source</when>
+                <otherwise>CASE WHEN unified."isHistory" THEN
+                        <include refid="HistoryDisplaySource"><property name="projectId" value="unified.&quot;projectId&quot;" /></include>
+                    ELSE <include refid="CurrentDisplaySource"><property name="instanceId" value="unified.id" /></include> END</otherwise>
+            </choose> AS source,
+            unified."dataType",
+            <choose>
+                <when test="reqVO.orderField == 'urgencyDegree' and validSort">unified."urgencyDegree"</when>
+                <otherwise>CASE WHEN unified."isHistory" THEN unified."urgencyDegree" ELSE <include refid="CurrentDisplayUrgencyDegree"><property name="instanceId" value="unified.id" /></include> END</otherwise>
+            </choose> AS "urgencyDegree",
+            <choose>
+                <when test="reqVO.overdueDays != null or (reqVO.orderField == 'deadlineDate' and validSort)">unified."deadlineDate"</when>
+                <otherwise>CASE WHEN unified."isHistory" THEN unified."deadlineDate" ELSE <include refid="CurrentDisplayDeadlineDate"><property name="instanceId" value="unified.id" /></include> END</otherwise>
+            </choose> AS "deadlineDate",
+            unified."isHistory",
+            unified."projectId",
+            unified."sourceType",
+            unified."sortId",
+            unified."totalCount"
+        FROM (
+            SELECT unified.*, COUNT(*) OVER() AS "totalCount"
+            FROM <include refid="UnifiedData" />
+            <include refid="UnifiedWhere" />
+            <include refid="UnifiedOrderBy" />
+            LIMIT #{reqVO.pageSize} OFFSET (#{reqVO.pageNo} - 1) * #{reqVO.pageSize}
+        ) unified
+        <include refid="UnifiedOrderBy" />
     </select>
 
     <select id="selectUnifiedCount" resultType="java.lang.Long">
+        <bind name="validSort" value="false" />
         SELECT COUNT(1)
         FROM <include refid="UnifiedData" />
         <include refid="UnifiedWhere" />

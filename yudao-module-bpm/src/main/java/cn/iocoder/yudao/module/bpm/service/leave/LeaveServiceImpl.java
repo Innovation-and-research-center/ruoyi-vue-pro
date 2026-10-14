@@ -106,7 +106,7 @@ public class LeaveServiceImpl implements LeaveService {
     public Long createLeave(Long userId, LeaveSaveReqVO createReqVO) {
         LeaveDO leave = createLeaveAndProcess(userId, createReqVO);
         bpmRegisterTaskService.completeOnSubmit(userId, leave.getProcessInstanceId(),
-                buildProcessVariables(userId, createReqVO));
+                buildProcessVariables(userId, createReqVO), createReqVO.getSendSms());
         return leave.getId();
     }
 
@@ -128,7 +128,7 @@ public class LeaveServiceImpl implements LeaveService {
         normalizePeriodTime(updateReqVO);
         updateLeave(updateReqVO);
         bpmRegisterTaskService.completeOnSubmit(userId, leave.getProcessInstanceId(),
-                buildProcessVariables(userId, updateReqVO));
+                buildProcessVariables(userId, updateReqVO), updateReqVO.getSendSms());
     }
 
     private LeaveDO createLeaveAndProcess(Long userId, LeaveSaveReqVO createReqVO) {

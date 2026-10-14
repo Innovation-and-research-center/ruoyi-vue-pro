@@ -19,6 +19,12 @@ public interface BpmRegisterTaskService {
      *
      * @return 完成的登记任务数量
      */
-    int completeOnSubmit(Long userId, String processInstanceId, Map<String, Object> processVariables);
+    default int completeOnSubmit(Long userId, String processInstanceId, Map<String, Object> processVariables) {
+        return completeOnSubmit(userId, processInstanceId, processVariables, null);
+    }
+
+    /** 完成登记并应用本次派发的短信选择；null 保留默认发送行为。 */
+    int completeOnSubmit(Long userId, String processInstanceId, Map<String, Object> processVariables,
+                         Boolean sendSms);
 
 }
