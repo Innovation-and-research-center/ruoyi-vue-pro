@@ -4341,13 +4341,8 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 .active()
                 .count();
 
-        // 2. 查询已办数量 (历史任务中已完成的)
-        long doneCount = historyService.createHistoricTaskInstanceQuery()
-                .taskAssignee(String.valueOf(userId))
-                .finished()
-                .processVariableValueNotEquals(PROCESS_INSTANCE_VARIABLE_STATUS,
-                        BpmProcessInstanceStatusEnum.INVALID.getStatus())
-                .count();
+        // 2. 复用已办列表的无筛选统计，统一取消、作废、发起人节点和旧系统历史数据的口径。
+        long doneCount = taskSortMapper.selectUnifiedDoneTaskCount(userId, new BpmTaskPageReqVO());
 
         // 3. 组装返回
         BpmTaskCountRespVO vo = new BpmTaskCountRespVO();
