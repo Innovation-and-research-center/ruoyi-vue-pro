@@ -6,6 +6,7 @@ import cn.iocoder.yudao.module.bpm.enums.definition.BpmChildProcessMultiInstance
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.candidate.BpmTaskCandidateInvoker;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmTaskSmsPolicy;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmDispatchSources;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
 import lombok.Setter;
@@ -64,7 +65,10 @@ public class BpmParallelMultiInstanceBehavior extends ParallelMultiInstanceBehav
 
             // 第二步，获取任务的所有处理人
             @SuppressWarnings("unchecked")
-            Set<Long> assigneeUserIds = (Set<Long>) execution.getVariable(super.collectionVariable, Set.class);
+            Set<Long> assigneeUserIds = BpmDispatchSources.takeNewMembers(execution);
+            if (assigneeUserIds == null && !Boolean.TRUE.equals(execution.getVariable(BpmDispatchSources.BRANCH))) {
+                assigneeUserIds = (Set<Long>) execution.getVariable(super.collectionVariable, Set.class);
+            }
             if (assigneeUserIds == null) {
                 assigneeUserIds = taskCandidateInvoker.calculateUsersByTask(execution);
                 if (CollUtil.isEmpty(assigneeUserIds)) {
@@ -75,7 +79,9 @@ public class BpmParallelMultiInstanceBehavior extends ParallelMultiInstanceBehav
                 }
                 execution.setVariableLocal(super.collectionVariable, assigneeUserIds);
             }
+            execution.setVariableLocal(super.collectionVariable, assigneeUserIds);
             BpmTaskSmsPolicy.captureMembers(execution, assigneeUserIds);
+            BpmDispatchSources.capture(execution, assigneeUserIds);
             return assigneeUserIds.size();
         }
 
@@ -92,6 +98,13 @@ public class BpmParallelMultiInstanceBehavior extends ParallelMultiInstanceBehav
         }
 
         return super.resolveNrOfInstances(execution);
+    }
+
+    /** 撤回不计为通过；仅在服务已确认剩余已办满足条件后结束会签。 */
+    public void completeAfterWithdrawal(org.flowable.engine.impl.persistence.entity.ExecutionEntity root) {
+        org.flowable.engine.impl.util.CommandContextUtil.getActivityInstanceEntityManager().recordActivityEnd(root, null);
+        sendCompletedEvent(root);
+        cleanupMiRoot(root);
     }
 
 }

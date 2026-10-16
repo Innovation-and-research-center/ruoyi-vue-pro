@@ -42,6 +42,7 @@ import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmTaskCandidat
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnModelConstants;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.event.BpmProcessInstanceEventPublisher;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmDispatchSources;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmHttpRequestUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
@@ -432,9 +433,8 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             sourceElement = bpmnModel.getFlowElement(task.getTaskDefinitionKey());
             if (task.getTaskLocalVariables() != null
                     && task.getTaskLocalVariables().containsKey("internal_source_task_id")) {
-                CandidateRule currentRule = parseCandidateRule(parseAllProperties(sourceElement));
-                restrictedInternalLoop = getCandidateUsers(currentRule.getType(), currentRule.getValue()).stream()
-                        .noneMatch(user -> Objects.equals(user.getId(), loginUserId));
+                restrictedInternalLoop = isRestrictedInternalOperator(loginUserId, reqVO.getProcessDefinitionId(),
+                        task.getTaskDefinitionKey(), true);
             }
         }
 
@@ -652,6 +652,10 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         // 当前部门人员来自实际部门关系表；相同人员只保留一次，并按当前部门及部门内顺序展示。
         AdminUserDO loginUser = userService.getUser(loginUserId);
         Long currentDeptId = loginUser != null ? loginUser.getDeptId() : null;
+        if (restrictedInternalLoop) {
+            result.stream().filter(node -> node.getTaskDefKey().endsWith("_internal_loop"))
+                    .forEach(node -> nodeCandidateMap.put(node.getTaskDefKey(), new ArrayList<>()));
+        }
         if (currentDeptId != null) {
             List<AdminUserDO> currentDeptUsers = userService.getUserListByDeptIds(Collections.singleton(currentDeptId))
                     .stream()
@@ -1715,6 +1719,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         if (!processDefinitionService.canUserStartProcessDefinition(processDefinitionInfo, userId)) {
             throw exception(PROCESS_INSTANCE_START_USER_CAN_START);
         }
+        variables = BpmDispatchSources.businessVariables(variables);
         // 1.3 校验发起人自选审批人
         validateStartUserSelectAssignees(userId, definition, startUserSelectAssignees, variables);
 
@@ -1895,7 +1900,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
     @Override
     public void updateProcessInstanceVariables(String id, Map<String, Object> variables) {
-        runtimeService.setVariables(id, variables);
+        runtimeService.setVariables(id, BpmDispatchSources.businessVariables(variables));
     }
 
     @Override
@@ -2004,6 +2009,100 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         });
     }
 
+
+    @Override
+    public boolean isRestrictedInternalOperator(Long userId, String definitionId, String nodeId, boolean internalTask) {
+        if (!internalTask) return false;
+        FlowElement node = processDefinitionService.getProcessDefinitionBpmnModel(definitionId).getFlowElement(nodeId);
+        CandidateRule rule = parseCandidateRule(parseAllProperties(node));
+        return getCandidateUsers(rule.getType(), rule.getValue()).stream().noneMatch(user -> Objects.equals(userId, user.getId()));
+    }
+
+    @Override
+    public Set<Long> getInternalLoopCandidateUserIds(Long userId, String definitionId, String nodeId, boolean internalTask) {
+        FlowElement node = processDefinitionService.getProcessDefinitionBpmnModel(definitionId).getFlowElement(nodeId);
+        Map<String, String> properties = parseAllProperties(node);
+        boolean restricted = isRestrictedInternalOperator(userId, definitionId, nodeId, internalTask);
+        if (!restricted && !"1".equals(properties.get("loop_flag"))) return Collections.emptySet();
+        Set<Long> result = new LinkedHashSet<>();
+        if (!restricted) {
+            CandidateRule rule = parseCandidateRule(properties);
+            getCandidateUsers(rule.getType(), rule.getValue()).forEach(user -> result.add(user.getId()));
+        }
+        AdminUserDO operator = userService.getUser(userId);
+        if (operator != null && operator.getDeptId() != null) {
+            userService.getUserListByDeptIds(Collections.singleton(operator.getDeptId())).stream()
+                    .filter(user -> CommonStatusEnum.ENABLE.getStatus().equals(user.getStatus()))
+                    .forEach(user -> result.add(user.getId()));
+        }
+        return result;
+    }
+
+    @Override
+    public Set<Long> getAppendCandidateUserIds(Long operatorId, String processInstanceId, String executionId, String nodeId) {
+        return getAppendCandidateUserIdsBatch(operatorId, processInstanceId, Collections.singletonMap(executionId, nodeId))
+                .getOrDefault(executionId, Collections.emptySet());
+    }
+
+    @Override
+    public Map<String, Set<Long>> getAppendCandidateUserIdsBatch(Long operatorId, String processInstanceId,
+                                                               Map<String, String> executionNodes) {
+        Map<String, Set<Long>> result = new LinkedHashMap<>();
+        if (executionNodes.isEmpty()) return result;
+        ProcessInstance instance = runtimeService.createProcessInstanceQuery().processInstanceId(processInstanceId).singleResult();
+        if (instance == null) return result;
+        BpmnModel model = processDefinitionService.getProcessDefinitionBpmnModel(instance.getProcessDefinitionId());
+        Set<String> sameDeptNodes = getSameDeptCandidateNodes();
+        Map<String, CandidateRule> rules = new HashMap<>();
+        Set<Long> groupIds = new LinkedHashSet<>();
+        for (String nodeId : new LinkedHashSet<>(executionNodes.values())) {
+            FlowElement node = BpmnModelUtils.getFlowElementById(model, nodeId);
+            if (!Objects.equals(BpmnModelUtils.parseCandidateStrategy(node), 55)) continue;
+            CandidateRule rule = parseCandidateRule(parseAllProperties(node)); rules.put(nodeId, rule);
+            if ("group".equals(rule.getType()) && StrUtil.isNotBlank(rule.getValue())) groupIds.addAll(StrUtils.splitToLongSet(rule.getValue()));
+        }
+        Map<Long, BpmUserGroupDO> groups = groupIds.isEmpty() ? Collections.emptyMap()
+                : CollectionUtils.convertMap(userGroupService.getUserGroupList(groupIds), BpmUserGroupDO::getId);
+        Set<Long> groupMembers = groups.values().stream().map(BpmUserGroupDO::getUserIds).filter(Objects::nonNull)
+                .flatMap(Set::stream).collect(Collectors.toSet());
+        Set<Long> enabledGroupMembers = groupMembers.isEmpty() ? Collections.emptySet() : userService.getUserList(groupMembers).stream()
+                .filter(user -> CommonStatusEnum.ENABLE.getStatus().equals(user.getStatus())).map(AdminUserDO::getId).collect(Collectors.toSet());
+        Set<Long> sameDeptMembers = null;
+        Map<String, Set<Long>> roleCandidates = new HashMap<>();
+        Map<String, Map<String, Object>> executionVariables = new HashMap<>();
+        for (Map.Entry<String, String> entry : executionNodes.entrySet()) {
+            String nodeId = entry.getValue();
+            CandidateRule rule = rules.get(nodeId);
+            Set<Long> candidates = new LinkedHashSet<>();
+            if (rule != null) {
+                if ("group".equals(rule.getType()) && StrUtil.isNotBlank(rule.getValue())) {
+                    for (Long groupId : StrUtils.splitToLongSet(rule.getValue())) {
+                        BpmUserGroupDO group = groups.get(groupId);
+                        if (group != null && group.getUserIds() != null) candidates.addAll(group.getUserIds());
+                    }
+                    candidates.retainAll(enabledGroupMembers);
+                } else if ("role".equals(rule.getType())) {
+                    candidates.addAll(roleCandidates.computeIfAbsent(rule.getValue(), key -> getCandidateUsers("role", key)
+                            .stream().map(AdminUserDO::getId).collect(Collectors.toSet())));
+                }
+                if (sameDeptNodes.contains(instance.getProcessDefinitionKey() + ":" + nodeId)) {
+                    if (sameDeptMembers == null) {
+                        Set<Long> departments = new LinkedHashSet<>(userService.getUserDeptIds(operatorId));
+                        sameDeptMembers = departments.isEmpty() ? Collections.emptySet() : userService.getUserListByDeptIds(departments)
+                                .stream().map(AdminUserDO::getId).collect(Collectors.toSet());
+                    }
+                    candidates.retainAll(sameDeptMembers);
+                }
+            } else {
+                String executionId = entry.getKey().startsWith("new:") ? processInstanceId : entry.getKey();
+                // 表达式候选保留各执行流上下文，不将同名不同分支混用。
+                candidates.addAll(taskCandidateInvoker.calculateUsersByActivity(model, nodeId, Long.valueOf(instance.getStartUserId()),
+                        instance.getProcessDefinitionId(), new HashMap<>(executionVariables.computeIfAbsent(executionId, runtimeService::getVariables))));
+            }
+            result.put(entry.getKey(), candidates);
+        }
+        return result;
+    }
 
     private List<AdminUserDO> getCandidateUsers(String chooseRule, String ruleValue) {
         if (StrUtil.isEmpty(chooseRule) || StrUtil.isEmpty(ruleValue)) {

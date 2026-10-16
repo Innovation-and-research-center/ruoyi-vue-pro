@@ -8,6 +8,8 @@ import cn.iocoder.yudao.framework.common.exception.ErrorCode;
  * bpm 系统，使用 1-009-000-000 段
  */
 public interface ErrorCodeConstants {
+    ErrorCode TASK_WITHDRAW_INVALID = new ErrorCode(1_009_007_091, "撤回失败：{}");
+    ErrorCode TASK_APPEND_INVALID = new ErrorCode(1_009_007_090, "追加失败：{}");
 
     // ==========  通用流程处理 模块 1-009-000-000 ==========
 

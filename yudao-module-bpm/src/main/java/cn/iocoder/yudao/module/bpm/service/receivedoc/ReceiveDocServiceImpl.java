@@ -19,6 +19,7 @@ import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmReceiveRegisterTaskUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmTaskSmsPolicy;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmDispatchSources;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
 import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
 import cn.iocoder.yudao.module.bpm.service.task.BpmTaskService;
@@ -75,6 +76,11 @@ import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVari
 @Validated
 @Slf4j
 public class ReceiveDocServiceImpl implements ReceiveDocService {
+    @Resource
+    private org.flowable.engine.ManagementService managementService;
+    @Resource
+    private org.flowable.engine.RepositoryService repositoryService;
+
 
     private static final int NUMBER_ATTEMPT_LIMIT = 20;
 
@@ -136,7 +142,7 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
         Map<String, Object> processInstanceVariables = new HashMap<>();
 
         if (CollUtil.isNotEmpty(createReqVO.getProcessVariables())) {
-            processInstanceVariables.putAll(createReqVO.getProcessVariables());
+            processInstanceVariables.putAll(BpmDispatchSources.businessVariables(createReqVO.getProcessVariables()));
         }
         String processName = "收文";
 
@@ -477,7 +483,7 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
     private Map<String, Object> buildReceiveDocProcessVariables(ReceiveDocSaveReqVO reqVO, String defaultProcessName) {
         Map<String, Object> processInstanceVariables = new HashMap<>();
         if (CollUtil.isNotEmpty(reqVO.getProcessVariables())) {
-            processInstanceVariables.putAll(reqVO.getProcessVariables());
+            processInstanceVariables.putAll(BpmDispatchSources.businessVariables(reqVO.getProcessVariables()));
         }
         processInstanceVariables.put(PROCESS_SOURCE_UNIT, reqVO.getSendDept());
         String customName = StringUtil.isEmpty(reqVO.getSubject()) ? defaultProcessName : reqVO.getSubject();
@@ -563,6 +569,15 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
                 Map<String, List<Long>> recipients = (Map<String, List<Long>>) processInstanceVariables.get(
                         BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
                 BpmTaskSmsPolicy.prepare(runtimeService, processInstanceId, recipients, sendSms);
+                BpmDispatchSources.prepare(runtimeService, processInstanceId, task.getId(), recipients);
+                runtimeService.setVariables(processInstanceId, processInstanceVariables);
+                BpmDispatchSources.recordOptions(managementService, flowableTaskService, task.getId(), processInstanceId,
+                        (org.flowable.bpmn.model.FlowNode) repositoryService.getBpmnModel(task.getProcessDefinitionId()).getFlowElement(task.getTaskDefinitionKey()));
+                for (String targetId : BpmDispatchSources.selectedTargets(managementService, processInstanceId,
+                        (org.flowable.bpmn.model.FlowNode) repositoryService.getBpmnModel(task.getProcessDefinitionId()).getFlowElement(task.getTaskDefinitionKey()))) {
+                    BpmDispatchSources.prepareDefault(runtimeService, processInstanceId, task.getId(), targetId);
+                    BpmTaskSmsPolicy.prepareDefault(runtimeService, processInstanceId, targetId, sendSms);
+                }
                 flowableTaskService.complete(task.getId(), processInstanceVariables);
                 completedCount++;
             }

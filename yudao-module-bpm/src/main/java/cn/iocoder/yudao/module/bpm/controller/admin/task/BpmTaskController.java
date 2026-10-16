@@ -337,6 +337,42 @@ public class BpmTaskController {
         return success(true);
     }
 
+    @Resource
+    private cn.iocoder.yudao.module.bpm.service.task.BpmTaskAppendService taskAppendService;
+
+    @GetMapping("/append-targets")
+    @Operation(summary = "查询本人已办任务可追加的运行实例")
+    @PreAuthorize("@ss.hasPermission('bpm:task:update')")
+    public CommonResult<List<BpmTaskAppendTargetRespVO>> getAppendTargets(@RequestParam String sourceTaskId) {
+        return success(taskAppendService.targets(getLoginUserId(), sourceTaskId));
+    }
+
+    @PostMapping("/append")
+    @Operation(summary = "向本人已办任务的下游运行实例追加办理人")
+    @PreAuthorize("@ss.hasPermission('bpm:task:update')")
+    public CommonResult<Boolean> appendTask(@Valid @RequestBody BpmTaskAppendReqVO reqVO) {
+        taskAppendService.append(getLoginUserId(), reqVO);
+        return success(true);
+    }
+
+    @Resource
+    private cn.iocoder.yudao.module.bpm.service.task.BpmTaskWithdrawService taskWithdrawService;
+
+    @GetMapping("/withdraw-targets")
+    @Operation(summary = "查询本人已办派发的撤回成员")
+    @PreAuthorize("@ss.hasPermission('bpm:task:update')")
+    public CommonResult<List<BpmTaskWithdrawTargetRespVO>> getWithdrawTargets(@RequestParam String sourceTaskId) {
+        return success(taskWithdrawService.targets(getLoginUserId(), sourceTaskId));
+    }
+
+    @PostMapping("/withdraw-members")
+    @Operation(summary = "撤回选中的未完成派发成员")
+    @PreAuthorize("@ss.hasPermission('bpm:task:update')")
+    public CommonResult<Boolean> withdrawMembers(@Valid @RequestBody BpmTaskWithdrawReqVO request) {
+        taskWithdrawService.withdraw(getLoginUserId(), request);
+        return success(true);
+    }
+
     @PutMapping("/withdraw")
     @Operation(summary = "撤回任务")
     @PreAuthorize("@ss.hasPermission('bpm:task:update')")

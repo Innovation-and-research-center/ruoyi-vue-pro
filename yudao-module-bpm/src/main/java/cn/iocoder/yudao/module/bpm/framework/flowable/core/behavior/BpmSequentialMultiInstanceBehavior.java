@@ -6,6 +6,7 @@ import cn.iocoder.yudao.module.bpm.enums.definition.BpmChildProcessMultiInstance
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.candidate.BpmTaskCandidateInvoker;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmTaskSmsPolicy;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmDispatchSources;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
 import lombok.Setter;
@@ -56,7 +57,10 @@ public class BpmSequentialMultiInstanceBehavior extends SequentialMultiInstanceB
             // 第二步，获取任务的所有处理人
             // 不使用 execution.getVariable 原因：目前依次审批任务回退后 collectionVariable 变量没有清理， 如果重新进入该任务不会重新分配审批人
             @SuppressWarnings("unchecked")
-            Set<Long> assigneeUserIds = (Set<Long>) execution.getVariableLocal(super.collectionVariable, Set.class);
+            Set<Long> assigneeUserIds = BpmDispatchSources.takeNewMembers(execution);
+            if (assigneeUserIds == null) {
+                assigneeUserIds = (Set<Long>) execution.getVariableLocal(super.collectionVariable, Set.class);
+            }
             if (assigneeUserIds == null) {
                 assigneeUserIds = taskCandidateInvoker.calculateUsersByTask(execution);
                 if (CollUtil.isEmpty(assigneeUserIds)) {
@@ -67,7 +71,9 @@ public class BpmSequentialMultiInstanceBehavior extends SequentialMultiInstanceB
                 }
                 execution.setVariableLocal(super.collectionVariable, assigneeUserIds);
             }
+            execution.setVariableLocal(super.collectionVariable, assigneeUserIds);
             BpmTaskSmsPolicy.captureMembers(execution, assigneeUserIds);
+            BpmDispatchSources.capture(execution, assigneeUserIds);
             return assigneeUserIds.size();
         }
 
@@ -99,6 +105,13 @@ public class BpmSequentialMultiInstanceBehavior extends SequentialMultiInstanceB
         super.collectionVariable = FlowableUtils.formatExecutionCollectionVariable(execution.getCurrentActivityId());
         super.collectionElementVariable = FlowableUtils.formatExecutionCollectionElementVariable(execution.getCurrentActivityId());
         super.executeOriginalBehavior(execution, multiInstanceRootExecution, loopCounter);
+    }
+
+    /** 撤回不计为通过；仅在服务已确认剩余已办满足条件后结束会签。 */
+    public void completeAfterWithdrawal(org.flowable.engine.impl.persistence.entity.ExecutionEntity root) {
+        org.flowable.engine.impl.util.CommandContextUtil.getActivityInstanceEntityManager().recordActivityEnd(root, null);
+        sendCompletedEvent(root);
+        cleanupMiRoot(root);
     }
 
 }

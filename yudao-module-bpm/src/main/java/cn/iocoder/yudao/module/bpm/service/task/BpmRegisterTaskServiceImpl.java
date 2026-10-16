@@ -6,6 +6,7 @@ import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmTaskSmsPolicy;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmDispatchSources;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.bpmn.model.BpmnModel;
@@ -33,6 +34,8 @@ public class BpmRegisterTaskServiceImpl implements BpmRegisterTaskService {
     private org.flowable.engine.TaskService flowableTaskService;
     @Resource
     private org.flowable.engine.RepositoryService repositoryService;
+    @Resource
+    private org.flowable.engine.ManagementService managementService;
     @Resource
     private org.flowable.engine.RuntimeService runtimeService;
 
@@ -64,6 +67,7 @@ public class BpmRegisterTaskServiceImpl implements BpmRegisterTaskService {
         if (userId == null || StrUtil.isBlank(processInstanceId)) {
             return 0;
         }
+        processVariables = BpmDispatchSources.businessVariables(processVariables);
         List<Task> registerTasks = getCompleteOnSubmitTasks(processInstanceId);
         if (CollUtil.isEmpty(registerTasks)) {
             log.warn("[completeOnSubmit][processInstanceId({}) 未找到自动完成的登记任务]", processInstanceId);
@@ -96,7 +100,16 @@ public class BpmRegisterTaskServiceImpl implements BpmRegisterTaskService {
                         }
                     });
                     BpmTaskSmsPolicy.prepare(runtimeService, processInstanceId, recipients, sendSms);
+                    BpmDispatchSources.prepare(runtimeService, processInstanceId, task.getId(), recipients);
                 }
+            }
+            runtimeService.setVariables(processInstanceId, processVariables);
+            BpmDispatchSources.recordOptions(managementService, flowableTaskService, task.getId(), processInstanceId,
+                    (org.flowable.bpmn.model.FlowNode) repositoryService.getBpmnModel(task.getProcessDefinitionId()).getFlowElement(task.getTaskDefinitionKey()));
+            for (String targetId : BpmDispatchSources.selectedTargets(managementService, processInstanceId,
+                    (org.flowable.bpmn.model.FlowNode) repositoryService.getBpmnModel(task.getProcessDefinitionId()).getFlowElement(task.getTaskDefinitionKey()))) {
+                BpmDispatchSources.prepareDefault(runtimeService, processInstanceId, task.getId(), targetId);
+                BpmTaskSmsPolicy.prepareDefault(runtimeService, processInstanceId, targetId, sendSms);
             }
             flowableTaskService.complete(task.getId(), processVariables);
         }

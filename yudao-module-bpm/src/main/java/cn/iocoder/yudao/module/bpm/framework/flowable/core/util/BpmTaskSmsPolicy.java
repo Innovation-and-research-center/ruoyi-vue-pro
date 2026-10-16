@@ -78,4 +78,17 @@ public final class BpmTaskSmsPolicy {
         execution.removeVariable(key);
         return enabled;
     }
+    /** 撤回排队或活动成员时只移除该成员的待发配置。 */
+    public static void removeMembers(DelegateExecution root, String node, Collection<Long> users) {
+        String snapshotKey = MEMBERS + "_" + node;
+        Object value = root.getVariableLocal(snapshotKey);
+        Map<String, Boolean> snapshot = new LinkedHashMap<>();
+        if (value instanceof Map) ((Map<?, ?>) value).forEach((k, v) -> snapshot.put(k.toString(), Boolean.TRUE.equals(v)));
+        for (Long user : users) {
+            root.removeVariableLocal(key(node, user));
+            snapshot.remove(user.toString());
+        }
+        root.setVariableLocal(snapshotKey, snapshot);
+    }
+
 }

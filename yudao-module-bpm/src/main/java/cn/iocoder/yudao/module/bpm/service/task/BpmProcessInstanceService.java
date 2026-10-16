@@ -20,6 +20,23 @@ import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.
  * @author 芋道源码
  */
 public interface BpmProcessInstanceService {
+    /** 已办追加的候选范围，复用节点角色、用户组和同部门限制。 */
+    boolean isRestrictedInternalOperator(Long userId, String definitionId, String nodeId, boolean internalTask);
+
+    Set<Long> getInternalLoopCandidateUserIds(Long userId, String definitionId, String nodeId, boolean internalTask);
+
+    /** target key 为具体执行流或 new:nodeId，只在本次请求内合并查询。 */
+    default Map<String, Set<Long>> getAppendCandidateUserIdsBatch(Long operatorId, String processInstanceId,
+                                                                Map<String, String> executionNodes) {
+        Map<String, Set<Long>> result = new java.util.LinkedHashMap<>();
+        executionNodes.forEach((executionId, nodeId) -> result.put(executionId,
+                getAppendCandidateUserIds(operatorId, processInstanceId,
+                        executionId.startsWith("new:") ? processInstanceId : executionId, nodeId)));
+        return result;
+    }
+
+    Set<Long> getAppendCandidateUserIds(Long operatorId, String processInstanceId, String executionId, String nodeId);
+
 
     // ========== Query 查询相关方法 ==========
 

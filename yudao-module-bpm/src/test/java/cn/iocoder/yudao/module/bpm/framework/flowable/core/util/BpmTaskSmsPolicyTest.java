@@ -50,11 +50,12 @@ class BpmTaskSmsPolicyTest {
     void commonRegistrationSubmitHonorsSmsAndExcludesFutureRecipients() throws Exception {
         cn.iocoder.yudao.module.bpm.service.task.BpmRegisterTaskServiceImpl service =
                 new cn.iocoder.yudao.module.bpm.service.task.BpmRegisterTaskServiceImpl();
-        for (String field : Arrays.asList("runtimeService", "flowableTaskService", "repositoryService")) {
+        for (String field : Arrays.asList("runtimeService", "flowableTaskService", "repositoryService", "managementService")) {
             java.lang.reflect.Field dependency = service.getClass().getDeclaredField(field);
             dependency.setAccessible(true);
             dependency.set(service, "runtimeService".equals(field) ? engine.getRuntimeService()
-                    : "flowableTaskService".equals(field) ? engine.getTaskService() : engine.getRepositoryService());
+                    : "flowableTaskService".equals(field) ? engine.getTaskService()
+                    : "managementService".equals(field) ? engine.getManagementService() : engine.getRepositoryService());
         }
         for (boolean sequential : Arrays.asList(false, true)) {
             for (Boolean sendSms : Arrays.asList(false, true, null)) {
@@ -91,6 +92,11 @@ class BpmTaskSmsPolicyTest {
             java.lang.reflect.Field tasks = service.getClass().getDeclaredField("flowableTaskService");
             tasks.setAccessible(true);
             tasks.set(service, engine.getTaskService());
+            for (String name : Arrays.asList("managementService", "repositoryService")) {
+                java.lang.reflect.Field dependency = service.getClass().getDeclaredField(name);
+                dependency.setAccessible(true);
+                dependency.set(service, "managementService".equals(name) ? engine.getManagementService() : engine.getRepositoryService());
+            }
             Map<String, Object> variables = new HashMap<>();
             variables.put(cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants
                             .PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES,
