@@ -3611,7 +3611,10 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 throw exception(TASK_WITHDRAW_FAIL_ALREADY_RUNNING);
             }
 
-            updateTaskStatusAndReason(taskId, BpmTaskStatusEnum.CANCEL.getStatus(), BpmReasonEnum.CANCEL_BY_WITHDRAW.getReason());
+//            updateTaskStatusAndReason(taskId, BpmTaskStatusEnum.CANCEL.getStatus(), BpmReasonEnum.CANCEL_BY_WITHDRAW.getReason());
+            // 原任务已办结，与跨节点撤回一致，更新历史状态而非运行时任务变量。
+            taskSortMapper.updateHistoricTaskLongVariable(taskId, BpmnVariableConstants.TASK_VARIABLE_STATUS,
+                    BpmTaskStatusEnum.CANCEL.getStatus());
 
             Map<String, Object> executionVariables = new HashMap<>();
             executionVariables.put("assignee", userId.toString());
