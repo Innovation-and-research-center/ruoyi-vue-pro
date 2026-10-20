@@ -12,6 +12,7 @@ import cn.iocoder.yudao.framework.tenant.core.aop.TenantIgnore;
 import cn.iocoder.yudao.module.infra.controller.admin.file.vo.file.*;
 import cn.iocoder.yudao.module.infra.dal.dataobject.file.FileDO;
 import cn.iocoder.yudao.module.infra.service.file.FileService;
+import cn.iocoder.yudao.module.infra.service.file.FilePreviewService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.Parameters;
@@ -43,6 +44,36 @@ public class FileController {
 
     @Resource
     private FileService fileService;
+
+    @Resource
+    private FilePreviewService filePreviewService;
+
+    @PostMapping("/preview/prepare")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "准备文件预览", description = "需登录；优先使用文件 ID，历史路径通过 JSON 提交，不进入转发 URL")
+    public CommonResult<FilePreviewRespVO> preparePreview(@Valid @RequestBody FilePreviewReqVO request) {
+        return success(filePreviewService.prepare(request));
+    }
+
+    @GetMapping("/preview/content/{ticket}/{cacheName:.+}")
+    @PermitAll
+    @TenantIgnore
+    @Operation(summary = "持短期凭证流式读取预览文件")
+    public void previewContent(@PathVariable("ticket") String ticket, @PathVariable("cacheName") String cacheName,
+                               HttpServletRequest request, HttpServletResponse response) throws Exception {
+        FilePreviewService.PreviewFile file = filePreviewService.resolve(ticket, cacheName);
+        if (file == null) {
+            response.setStatus(HttpServletResponse.SC_GONE);
+            return;
+        }
+        try (FileContent content = fileService.openFileContent(file.getConfigId(), file.getPath())) {
+            if (content == null) {
+                response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                return;
+            }
+            FilePreviewWriter.write(request, response, file.getName(), content);
+        }
+    }
 
     @GetMapping(value = "/{configId}/get/**", params = "preview=true")
     @PermitAll

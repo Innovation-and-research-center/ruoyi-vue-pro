@@ -37,6 +37,8 @@ public class SecurityConfiguration {
                         .requestMatchers(adminSeverContextPath + "/**").permitAll();
                 // 文件读取
                 registry.requestMatchers(buildAdminApi("/infra/file/*/get/**")).permitAll();
+                // 仅内容读取免登录，由短期预览凭证校验；prepare 接口仍要求登录。
+                registry.requestMatchers(buildAdminApi("/infra/file/preview/content/**")).permitAll();
             }
 
         };
