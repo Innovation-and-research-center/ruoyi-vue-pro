@@ -53,7 +53,7 @@ public class BpmTaskWithdrawService {
 
     public List<BpmTaskWithdrawTargetRespVO> targets(Long userId, String taskId) {
         HistoricTaskInstance source = source(userId, taskId);
-        List<BpmTaskWithdrawTargetRespVO> result = managementService.executeCommand(context -> inspect(source, legacySnapshot(source)));
+        List<BpmTaskWithdrawTargetRespVO> result = managementService.executeCommand(context -> { requireMemberMode(source); requirePartialAllowed(source); return inspect(source); });
         Map<Long, AdminUserRespDTO> users = adminUserApi.getUserList(result.stream()
                 .map(BpmTaskWithdrawTargetRespVO::getUserId).collect(Collectors.toSet())).stream()
                 .collect(Collectors.toMap(AdminUserRespDTO::getId, user -> user, (a, b) -> a));
@@ -65,18 +65,17 @@ public class BpmTaskWithdrawService {
     }
 
     @SuppressWarnings("unchecked")
-    private List<BpmTaskWithdrawTargetRespVO> inspect(HistoricTaskInstance source, BpmLegacyDispatchResolver.Snapshot legacy) {
+    private List<BpmTaskWithdrawTargetRespVO> inspect(HistoricTaskInstance source) {
         List<BpmTaskWithdrawTargetRespVO> result = new ArrayList<>();
         BpmnModel model = repositoryService.getBpmnModel(source.getProcessDefinitionId());
         List<Task> tasks = flowableTaskService.createTaskQuery().processInstanceId(source.getProcessInstanceId()).active().list();
         for (ExecutionEntity root : CommandContextUtil.getExecutionEntityManager().findChildExecutionsByProcessInstanceId(source.getProcessInstanceId())) {
-            Object originValue = legacy != null && legacy.origins.containsKey(root.getId())
-                    ? legacy.origins.get(root.getId()) : root.getVariableLocal(BpmDispatchSources.SOURCES);
+            Object originValue = root.getVariableLocal(BpmDispatchSources.SOURCES);
             if (!root.isMultiInstanceRoot() || !BpmDispatchSources.contains(originValue, source.getId())) continue;
             FlowElement element = model.getFlowElement(root.getActivityId());
             if (!(element instanceof UserTask)) continue;
             UserTask node = (UserTask) element;
-            List<Long> members = legacy != null && legacy.members.containsKey(root.getId()) ? legacy.members.get(root.getId()) : members(root);
+            List<Long> members = members(root);
             List<ExecutionEntity> children = children(root);
             Map<String, Set<String>> origins = (Map<String, Set<String>>) originValue;
             boolean consistent = members.size() == number(root, "nrOfInstances")
@@ -98,7 +97,7 @@ public class BpmTaskWithdrawService {
                 result.add(row);
             }
         }
-        Object value = legacy == null ? runtimeService.getVariableLocal(source.getProcessInstanceId(), BpmDispatchSources.LEDGER_PREFIX + source.getId()) : legacy.ledger;
+        Object value = runtimeService.getVariableLocal(source.getProcessInstanceId(), BpmDispatchSources.LEDGER_PREFIX + source.getId());
         if (value instanceof Map) ((Map<String, Set<Long>>) value).forEach((nodeId, users) -> {
             FlowElement element = model.getFlowElement(nodeId);
             for (Long user : users) {
@@ -111,41 +110,104 @@ public class BpmTaskWithdrawService {
         return result;
     }
 
-    private BpmLegacyDispatchResolver.Snapshot legacySnapshot(HistoricTaskInstance source) {
-        if (runtimeService.getVariableLocal(source.getProcessInstanceId(), BpmDispatchSources.LEDGER_PREFIX + source.getId()) instanceof Map)
-            return null; // 新来源（含已撤空账本）不能重新从历史推导，防止撤回成员复活。
-        return BpmLegacyDispatchResolver.resolve(source, repositoryService.getBpmnModel(source.getProcessDefinitionId()),
-                CommandContextUtil.getExecutionEntityManager().findChildExecutionsByProcessInstanceId(source.getProcessInstanceId()), historyService);
+    /** 以本次派发的持久标记分流，不以流程创建时间判断，也不在新版失败后降级。 */
+    public String mode(Long userId, String taskId) {
+        HistoricTaskInstance source = source(userId, taskId);
+        if (!memberMode(source)) return "LEGACY";
+        return partialAllowed(source) ? "MEMBERS" : "ALL";
     }
 
-    /** 旧接口仍走新来源校验；没有精确关系时不会回退到旧的时间差算法。 */
+    private boolean partialAllowed(HistoricTaskInstance source) {
+        return BpmTaskDispatchPolicy.allowsMemberOperations(repositoryService.getBpmnModel(source.getProcessDefinitionId()), source.getTaskDefinitionKey());
+    }
+
+    private void requirePartialAllowed(HistoricTaskInstance source) {
+        if (!partialAllowed(source)) throw exception(TASK_WITHDRAW_INVALID, "只有收文主任拟办节点允许按人员撤回，当前节点只能全部撤回");
+    }
+
+    private boolean memberMode(HistoricTaskInstance source) {
+        if (source.getTaskLocalVariables().containsKey(BpmDispatchSources.OPTIONS)
+                || runtimeService.hasVariableLocal(source.getProcessInstanceId(), BpmDispatchSources.LEDGER_PREFIX + source.getId())
+                || runtimeService.hasVariableLocal(source.getProcessInstanceId(), RESTORED + source.getId())) return true;
+        return runtimeService.createVariableInstanceQuery().processInstanceId(source.getProcessInstanceId())
+                .excludeTaskVariables().variableNameLike("bpm_dispatch_%").list().stream().anyMatch(variable ->
+                        BpmDispatchSources.SOURCES.equals(variable.getName()) && BpmDispatchSources.contains(variable.getValue(), source.getId())
+                        || variable.getName().startsWith("bpm_dispatch_pending_") && variable.getValue() instanceof Collection
+                        && ((Collection<?>) variable.getValue()).contains(source.getId()));
+    }
+
+    private void requireMemberMode(HistoricTaskInstance source) {
+        if (!memberMode(source)) throw exception(TASK_WITHDRAW_INVALID, "该任务使用原版整体撤回，请刷新后重新操作");
+    }
+
+    /** 原逻辑清理流程级变量，因此混有新版派发时不能进入；提交时重新核验并锁定流程。 */
+    @Transactional(rollbackFor = Exception.class)
+    public void executeLegacy(Long userId, String taskId, Runnable operation) {
+        managementService.executeCommand(context -> {
+            HistoricTaskInstance source = source(userId, taskId);
+            if (memberMode(source)) throw exception(TASK_WITHDRAW_INVALID, "该任务已接入新版派发，请刷新后重新确认撤回方式");
+            boolean mixed = runtimeService.createVariableInstanceQuery().processInstanceId(source.getProcessInstanceId())
+                    .excludeTaskVariables().variableNameLike("bpm_dispatch_%").list().stream().anyMatch(variable -> {
+                        Object value = variable.getValue();
+                        // 新引擎也会给尚无来源的旧根写空 SOURCES；空集合不代表新版派发。
+                        if (BpmDispatchSources.SOURCES.equals(variable.getName())) return value instanceof Map && !((Map<?, ?>) value).isEmpty();
+                        if (variable.getName().startsWith("bpm_dispatch_pending_")) return value instanceof Collection && !((Collection<?>) value).isEmpty();
+                        return variable.getName().startsWith(BpmDispatchSources.LEDGER_PREFIX)
+                                || variable.getName().startsWith(RESTORED)
+                                || BpmDispatchSources.BRANCH.equals(variable.getName()) && Boolean.TRUE.equals(value)
+                                || BpmDispatchSources.NEW_MEMBERS.equals(variable.getName()) && value instanceof Map && !((Map<?, ?>) value).isEmpty();
+                    });
+            if (mixed) throw exception(TASK_WITHDRAW_INVALID, "该流程已混有新版派发或追加记录，不能使用原版整体撤回，以免影响其他分支");
+            ExecutionEntity process = CommandContextUtil.getExecutionEntityManager().findById(source.getProcessInstanceId());
+            if (process == null || process.isSuspended() || process.isEnded()) throw exception(TASK_WITHDRAW_FAIL_PROCESS_NOT_RUNNING);
+            process.forceUpdate();
+            return null;
+        });
+        // 仍在同一 Spring 事务中，但先结束校验命令。原代码依赖 changeState/addMultiInstanceExecution
+        // 返回时 agenda 已创建任务，再查询并设置办理人；不能把它们嵌在同一个外层引擎命令里。
+        operation.run();
+    }
+
+    /** 新版整体撤回仍按来源逐人校验；旧任务由业务入口调用原版实现。 */
     @Transactional(rollbackFor = Exception.class)
     public void withdrawAll(Long userId, String sourceTaskId) {
-        List<BpmTaskWithdrawTargetRespVO> rows = targets(userId, sourceTaskId);
         BpmTaskWithdrawReqVO request = new BpmTaskWithdrawReqVO(); request.setSourceTaskId(sourceTaskId);
-        request.setMembers(rows.stream().filter(BpmTaskWithdrawTargetRespVO::isWithdrawable).map(row -> {
-            BpmTaskWithdrawReqVO.Member member = new BpmTaskWithdrawReqVO.Member();
-            member.setExecutionId(row.getExecutionId()); member.setUserId(row.getUserId()); return member;
-        }).collect(Collectors.toList()));
-        withdraw(userId, request);
+        executeWithdrawal(userId, request, true);
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void withdraw(Long userId, BpmTaskWithdrawReqVO request) {
-        if (request == null || request.getMembers() == null || request.getMembers().isEmpty() || request.getMembers().size() > 200)
+        executeWithdrawal(userId, request, false);
+    }
+
+    private void executeWithdrawal(Long userId, BpmTaskWithdrawReqVO request, boolean all) {
+        if (request == null || (!all && (request.getMembers() == null || request.getMembers().isEmpty() || request.getMembers().size() > 200)))
             throw exception(TASK_WITHDRAW_INVALID, "请选择需要撤回的未完成成员");
         HistoricTaskInstance source = source(userId, request.getSourceTaskId());
+        if (!all) requirePartialAllowed(source);
         managementService.executeCommand(context -> {
             ExecutionEntity process = CommandContextUtil.getExecutionEntityManager().findById(source.getProcessInstanceId());
             if (process == null || process.isSuspended() || process.isEnded()) throw exception(TASK_WITHDRAW_FAIL_PROCESS_NOT_RUNNING);
             process.forceUpdate();
             if (process.getVariableLocal(RESTORED + source.getId()) != null) throw exception(TASK_WITHDRAW_INVALID, "该来源已撤回并恢复待办，请刷新");
-            BpmLegacyDispatchResolver.Snapshot legacy = legacySnapshot(source);
+            requireMemberMode(source);
+            if (!(process.getVariableLocal(BpmDispatchSources.LEDGER_PREFIX + source.getId()) instanceof Map))
+                throw exception(TASK_WITHDRAW_INVALID, "新版派发记录尚未完整生成，请稍后重试，不能降级为原版撤回");
             boolean pending = runtimeService.createVariableInstanceQuery().processInstanceId(source.getProcessInstanceId())
                     .excludeTaskVariables().variableNameLike("bpm_dispatch_pending_%").list().stream()
                     .anyMatch(variable -> variable.getValue() instanceof Collection && ((Collection<?>) variable.getValue()).contains(source.getId()));
             if (pending) throw exception(TASK_WITHDRAW_INVALID, "本次派发尚有异步任务生成中，请稍后重试");
-            List<BpmTaskWithdrawTargetRespVO> allowed = inspect(source, legacy);
+            List<BpmTaskWithdrawTargetRespVO> allowed = inspect(source);
+            if (all) {
+                // 非主任节点只能完整拉回本次派发，不能把“全撤”变成仅撤剩余可撤人员。
+                if (!partialAllowed(source) && allowed.stream().anyMatch(row -> !row.isWithdrawable()))
+                    throw exception(TASK_WITHDRAW_INVALID, "下游已有人员办理或目标状态不允许，不能全部撤回");
+                request.setMembers(allowed.stream().filter(BpmTaskWithdrawTargetRespVO::isWithdrawable).map(row -> {
+                    BpmTaskWithdrawReqVO.Member member = new BpmTaskWithdrawReqVO.Member();
+                    member.setExecutionId(row.getExecutionId()); member.setUserId(row.getUserId()); return member;
+                }).collect(Collectors.toList()));
+                if (request.getMembers().isEmpty()) throw exception(TASK_WITHDRAW_INVALID, "没有可全部撤回的派发任务");
+            }
             Map<String, Set<Long>> selected = new LinkedHashMap<>();
             List<BpmTaskWithdrawTargetRespVO> chosen = new ArrayList<>();
             for (BpmTaskWithdrawReqVO.Member member : request.getMembers()) {
@@ -158,8 +220,6 @@ public class BpmTaskWithdrawService {
                     throw exception(TASK_WITHDRAW_INVALID, "不能重复选择同一成员");
                 chosen.add(row);
             }
-            // 全批校验后才补齐兼容记录，后续任一步失败都会连同补齐数据一起回滚。
-            if (legacy != null) BpmLegacyDispatchResolver.install(source, legacy);
             // 全批校验后再修改；一个无效成员使整个撤回回滚。
             List<ExecutionEntity> emptyRoots = new ArrayList<>();
             for (Map.Entry<String, Set<Long>> entry : selected.entrySet()) {

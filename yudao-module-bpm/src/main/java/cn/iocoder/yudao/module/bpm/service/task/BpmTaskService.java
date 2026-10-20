@@ -285,6 +285,9 @@ public interface BpmTaskService {
      */
     void withdrawTask(Long userId, String taskId);
 
+    /** expectedMode 防止弹窗打开后派发方式变化，误执行另一种撤回。 */
+    void withdrawTask(Long userId, String taskId, String expectedMode);
+
     BpmTaskTraceDTO getTaskTrace(String taskId,String processInstanceId,int type);
 
     // ========== Event 事件相关方法 ==========

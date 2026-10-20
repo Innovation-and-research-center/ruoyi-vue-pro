@@ -8,6 +8,7 @@ public interface BpmTaskKeyConstants {
 //    String RECEIVE = "receice_doc_v2_copy";
 
     String RECEIVE = "receice_doc_v2_copy_copy";
+    String RECEIVE_DIRECTOR_TASK = "Activity_1m15g69";
     String RECEIVE_REGISTER_TASK = "Activity_04ykbd0";
     String RECEIVE_REGISTER_USER_GROUP_NAME = "收文登记";
     String RECEIVE_REGISTER_USER_GROUP_CONFIG_KEY = "bpm.receive-doc.register-user-group-id";

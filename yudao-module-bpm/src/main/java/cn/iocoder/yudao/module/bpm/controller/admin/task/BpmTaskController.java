@@ -358,6 +358,13 @@ public class BpmTaskController {
     @Resource
     private cn.iocoder.yudao.module.bpm.service.task.BpmTaskWithdrawService taskWithdrawService;
 
+    @GetMapping("/withdraw-mode")
+    @Operation(summary = "查询本人已办任务的撤回方式")
+    @PreAuthorize("@ss.hasPermission('bpm:task:update')")
+    public CommonResult<String> getWithdrawMode(@RequestParam String sourceTaskId) {
+        return success(taskWithdrawService.mode(getLoginUserId(), sourceTaskId));
+    }
+
     @GetMapping("/withdraw-targets")
     @Operation(summary = "查询本人已办派发的撤回成员")
     @PreAuthorize("@ss.hasPermission('bpm:task:update')")
@@ -376,8 +383,9 @@ public class BpmTaskController {
     @PutMapping("/withdraw")
     @Operation(summary = "撤回任务")
     @PreAuthorize("@ss.hasPermission('bpm:task:update')")
-    public CommonResult<Boolean> withdrawTask(@RequestParam("taskId") String taskId) {
-        taskService.withdrawTask(getLoginUserId(), taskId);
+    public CommonResult<Boolean> withdrawTask(@RequestParam("taskId") String taskId,
+                                             @RequestParam(value = "expectedMode", required = false) String expectedMode) {
+        taskService.withdrawTask(getLoginUserId(), taskId, expectedMode);
         return success(true);
     }
     @GetMapping("/trace/{taskId}")

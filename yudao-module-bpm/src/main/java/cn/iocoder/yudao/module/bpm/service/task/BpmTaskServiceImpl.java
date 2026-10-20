@@ -33,6 +33,7 @@ import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmHttpRequestUt
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmTaskSmsPolicy;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmDispatchSources;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmTaskDispatchPolicy;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmFormService;
@@ -481,6 +482,10 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             return PageResult.empty();
         }
         List<BpmTaskRespVO> list = taskSortMapper.selectUnifiedDoneTaskList(userId, pageVO);
+        list.forEach(task -> task.setAppendAllowed(!Boolean.TRUE.equals(task.getIsHistory())
+                && BpmTaskStatusEnum.APPROVE.getStatus().equals(task.getStatus())
+                && task.getProcessInstance() != null
+                && BpmTaskDispatchPolicy.allowsMemberOperations(task.getProcessInstance().getProcessDefinitionKey(), task.getTaskDefinitionKey())));
         return new PageResult<>(list, count);
     }
 
@@ -3641,7 +3646,334 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     @Transactional(rollbackFor = Exception.class)
     @DataPermission(enable = false) // 关闭数据权限，避免查询不到用户数据
     public void withdrawTask(Long userId, String taskId) {
-        taskWithdrawService.withdrawAll(userId, taskId);
+        withdrawTask(userId, taskId, null);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    @DataPermission(enable = false)
+    public void withdrawTask(Long userId, String taskId, String expectedMode) {
+        String mode = taskWithdrawService.mode(userId, taskId);
+        if (expectedMode != null && !expectedMode.equals(mode))
+            throw exception(TASK_WITHDRAW_INVALID, "撤回方式已变化，请刷新后重新确认");
+        if (!"LEGACY".equals(mode)) {
+            taskWithdrawService.withdrawAll(userId, taskId);
+        } else {
+            taskWithdrawService.executeLegacy(userId, taskId, () -> withdrawLegacyTask(userId, taskId));
+        }
+    }
+
+    // 保留更新前的撤回规则；只能由 executeLegacy 完成分流、混用检查和事务锁定后调用。
+    private void withdrawLegacyTask(Long userId, String taskId) {
+        // 1.1 查询本人已办任务
+        HistoricTaskInstance taskInstance = historyService.createHistoricTaskInstanceQuery()
+                .taskId(taskId).taskAssignee(userId.toString()).finished().singleResult();
+        if (ObjUtil.isNull(taskInstance)) {
+            throw exception(TASK_WITHDRAW_FAIL_TASK_NOT_EXISTS);
+        }
+        // 1.2 校验流程是否结束
+        ProcessInstance processInstance = processInstanceService.getProcessInstance(taskInstance.getProcessInstanceId());
+        if (ObjUtil.isNull(processInstance)) {
+            throw exception(TASK_WITHDRAW_FAIL_PROCESS_NOT_RUNNING);
+        }
+        // 1.3 判断此流程是否允许撤回
+        BpmProcessDefinitionInfoDO processDefinitionInfo = bpmProcessDefinitionService.getProcessDefinitionInfo(
+                processInstance.getProcessDefinitionId());
+        if (ObjUtil.isNull(processDefinitionInfo) || !Boolean.TRUE.equals(processDefinitionInfo.getAllowWithdrawTask())) {
+            throw exception(TASK_WITHDRAW_FAIL_NOT_ALLOW);
+        }
+
+        // 1.4 获取当前节点定义的合法下一节点集合
+        BpmnModel bpmnModel = modelService.getBpmnModelByDefinitionId(taskInstance.getProcessDefinitionId());
+        UserTask userTask = (UserTask) BpmnModelUtils.getFlowElementById(bpmnModel, taskInstance.getTaskDefinitionKey());
+        List<String> nextUserTaskKeys = convertList(BpmnModelUtils.getNextUserTasks(userTask), UserTask::getId);
+        if (CollUtil.isEmpty(nextUserTaskKeys)) {
+            throw exception(TASK_WITHDRAW_FAIL_NEXT_TASK_NOT_ALLOW);
+        }
+        Map<String, String> sourceReturnBranchContext = getHistoricTaskReturnBranchContext(taskId);
+        String sourceReturnBatchId = sourceReturnBranchContext.get(taskInstance.getTaskDefinitionKey());
+
+        long sourceTaskCreateTime = taskInstance.getCreateTime().getTime();
+
+        // =================================================================================
+        // 【第一道防线】：同批次隔离哨兵（处理同节点未结束撤回 / 多人排队撤回）
+        // =================================================================================
+        List<Task> rawActiveTasksInSourceNode = taskService.createTaskQuery()
+                .processInstanceId(processInstance.getProcessInstanceId())
+                .taskDefinitionKey(taskInstance.getTaskDefinitionKey())
+                .active().list();
+
+        List<Task> activeTasksInSourceNode = new ArrayList<>();
+        if (CollUtil.isNotEmpty(rawActiveTasksInSourceNode)) {
+            for (Task runningTask : rawActiveTasksInSourceNode) {
+                if (Math.abs(runningTask.getCreateTime().getTime() - sourceTaskCreateTime) <= 1000) {
+                    activeTasksInSourceNode.add(runningTask);
+                }
+            }
+        }
+
+        if (CollUtil.isNotEmpty(activeTasksInSourceNode)) {
+            boolean alreadyHasMyTask = activeTasksInSourceNode.stream()
+                    .anyMatch(t -> userId.toString().equals(t.getAssignee()));
+            if (alreadyHasMyTask) {
+                throw exception(TASK_WITHDRAW_FAIL_ALREADY_RUNNING);
+            }
+
+            taskSortMapper.updateHistoricTaskLongVariable(taskId, BpmnVariableConstants.TASK_VARIABLE_STATUS,
+                    BpmTaskStatusEnum.CANCEL.getStatus());
+
+            Map<String, Object> executionVariables = new HashMap<>();
+            executionVariables.put("assignee", userId.toString());
+            // 新会签行为从节点专属的成员变量读取人员；任务可能在命令结束的 agenda 中才创建。
+            executionVariables.put(FlowableUtils.formatExecutionCollectionElementVariable(taskInstance.getTaskDefinitionKey()), userId);
+
+            Execution newExecution = runtimeService.addMultiInstanceExecution(
+                    taskInstance.getTaskDefinitionKey(),
+                    processInstance.getProcessInstanceId(),
+                    executionVariables
+            );
+
+            if (newExecution != null) {
+                Task newlyCreatedTask = taskService.createTaskQuery().executionId(newExecution.getId()).singleResult();
+                if (newlyCreatedTask != null) {
+                    taskService.setAssignee(newlyCreatedTask.getId(), userId.toString());
+                    taskService.setOwner(newlyCreatedTask.getId(), userId.toString());
+                }
+            }
+            return;
+        }
+
+        // =================================================================================
+        // 【前置推导】：推导节点真实流转时间
+        // =================================================================================
+        List<HistoricTaskInstance> historyTasksOfSourceNode = historyService.createHistoricTaskInstanceQuery()
+                .processInstanceId(processInstance.getProcessInstanceId())
+                .taskDefinitionKey(taskInstance.getTaskDefinitionKey())
+                .finished()
+                .list();
+
+        long realNodeOutflowTime = taskInstance.getEndTime().getTime();
+
+        if (CollUtil.isNotEmpty(historyTasksOfSourceNode)) {
+            List<HistoricTaskInstance> sameBatchTasks = new ArrayList<>();
+            for (HistoricTaskInstance ht : historyTasksOfSourceNode) {
+                if (Math.abs(ht.getCreateTime().getTime() - sourceTaskCreateTime) <= 1000) {
+                    sameBatchTasks.add(ht);
+                }
+            }
+            if (CollUtil.isNotEmpty(sameBatchTasks)) {
+                sameBatchTasks.sort((t1, t2) -> t2.getEndTime().compareTo(t1.getEndTime()));
+                realNodeOutflowTime = sameBatchTasks.get(0).getEndTime().getTime();
+            }
+        }
+
+        // =================================================================================
+        // 【绝对拦截防线】：防“部分办结”漏洞！
+        // =================================================================================
+        List<HistoricTaskInstance> finishedDownstreamTasks = historyService.createHistoricTaskInstanceQuery()
+                .processInstanceId(processInstance.getProcessInstanceId())
+                .taskDefinitionKeys(nextUserTaskKeys)
+                .finished()
+                .list();
+
+        if (CollUtil.isNotEmpty(finishedDownstreamTasks)) {
+            for (HistoricTaskInstance ht : finishedDownstreamTasks) {
+                if (StrUtil.isNotBlank(sourceReturnBatchId)) {
+                    Map<String, String> downstreamContext = getHistoricTaskReturnBranchContext(ht.getId());
+                    String downstreamBatchId = downstreamContext.get(taskInstance.getTaskDefinitionKey());
+                    if (StrUtil.equals(sourceReturnBatchId, downstreamBatchId)) {
+                        throw exception(TASK_WITHDRAW_FAIL_DOWNSTREAM_APPROVED);
+                    }
+                    continue;
+                }
+                long timeDiff = Math.abs(ht.getCreateTime().getTime() - realNodeOutflowTime);
+                if (timeDiff <= 1000) {
+                    throw exception(TASK_WITHDRAW_FAIL_DOWNSTREAM_APPROVED);
+                }
+            }
+        }
+
+        // =================================================================================
+        // 【第二道防线】：跨节点拉回，收集存活的分身
+        // =================================================================================
+        List<Task> allRunningTasks = taskService.createTaskQuery()
+                .processInstanceId(processInstance.getProcessInstanceId())
+                .taskDefinitionKeys(nextUserTaskKeys).active().list();
+        if (CollUtil.isEmpty(allRunningTasks)) {
+            throw exception(TASK_WITHDRAW_FAIL_NEXT_TASK_NOT_ALLOW);
+        }
+
+        List<Task> targetRunningTasks = new ArrayList<>();
+        if (StrUtil.isBlank(sourceReturnBatchId)) {
+            sourceReturnBatchId = inferUniqueReturnBatchIdFromRunningTasks(processInstance.getProcessInstanceId(),
+                    taskInstance.getTaskDefinitionKey(), allRunningTasks);
+        }
+        for (Task task : allRunningTasks) {
+            if (StrUtil.isNotBlank(sourceReturnBatchId)) {
+                Map<String, String> runningContext = getReturnBranchContext(processInstance.getProcessInstanceId(), task.getExecutionId());
+                String runningBatchId = runningContext.get(taskInstance.getTaskDefinitionKey());
+                if (StrUtil.equals(sourceReturnBatchId, runningBatchId)) {
+                    targetRunningTasks.add(task);
+                }
+                continue;
+            }
+            long targetCreateTime = task.getCreateTime().getTime();
+            long timeDiff = Math.abs(targetCreateTime - realNodeOutflowTime);
+
+            if (timeDiff <= 1000) {
+                targetRunningTasks.add(task);
+            } else {
+                String currentExecId = task.getExecutionId();
+                while (StrUtil.isNotBlank(currentExecId)) {
+                    if (currentExecId.equals(taskInstance.getExecutionId())) {
+                        targetRunningTasks.add(task);
+                        break;
+                    }
+                    Execution exec = runtimeService.createExecutionQuery().executionId(currentExecId).singleResult();
+                    currentExecId = exec != null ? exec.getParentId() : null;
+                }
+            }
+        }
+
+        if (CollUtil.isEmpty(targetRunningTasks)) {
+            throw exception(TASK_WITHDRAW_FAIL_NEXT_TASK_NOT_ALLOW);
+        }
+
+        // =================================================================================
+        // 【防裂变处理】：取消目标任务、收集血脉、精准提取 MI Root 进行执行流去重
+        // =================================================================================
+        List<String> executionIdsToMove = new ArrayList<>();
+        Set<String> branchExecutionLineage = new HashSet<>();
+
+        for (Task task : targetRunningTasks) {
+            taskService.addComment(task.getId(), taskInstance.getProcessInstanceId(), BpmCommentTypeEnum.CANCEL.getType(),
+                    BpmCommentTypeEnum.CANCEL.formatComment("前一节点撤回"));
+            updateTaskStatusAndReason(task.getId(), BpmTaskStatusEnum.CANCEL.getStatus(), BpmReasonEnum.CANCEL_BY_WITHDRAW.getReason());
+
+            // 1. 向上收集当前分支的执行流血统 (用于后续的局部变量清理)
+            String tempId = task.getExecutionId();
+            while (cn.hutool.core.util.StrUtil.isNotBlank(tempId)) {
+                branchExecutionLineage.add(tempId);
+                Execution exec = runtimeService.createExecutionQuery().executionId(tempId).singleResult();
+                tempId = exec != null ? exec.getParentId() : null;
+            }
+
+            // 2. 提取多实例根节点 (MI Root)，防止多实例分支撤回时生成多条任务
+            Execution taskExecution = runtimeService.createExecutionQuery().executionId(task.getExecutionId()).singleResult();
+            String execIdToMove = taskExecution.getId();
+
+            if (taskExecution.getParentId() != null) {
+                Execution parentExecution = runtimeService.createExecutionQuery().executionId(taskExecution.getParentId()).singleResult();
+                // 核心：含有 nrOfInstances 变量的即为多实例包裹容器
+                if (parentExecution != null && runtimeService.hasVariableLocal(parentExecution.getId(), "nrOfInstances")) {
+                    execIdToMove = parentExecution.getId();
+                }
+            }
+
+            // 3. 去重：如果是同批次并发分支，MI Root 必然是同一个，完美合并为 1 个 Token
+            if (!executionIdsToMove.contains(execIdToMove)) {
+                executionIdsToMove.add(execIdToMove);
+            }
+        }
+
+        // =================================================================================
+        // 【对照实验组】：仅移除运行时局部变量，不触碰历史表！
+        // =================================================================================
+        org.flowable.bpmn.model.FlowElement currentFlowElement = bpmnModel.getFlowElement(taskInstance.getTaskDefinitionKey());
+        if (currentFlowElement instanceof org.flowable.bpmn.model.FlowNode) {
+            List<org.flowable.bpmn.model.SequenceFlow> outgoingFlows = ((org.flowable.bpmn.model.FlowNode) currentFlowElement).getOutgoingFlows();
+
+            Object assigneesObj = runtimeService.getVariable(processInstance.getProcessInstanceId(), BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+            Map<String, List<Long>> assigneesMap = null;
+            if (assigneesObj instanceof Map) {
+                assigneesMap = new HashMap<>((Map<String, List<Long>>) assigneesObj);
+            }
+            boolean assigneesChanged = false;
+
+            for (org.flowable.bpmn.model.SequenceFlow flow : outgoingFlows) {
+                // 1. 抹除目标节点残留的人员配置 (这也是通过重写全局变量实现的)
+                String targetNodeId = flow.getTargetRef();
+                if (assigneesMap != null && assigneesMap.containsKey(targetNodeId)) {
+                    assigneesMap.remove(targetNodeId);
+                    assigneesChanged = true;
+                }
+
+                // 2. 双重正则提取真正的路由变量
+                String condition = flow.getConditionExpression();
+                if (cn.hutool.core.util.StrUtil.isNotBlank(condition)) {
+                    Set<String> variablesToRemove = new HashSet<>();
+
+                    java.util.regex.Matcher m1 = java.util.regex.Pattern.compile("variables:get\\(['\"]?([a-zA-Z0-9_]+)['\"]?\\)").matcher(condition);
+                    while (m1.find()) { variablesToRemove.add(m1.group(1)); }
+
+                    java.util.regex.Matcher m2 = java.util.regex.Pattern.compile("(?<!['\"])\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b(?!['\"])").matcher(condition);
+                    while (m2.find()) {
+                        String match = m2.group(1);
+                        if (!Arrays.asList("variables", "get", "null", "empty", "true", "false").contains(match)) {
+                            variablesToRemove.add(match);
+                        }
+                    }
+
+                    // 3. 【核心对照组测试】：仅仅从运行时表 (ACT_RU_VARIABLE) 中移除
+                    for (String varName : variablesToRemove) {
+                        for (String branchExecId : branchExecutionLineage) {
+//                            if (branchExecId.equals(processInstance.getProcessInstanceId())) {
+//                                continue;
+//                            }
+                            // 只做这一步：移除运行时局部变量
+                            if (runtimeService.hasVariableLocal(branchExecId, varName)) {
+                                runtimeService.removeVariableLocal(branchExecId, varName);
+                            }
+                        }
+                    }
+                }
+            }
+            if (assigneesChanged) {
+                runtimeService.setVariable(processInstance.getProcessInstanceId(), BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, assigneesMap);
+            }
+        }
+
+        // =================================================================================
+        // 【执行阶段】：单一主分身拉回 + 多余分身 EndEvent 合法蒸发防雪崩
+        // =================================================================================
+        List<String> singleUserList = new ArrayList<>();
+        singleUserList.add(userId.toString());
+        String miCollectionVarName = "coll_userList";
+
+        runtimeService.createChangeActivityStateBuilder()
+                .processInstanceId(processInstance.getProcessInstanceId())
+                .moveExecutionsToSingleActivityId(executionIdsToMove, taskInstance.getTaskDefinitionKey())
+                .processVariable(miCollectionVarName, singleUserList)
+                .changeState();
+
+        taskSortMapper.updateHistoricTaskLongVariable(taskId, BpmnVariableConstants.TASK_VARIABLE_STATUS,
+                BpmTaskStatusEnum.CANCEL.getStatus());
+
+        // =================================================================================
+        // 【收尾】：强制覆盖重置办理人，重新夺回任务控制权
+        // =================================================================================
+        List<Task> revertedTasks = taskService.createTaskQuery()
+                .processInstanceId(processInstance.getProcessInstanceId())
+                .taskDefinitionKey(taskInstance.getTaskDefinitionKey())
+                .active()
+                .list();
+        if (CollUtil.isEmpty(revertedTasks)) {
+            revertedTasks = taskService.createTaskQuery()
+                    .processInstanceId(processInstance.getProcessInstanceId())
+                    .active()
+                    .list()
+                    .stream()
+                    .filter(task -> StrUtil.containsAny(task.getName(), "收文登记", "来文登记"))
+                    .collect(Collectors.toList());
+        }
+
+        if (CollUtil.isNotEmpty(revertedTasks)) {
+            for (Task revertedTask : revertedTasks) {
+                taskService.setAssignee(revertedTask.getId(), userId.toString());
+                taskService.setOwner(revertedTask.getId(), userId.toString());
+                updateTaskStatus(revertedTask.getId(), BpmTaskStatusEnum.RUNNING.getStatus());
+            }
+        }
     }
 
     /**
