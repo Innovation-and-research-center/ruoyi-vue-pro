@@ -5,6 +5,10 @@ import cn.hutool.core.io.IORuntimeException;
 import cn.iocoder.yudao.module.infra.framework.file.core.client.AbstractFileClient;
 
 import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import cn.iocoder.yudao.module.infra.framework.file.core.client.FileContent;
 
 /**
  * 本地文件客户端
@@ -47,6 +51,23 @@ public class LocalFileClient extends AbstractFileClient<LocalFileClientConfig> {
             }
             throw ex;
         }
+    }
+
+    @Override
+    public FileContent openContent(String path) throws Exception {
+        Path base = Paths.get(config.getBasePath()).toRealPath();
+        Path target = base.resolve(path).normalize();
+        if (!target.startsWith(base)) {
+            throw new IllegalArgumentException("非法的文件路径");
+        }
+        if (!Files.exists(target)) {
+            return null;
+        }
+        target = target.toRealPath();
+        if (!target.startsWith(base) || !Files.isRegularFile(target)) {
+            throw new IllegalArgumentException("非法的文件路径");
+        }
+        return new FileContent(Files.newInputStream(target), Files.size(target));
     }
 
     private String getFilePath(String path) {

@@ -6,6 +6,10 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.http.HttpUtil;
 import cn.iocoder.yudao.framework.common.util.http.HttpUtils;
 import cn.iocoder.yudao.module.infra.framework.file.core.client.AbstractFileClient;
+import cn.iocoder.yudao.module.infra.framework.file.core.client.FileContent;
+import software.amazon.awssdk.core.ResponseInputStream;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
@@ -100,6 +104,22 @@ public class S3FileClient extends AbstractFileClient<S3FileClientConfig> {
                 .key(path)
                 .build();
         return IoUtil.readBytes(client.getObject(getRequest));
+    }
+
+    @Override
+    public FileContent openContent(String path) {
+        try {
+            ResponseInputStream<GetObjectResponse> stream = client.getObject(GetObjectRequest.builder()
+                    .bucket(config.getBucket()).key(path).build());
+            return new FileContent(new java.io.FilterInputStream(stream) {
+                @Override
+                public void close() {
+                    stream.abort(); // Range 请求只消费部分内容，避免 close 时继续读取剩余对象。
+                }
+            }, stream.response().contentLength());
+        } catch (NoSuchKeyException ex) {
+            return null;
+        }
     }
 
     @Override

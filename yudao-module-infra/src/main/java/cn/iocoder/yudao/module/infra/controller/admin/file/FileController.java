@@ -1,5 +1,7 @@
 package cn.iocoder.yudao.module.infra.controller.admin.file;
 
+import cn.iocoder.yudao.module.infra.framework.file.core.client.FileContent;
+import cn.iocoder.yudao.module.infra.framework.file.core.utils.FilePreviewWriter;
 import cn.hutool.core.io.IoUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.core.util.URLUtil;
@@ -41,6 +43,26 @@ public class FileController {
 
     @Resource
     private FileService fileService;
+
+    @GetMapping(value = "/{configId}/get/**", params = "preview=true")
+    @PermitAll
+    @TenantIgnore
+    @Operation(summary = "流式预览文件", description = "沿用文件下载的访问规则；不传 preview 参数时保持原下载行为")
+    public void previewFile(HttpServletRequest request, HttpServletResponse response,
+                            @PathVariable("configId") Long configId) throws Exception {
+        String path = URLUtil.decode(StrUtil.subAfter(request.getRequestURI(), "/get/", false),
+                StandardCharsets.UTF_8, false);
+        if (StrUtil.isBlank(path) || StrUtil.containsAny(path, "..", "\\") || path.indexOf(0) >= 0 || path.startsWith("/")) {
+            throw new IllegalArgumentException("非法的文件路径");
+        }
+        try (FileContent content = fileService.openFileContent(configId, path)) {
+            if (content == null) {
+                response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                return;
+            }
+            FilePreviewWriter.write(request, response, path, content);
+        }
+    }
 
     @PostMapping("/upload")
     @Operation(summary = "上传文件", description = "模式一：后端上传文件")

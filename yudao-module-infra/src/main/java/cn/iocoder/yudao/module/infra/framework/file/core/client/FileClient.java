@@ -40,6 +40,12 @@ public interface FileClient {
      */
     byte[] getContent(String path) throws Exception;
 
+    /** 流式读取。旧存储客户端兼容回退；本地、S3 覆盖此方法避免整文件缓冲。 */
+    default FileContent openContent(String path) throws Exception {
+        byte[] content = getContent(path);
+        return content == null ? null : new FileContent(new java.io.ByteArrayInputStream(content), content.length);
+    }
+
     // ========== 文件签名，目前仅 S3 支持 ==========
 
     /**
