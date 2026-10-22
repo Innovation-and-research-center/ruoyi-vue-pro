@@ -1,5 +1,6 @@
 package cn.iocoder.yudao.module.infra.service.file;
 
+import cn.iocoder.yudao.module.infra.framework.file.core.client.FileContent;
 import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.module.infra.controller.admin.file.vo.file.FileCreateReqVO;
 import cn.iocoder.yudao.module.infra.controller.admin.file.vo.file.FilePageReqVO;
@@ -88,5 +89,7 @@ public interface FileService {
      * @return 文件内容
      */
     byte[] getFileContent(Long configId, String path) throws Exception;
+
+    FileContent openFileContent(Long configId, String path) throws Exception;
 
 }

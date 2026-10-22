@@ -532,6 +532,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
         if (task != null && task.getProcessInstanceId() != null) {
             String processInstanceId = task.getProcessInstanceId();
+            Date sendRoundStartTime = getSendRoundStartTime(task);
 
             // 包含局部状态，以排除退回和撤回取消的接收记录。
             List<org.flowable.task.api.history.HistoricTaskInstance> historicTasks = historyService.createHistoricTaskInstanceQuery()
@@ -540,9 +541,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                     .list();
 
             for (org.flowable.task.api.history.HistoricTaskInstance hiTask : historicTasks) {
-                Integer status = hiTask.getTaskLocalVariables() != null ? FlowableUtils.getTaskStatus(hiTask) : null;
-                if (BpmTaskStatusEnum.CANCEL.getStatus().equals(status)
-                        || BpmTaskStatusEnum.RETURN.getStatus().equals(status)) {
+                if (!isCurrentRoundReceivedTask(hiTask, sendRoundStartTime)) {
                     continue;
                 }
                 String taskKey = hiTask.getTaskDefinitionKey();
@@ -756,6 +755,42 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         }
 
         return result;
+    }
+
+    /** 同一会签节点以本分支活动的进入时间为准，避免使用较晚创建的子任务时间漏掉本轮接收人。 */
+    private Date getSendRoundStartTime(Task task) {
+        Date startTime = task.getCreateTime();
+        if (StrUtil.isBlank(task.getExecutionId())) {
+            return startTime;
+        }
+        Execution execution = runtimeService.createExecutionQuery().executionId(task.getExecutionId()).singleResult();
+        String parentExecutionId = execution != null ? execution.getParentId() : null;
+        List<HistoricActivityInstance> activities = historyService.createHistoricActivityInstanceQuery()
+                .processInstanceId(task.getProcessInstanceId())
+                .activityId(task.getTaskDefinitionKey())
+                .unfinished().list();
+        for (HistoricActivityInstance activity : activities) {
+            if (!Objects.equals(task.getExecutionId(), activity.getExecutionId())
+                    && (parentExecutionId == null || !Objects.equals(parentExecutionId, activity.getExecutionId()))) {
+                continue;
+            }
+            if (activity.getStartTime() != null
+                    && (startTime == null || activity.getStartTime().before(startTime))) {
+                startTime = activity.getStartTime();
+            }
+        }
+        return startTime;
+    }
+
+    /** 已接收名单只保留本轮有效任务，上一轮办结记录仍保留在流程历史中。 */
+    static boolean isCurrentRoundReceivedTask(HistoricTaskInstance task, Date roundStartTime) {
+        Integer status = task.getTaskLocalVariables() != null ? FlowableUtils.getTaskStatus(task) : null;
+        if (BpmTaskStatusEnum.CANCEL.getStatus().equals(status)
+                || BpmTaskStatusEnum.RETURN.getStatus().equals(status)) {
+            return false;
+        }
+        return roundStartTime == null || (task.getCreateTime() != null
+                && !task.getCreateTime().before(roundStartTime));
     }
 
     /** 仅移动已有候选人的展示分组；多组包含同一人员时，先创建的配置优先。 */

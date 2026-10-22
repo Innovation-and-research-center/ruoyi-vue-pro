@@ -3074,7 +3074,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             taskService.setOwner(taskId, task.getAssignee());
         }
         // 3.2 执行转派（审批人），将任务转派给 assigneeUser
-        // 说委托（ delegate）和转派（transfer）的差别，就在这块的调用！！！！
+        // 委托（ delegate）和转派（transfer）的差别，就在这块的调用！！！！
         taskService.setAssignee(taskId, reqVO.getAssigneeUserId().toString());
     }
 
@@ -3719,6 +3719,8 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 throw exception(TASK_WITHDRAW_FAIL_ALREADY_RUNNING);
             }
 
+//            updateTaskStatusAndReason(taskId, BpmTaskStatusEnum.CANCEL.getStatus(), BpmReasonEnum.CANCEL_BY_WITHDRAW.getReason());
+            // 原任务已办结，与跨节点撤回一致，更新历史状态而非运行时任务变量。
             taskSortMapper.updateHistoricTaskLongVariable(taskId, BpmnVariableConstants.TASK_VARIABLE_STATUS,
                     BpmTaskStatusEnum.CANCEL.getStatus());
 
@@ -3975,7 +3977,6 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             }
         }
     }
-
     /**
      * 校验任务是否能被减签
      *
