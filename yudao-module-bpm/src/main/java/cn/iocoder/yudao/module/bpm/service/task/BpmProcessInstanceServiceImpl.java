@@ -44,6 +44,7 @@ import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableCon
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.event.BpmProcessInstanceEventPublisher;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmDispatchSources;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmHttpRequestUtils;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmInternalLoopUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmnModelUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils;
@@ -433,7 +434,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             sourceElement = bpmnModel.getFlowElement(task.getTaskDefinitionKey());
             if (task.getTaskLocalVariables() != null
                     && task.getTaskLocalVariables().containsKey("internal_source_task_id")) {
-                restrictedInternalLoop = isRestrictedInternalOperator(loginUserId, reqVO.getProcessDefinitionId(),
+                restrictedInternalLoop = isRestrictedInternalOperator(loginUserId, task.getProcessDefinitionId(),
                         task.getTaskDefinitionKey(), true);
             }
         }
@@ -510,8 +511,11 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         if (restrictedInternalLoop) {
             BpmNextTaskRespVO completionNode = result.stream().filter(node -> "end".equals(node.getTaskDefKey()))
                     .findFirst().orElse(null);
-            result.removeIf(node -> !node.getTaskDefKey().endsWith("_internal_loop")
-                    && node != completionNode);
+            // 复议、诉讼的单出口节点保留下一环节，避免内循环人员没有转出路径。
+            if (!BpmInternalLoopUtils.canContinueToSingleTarget(bpmnModel, sourceElement)) {
+                result.removeIf(node -> !node.getTaskDefKey().endsWith("_internal_loop")
+                        && node != completionNode);
+            }
             if (completionNode != null) {
                 completionNode.setTaskName("办理完成");
                 completionNode.setFlowName("办理完成");

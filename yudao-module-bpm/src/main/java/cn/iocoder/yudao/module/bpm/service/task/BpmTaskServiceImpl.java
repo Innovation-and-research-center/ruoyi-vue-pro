@@ -30,6 +30,7 @@ import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmTaskCandidateStrategyEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmHttpRequestUtils;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmInternalLoopUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmTaskSmsPolicy;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmDispatchSources;
@@ -1001,9 +1002,12 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         if (instance == null) {
             throw exception(PROCESS_INSTANCE_NOT_EXISTS);
         }
+        BpmnModel bpmnModel = modelService.getBpmnModelByDefinitionId(task.getProcessDefinitionId());
         boolean internalTask = taskService.getVariableLocal(task.getId(), "internal_source_task_id") != null;
         boolean restrictedInternal = processInstanceService.isRestrictedInternalOperator(userId,
-                task.getProcessDefinitionId(), task.getTaskDefinitionKey(), internalTask);
+                task.getProcessDefinitionId(), task.getTaskDefinitionKey(), internalTask)
+                && !BpmInternalLoopUtils.canContinueToSingleTarget(bpmnModel,
+                bpmnModel.getFlowElement(task.getTaskDefinitionKey()));
         if (CollUtil.isNotEmpty(reqVO.getAddSignUserIds())) {
             Set<Long> allowedInternal = processInstanceService.getInternalLoopCandidateUserIds(userId,
                     task.getProcessDefinitionId(), task.getTaskDefinitionKey(), internalTask);
@@ -1017,7 +1021,6 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             throw exception(TASK_APPEND_INVALID, "当前内循环办理人只能在本部门内循环或办理完成");
         }
         // 1.3 校验签名
-        BpmnModel bpmnModel = modelService.getBpmnModelByDefinitionId(task.getProcessDefinitionId());
         Boolean signEnable = parseSignEnable(bpmnModel, task.getTaskDefinitionKey());
         if (signEnable && StrUtil.isEmpty(reqVO.getSignPicUrl())) {
             throw exception(TASK_SIGNATURE_NOT_EXISTS);
