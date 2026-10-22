@@ -1250,6 +1250,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
         Set<String> dispatchTargetIds = BpmDispatchSources.selectedTargets(managementService,
                 localVariableExecutionId, (FlowNode) currentFlowElement);
+        validateRestoredDispatch(task, bpmnModel, dispatchTargetIds, nextNodeAssignees);
         if (restrictedInternal) {
             // 受限人员不获取普通转出的追加授权；不能用表单路由字段绕过下一节点参数校验。
             Set<String> currentRouteKeys = new HashSet<>();
@@ -1512,6 +1513,28 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         // 【加签专属】处理加签任务
         handleParentTaskIfSign(task.getParentTaskId());
     }
+    /** 撤回恢复后不重复派发仍保留的成员；后端校验也防止过期弹窗或直接接口绕过禁选。 */
+    void validateRestoredDispatch(Task task, BpmnModel model, Set<String> selectedTargets,
+                                  Map<String, List<Long>> selections) {
+        Map<String, Set<Long>> retained = BpmDispatchSources.retainedRecipients(runtimeService,
+                task.getProcessInstanceId(), task.getExecutionId(), task.getTaskDefinitionKey());
+        if (retained.isEmpty()) return;
+        for (String targetId : selectedTargets) {
+            FlowElement target = model.getFlowElement(targetId);
+            if (!(target instanceof UserTask)) continue;
+            Set<Long> existing = retained.getOrDefault(target.getId(), Collections.emptySet());
+            if (existing.isEmpty()) continue;
+            List<Long> selected = selections == null ? null : selections.get(target.getId());
+            boolean manual = ObjUtil.equals(parseCandidateStrategy(target), BpmTaskCandidateStrategyEnum.MANUAL_SELECTED.getStrategy())
+                    || ObjUtil.equals(parseCandidateStrategy(target), BpmTaskCandidateStrategyEnum.APPROVE_USER_SELECT.getStrategy())
+                    || ObjUtil.equals(parseCandidateStrategy(target), BpmTaskCandidateStrategyEnum.START_USER_SELECT.getStrategy());
+            if (!manual
+                    || selected != null && selected.stream().anyMatch(existing::contains)) {
+                throw exception(TASK_RESTORED_RECIPIENT_DUPLICATE, target.getName());
+            }
+        }
+    }
+
     /**
      * 校验选择的下一个节点的审批人，是否合法
      * <p>

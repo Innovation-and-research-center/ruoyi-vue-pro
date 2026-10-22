@@ -6,6 +6,7 @@ import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmNextTask
 import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmUserGroupDO;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmDispatchSources;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmProcessDefinitionService;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmUserGroupService;
 import cn.iocoder.yudao.module.infra.api.config.ConfigApi;
@@ -192,6 +193,37 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
     }
 
     @Test
+    void restoredSourceKeepsOlderRetainedRecipientsDisabledButReleasesWithdrawnOnes() {
+        prepare(20L, false);
+        Task task = taskService.validateTask(20L, "task");
+        when(task.getExecutionId()).thenReturn("restoredExecution");
+        org.flowable.engine.history.HistoricActivityInstanceQuery activities = mock(
+                org.flowable.engine.history.HistoricActivityInstanceQuery.class, Answers.RETURNS_SELF);
+        when(historyService.createHistoricActivityInstanceQuery()).thenReturn(activities);
+        when(activities.list()).thenReturn(Collections.emptyList());
+        when(runtimeService.getVariable("restoredExecution", BpmDispatchSources.RESTORED_FROM))
+                .thenReturn(Collections.singletonMap("current", Collections.singleton("originalSource")));
+        when(runtimeService.getVariableLocal("instance", BpmDispatchSources.LEDGER_PREFIX + "originalSource"))
+                .thenReturn(Collections.singletonMap("next", new LinkedHashSet<>(Arrays.asList(30L, 40L))));
+        doReturn(Arrays.asList(user(30L, 1L, 0), user(40L, 2L, 0)))
+                .when(userService).getUserList(new HashSet<>(Arrays.asList(30L, 40L)));
+        assertEquals(new HashSet<>(Arrays.asList(30L, 40L)),
+                new HashSet<>(find(getNodes(20L), "next").getAssignedUserIds()));
+
+        // 原来源继续撤回 30，恢复任务不换，候选状态也应立即更新。
+        when(runtimeService.getVariableLocal("instance", BpmDispatchSources.LEDGER_PREFIX + "originalSource"))
+                .thenReturn(Collections.singletonMap("next", Collections.singleton(40L)));
+        doReturn(Collections.singletonList(user(40L, 2L, 0))).when(userService).getUserList(Collections.singleton(40L));
+        assertEquals(Collections.singletonList(40L), find(getNodes(20L), "next").getAssignedUserIds());
+
+        // 上下文属于其他节点时，不限制当前节点的正常发送。
+        when(runtimeService.getVariable("restoredExecution", BpmDispatchSources.RESTORED_FROM))
+                .thenReturn(Collections.singletonMap("otherSource", Collections.singleton("originalSource")));
+        List<Long> assigned = find(getNodes(20L), "next").getAssignedUserIds();
+        assertTrue(assigned == null || assigned.isEmpty());
+    }
+
+    @Test
     void submissionCandidatesForNonMemberAreOnlyEnabledOwnDepartmentUsers() {
         prepare(20L, true);
         getNodes(20L);
@@ -298,6 +330,7 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
         when(processDefinitionService.getProcessDefinitionBpmnModel("definition")).thenReturn(model);
         Task task = mock(Task.class);
         when(task.getTaskDefinitionKey()).thenReturn("current");
+        if (internalLoop) when(task.getProcessDefinitionId()).thenReturn("definition");
         when(task.getProcessInstanceId()).thenReturn("instance");
         when(task.getTaskLocalVariables()).thenReturn(internalLoop
                 ? Collections.singletonMap("internal_source_task_id", "sourceTask") : Collections.emptyMap());

@@ -593,25 +593,303 @@ class BpmTaskAppendTest {
         BpmTaskAppendService append = service(); String root = append.targets(1L, source).get(0).getExecutionId();
         BpmTaskWithdrawService withdraw = withdrawService();
         withdraw(withdraw, withdrawal(source, root, 5L));
-        assertNull(task(instance, "5")); assertNotNull(task(instance, "4")); assertNotNull(task(instance, "6")); assertNull(task(instance, "1"));
+        assertNull(task(instance, "5")); assertNotNull(task(instance, "4")); assertNotNull(task(instance, "6")); assertNotNull(task(instance, "1"));
         assertEquals(2, engine.getRuntimeService().getVariableLocal(root, "nrOfInstances"));
         assertEquals(0, engine.getRuntimeService().getVariableLocal(root, "nrOfCompletedInstances"));
         submit(append, request(source, root, 5L)); assertNotNull(task(instance, "5"));
         assertEquals(3, engine.getRuntimeService().getVariableLocal(root, "nrOfInstances"));
         assertThrows(RuntimeException.class, () -> withdraw(withdraw, withdrawal(source, root, 99L)));
     }
+
     @Test
-    void withdrawRemainingAfterOneCompletedAdvancesWithoutRestoringSource() throws Exception {
+    void partialWithdrawalsReuseDirectorAndRetainedRecipientsFollowLiveLedger() throws Exception {
+        String instance = start(false, false, false, false, false, true);
+        String source = dispatch(instance);
+        String root = service().targets(1L, source).get(0).getExecutionId();
+        engine.getRuntimeService().setVariable(instance, "otherBranchValue", "unchanged");
+        BpmTaskWithdrawService withdrawals = withdrawService();
+        withdraw(withdrawals, withdrawal(source, root, 5L));
+        Task restored = task(instance, "1");
+        assertNotNull(restored);
+        assertEquals(false, engine.getTaskService().getVariableLocal(restored.getId(), BpmTaskSmsPolicy.TASK_SEND_SMS));
+        assertEquals(new LinkedHashSet<>(Arrays.asList(4L, 6L)), BpmDispatchSources.retainedRecipients(
+                engine.getRuntimeService(), instance, restored.getExecutionId(), SOURCE).get("target"));
+        engine.getTaskService().complete(task(instance, "4").getId());
+        // 已办仍保留在台账，不能因主任任务较新而再次派给 4。
+        assertTrue(BpmDispatchSources.retainedRecipients(engine.getRuntimeService(), instance,
+                restored.getExecutionId(), SOURCE).get("target").contains(4L));
+        withdraw(withdrawals, withdrawal(source, root, 6L));
+        assertEquals(restored.getId(), task(instance, "1").getId());
+        assertEquals(Collections.singleton(4L), BpmDispatchSources.retainedRecipients(engine.getRuntimeService(),
+                instance, restored.getExecutionId(), SOURCE).get("target"));
+        assertEquals(1, engine.getTaskService().createTaskQuery().processInstanceId(instance).taskDefinitionKey(SOURCE).count());
+        assertEquals("unchanged", engine.getRuntimeService().getVariable(instance, "otherBranchValue"));
+        assertEquals(2, engine.getTaskService().getTaskComments(source, "10").size());
+    }
+
+    @Test
+    void restoredDirectorResendsOnlyCancelledMemberAndLaterWithdrawalReusesDescendant() throws Exception {
+        String instance = start(false, false); String source = dispatch(instance);
+        String root = service().targets(1L, source).get(0).getExecutionId();
+        BpmTaskWithdrawService withdrawals = withdrawService();
+        withdraw(withdrawals, withdrawal(source, root, 5L));
+        Task restored = task(instance, "1");
+        String branch = engine.getRuntimeService().createExecutionQuery().executionId(restored.getExecutionId())
+                .singleResult().getParentId();
+        engine.getRuntimeService().setVariableLocal(branch, BpmDispatchSources.NEW_MEMBERS,
+                Collections.singletonMap("target", new LinkedHashSet<>(Collections.singleton(5L))));
+        BpmDispatchSources.prepare(engine.getRuntimeService(), branch, restored.getId(),
+                Collections.singletonMap("target", Collections.singleton(5L)));
+        engine.getTaskService().setVariableLocal(restored.getId(), BpmnVariableConstants.TASK_VARIABLE_STATUS, 2);
+        engine.getTaskService().complete(restored.getId());
+        assertEquals(3, engine.getTaskService().createTaskQuery().processInstanceId(instance).taskDefinitionKey("target").count());
+        String newRoot = engine.getRuntimeService().createExecutionQuery().executionId(task(instance, "5").getExecutionId())
+                .singleResult().getParentId();
+        withdraw(withdrawals, withdrawal(restored.getId(), newRoot, 5L));
+        Task secondRestored = task(instance, "1");
+        assertNotEquals(restored.getId(), secondRestored.getId());
+        assertEquals(new LinkedHashSet<>(Arrays.asList(4L, 6L)), BpmDispatchSources.retainedRecipients(
+                engine.getRuntimeService(), instance, secondRestored.getExecutionId(), SOURCE).get("target"));
+        // 旧来源还有未撤人员，继续撤回时复用同一来源链上的新主任待办。
+        withdraw(withdrawals, withdrawal(source, root, 4L));
+        assertEquals(secondRestored.getId(), task(instance, "1").getId());
+        assertNotNull(task(instance, "6"));
+        assertEquals(Collections.singleton(6L), BpmDispatchSources.retainedRecipients(engine.getRuntimeService(),
+                instance, secondRestored.getExecutionId(), SOURCE).get("target"));
+    }
+
+    @Test
+    void failedPartialWithdrawalDoesNotRestoreDirector() throws Exception {
+        String instance = start(false, false); String source = dispatch(instance);
+        String root = service().targets(1L, source).get(0).getExecutionId();
+        engine.getTaskService().complete(task(instance, "4").getId());
+        assertThrows(RuntimeException.class, () -> withdraw(withdrawService(), withdrawal(source, root, 5L, 4L)));
+        assertNull(task(instance, "1"));
+        assertNotNull(task(instance, "5")); assertNotNull(task(instance, "6"));
+    }
+
+    @Test
+    void originalSourceWithdrawnAgainAfterResendRetainsNewRoundCompletedRecipients() throws Exception {
+        String instance = start(false, false); String source = dispatch(instance);
+        String root = service().targets(1L, source).get(0).getExecutionId();
+        BpmTaskWithdrawService withdrawals = withdrawService();
+        withdraw(withdrawals, withdrawal(source, root, 5L));
+        Task restored = task(instance, "1");
+        String branch = engine.getRuntimeService().createExecutionQuery().executionId(restored.getExecutionId())
+                .singleResult().getParentId();
+        engine.getRuntimeService().setVariableLocal(branch, BpmDispatchSources.NEW_MEMBERS,
+                Collections.singletonMap("target", new LinkedHashSet<>(Collections.singleton(5L))));
+        BpmDispatchSources.prepare(engine.getRuntimeService(), branch, restored.getId(),
+                Collections.singletonMap("target", Collections.singleton(5L)));
+        engine.getTaskService().setVariableLocal(restored.getId(), BpmnVariableConstants.TASK_VARIABLE_STATUS, 2);
+        engine.getTaskService().complete(restored.getId());
+        engine.getTaskService().complete(task(instance, "5").getId());
+        withdraw(withdrawals, withdrawal(source, root, 4L));
+        Task nextRestored = task(instance, "1");
+        assertNotEquals(restored.getId(), nextRestored.getId());
+        assertEquals(new LinkedHashSet<>(Arrays.asList(5L, 6L)), BpmDispatchSources.retainedRecipients(
+                engine.getRuntimeService(), instance, nextRestored.getExecutionId(), SOURCE).get("target"));
+        assertNotNull(task(instance, "6")); assertNotNull(task(instance, "7"));
+    }
+
+    private String resendDirector(String instance, Long... users) {
+        Task restored = engine.getTaskService().createTaskQuery().processInstanceId(instance).taskDefinitionKey(SOURCE).singleResult();
+        String branch = engine.getRuntimeService().createExecutionQuery().executionId(restored.getExecutionId())
+                .singleResult().getParentId();
+        engine.getRuntimeService().setVariableLocal(branch, BpmDispatchSources.NEW_MEMBERS,
+                Collections.singletonMap("target", new LinkedHashSet<>(Arrays.asList(users))));
+        BpmDispatchSources.prepare(engine.getRuntimeService(), branch, restored.getId(),
+                Collections.singletonMap("target", Arrays.asList(users)));
+        engine.getTaskService().setVariableLocal(restored.getId(), BpmnVariableConstants.TASK_VARIABLE_STATUS, 2);
+        engine.getTaskService().complete(restored.getId());
+        return restored.getId();
+    }
+
+    private BpmTaskWithdrawReqVO selectRows(String entry, List<BpmTaskWithdrawTargetRespVO> rows, Long... users) {
+        Set<Long> selected = new HashSet<>(Arrays.asList(users));
+        BpmTaskWithdrawReqVO request = new BpmTaskWithdrawReqVO(); request.setSourceTaskId(entry);
+        request.setMembers(rows.stream().filter(row -> selected.contains(row.getUserId())).map(row -> {
+            BpmTaskWithdrawReqVO.Member member = new BpmTaskWithdrawReqVO.Member();
+            member.setExecutionId(row.getExecutionId()); member.setUserId(row.getUserId()); return member;
+        }).collect(Collectors.toList()));
+        return request;
+    }
+
+    @Test
+    void latestAndOriginalEntriesShowSameChainAndWithdrawBothRoundsAtomically() throws Exception {
+        String instance = start(false, false); String original = dispatch(instance);
+        BpmTaskWithdrawService service = withdrawService();
+        String root = service.targets(1L, original).get(0).getExecutionId();
+        withdraw(service, withdrawal(original, root, 5L));
+        String latest = resendDirector(instance, 5L);
+        List<BpmTaskWithdrawTargetRespVO> rows = service.targets(1L, latest);
+        assertEquals(new HashSet<>(Arrays.asList(4L, 5L, 6L)), rows.stream().map(BpmTaskWithdrawTargetRespVO::getUserId).collect(Collectors.toSet()));
+        Set<String> keys = rows.stream().map(row -> row.getExecutionId() + ":" + row.getUserId()).collect(Collectors.toSet());
+        assertEquals(keys, service.targets(1L, original).stream()
+                .map(row -> row.getExecutionId() + ":" + row.getUserId()).collect(Collectors.toSet()));
+        withdraw(service, selectRows(latest, rows, 4L, 5L));
+        assertNull(task(instance, "4")); assertNull(task(instance, "5")); assertNotNull(task(instance, "6"));
+        Task restored = task(instance, "1"); assertNotNull(restored);
+        assertEquals(Collections.singleton(6L), ((Map<?, ?>) engine.getRuntimeService()
+                .getVariableLocal(instance, BpmDispatchSources.LEDGER_PREFIX + original)).get("target"));
+        assertTrue(((Map<?, ?>) engine.getRuntimeService().getVariableLocal(instance, BpmDispatchSources.LEDGER_PREFIX + latest)).isEmpty());
+        assertEquals(2, engine.getTaskService().getTaskComments(original, "10").size());
+        assertEquals(1, engine.getTaskService().getTaskComments(latest, "10").size());
+        assertTrue(engine.getTaskService().getTaskComments(latest, "10").get(0).getFullMessage().contains("人员5"));
+        assertFalse(engine.getTaskService().getTaskComments(latest, "10").get(0).getFullMessage().contains("人员4"));
+        withdraw(service, selectRows(latest, service.targets(1L, latest), 6L));
+        assertEquals(restored.getId(), task(instance, "1").getId());
+        assertEquals(1, engine.getTaskService().createTaskQuery().processInstanceId(instance).count());
+        assertNotNull(engine.getHistoryService().createHistoricTaskInstanceQuery().taskId(original).singleResult());
+        assertNotNull(engine.getHistoryService().createHistoricTaskInstanceQuery().taskId(latest).singleResult());
+    }
+
+    @Test
+    void oldEntryCanWithdrawOnlyNewRoundWithoutTouchingOriginalMembers() throws Exception {
+        String instance = start(false, false); String original = dispatch(instance);
+        BpmTaskWithdrawService service = withdrawService();
+        withdraw(service, withdrawal(original, service.targets(1L, original).get(0).getExecutionId(), 5L));
+        String latest = resendDirector(instance, 5L);
+        withdraw(service, selectRows(original, service.targets(1L, original), 5L));
+        assertNull(task(instance, "5")); assertNotNull(task(instance, "4")); assertNotNull(task(instance, "6"));
+        assertNotNull(task(instance, "1"));
+        assertTrue(((Map<?, ?>) engine.getRuntimeService().getVariableLocal(instance, BpmDispatchSources.LEDGER_PREFIX + latest)).isEmpty());
+    }
+
+    @Test
+    void staleCrossRoundSelectionRejectsWholeRequestWhenOneMemberCompletes() throws Exception {
+        String instance = start(false, false); String original = dispatch(instance);
+        BpmTaskWithdrawService service = withdrawService();
+        withdraw(service, withdrawal(original, service.targets(1L, original).get(0).getExecutionId(), 5L));
+        String latest = resendDirector(instance, 5L);
+        BpmTaskWithdrawReqVO request = selectRows(latest, service.targets(1L, latest), 4L, 5L);
+        engine.getTaskService().complete(task(instance, "4").getId());
+        assertThrows(RuntimeException.class, () -> withdraw(service, request));
+        assertNotNull(task(instance, "5")); assertNotNull(task(instance, "6")); assertNull(task(instance, "1"));
+        assertTrue(engine.getTaskService().getTaskComments(latest, "10").isEmpty());
+        assertFalse(service.targets(1L, latest).stream().filter(row -> row.getUserId() == 4L).findFirst().get().isWithdrawable());
+    }
+
+    @Test
+    void sameUserInDifferentInstancesIsNotCollapsedByChainAggregation() throws Exception {
+        String instance = start(false, false); String original = dispatch(instance);
+        BpmTaskWithdrawService service = withdrawService();
+        withdraw(service, withdrawal(original, service.targets(1L, original).get(0).getExecutionId(), 5L));
+        // 模拟历史上允许重复派发的任务：同人同节点但不同实例，不能只按人员合并。
+        String latest = resendDirector(instance, 4L);
+        List<BpmTaskWithdrawTargetRespVO> rows = service.targets(1L, latest).stream()
+                .filter(row -> row.getUserId() == 4L).collect(Collectors.toList());
+        assertEquals(2, rows.size()); assertNotEquals(rows.get(0).getExecutionId(), rows.get(1).getExecutionId());
+        withdraw(service, withdrawal(latest, rows.get(0).getExecutionId(), 4L));
+        assertEquals(1, engine.getTaskService().createTaskQuery().processInstanceId(instance).taskAssignee("4").count());
+        assertNotNull(task(instance, "6"));
+    }
+
+    @Test
+    void sharedTargetRemovesAllSelectedChainSourcesButKeepsExternalSource() throws Exception {
+        String instance = start(false, false); String original = dispatch(instance);
+        BpmTaskWithdrawService service = withdrawService();
+        String rootId = service.targets(1L, original).get(0).getExecutionId();
+        withdraw(service, withdrawal(original, rootId, 5L));
+        String latest = resendDirector(instance, 5L);
+        engine.getManagementService().executeCommand(context -> {
+            org.flowable.engine.impl.persistence.entity.ExecutionEntity root =
+                    org.flowable.engine.impl.util.CommandContextUtil.getExecutionEntityManager().findById(rootId);
+            @SuppressWarnings("unchecked") Map<String, Set<String>> current = (Map<String, Set<String>>) root.getVariableLocal(BpmDispatchSources.SOURCES);
+            Map<String, Set<String>> origins = new LinkedHashMap<>(current);
+            origins.put("4", new LinkedHashSet<>(Arrays.asList(original, latest, "externalSource")));
+            root.setVariableLocal(BpmDispatchSources.SOURCES, origins);
+            BpmDispatchSources.remember(root, latest, "target", Collections.singleton(4L));
+            BpmDispatchSources.remember(root, "externalSource", "target", Collections.singleton(4L));
+            return null;
+        });
+        assertEquals(1, service.targets(1L, latest).stream().filter(row -> row.getUserId() == 4L).count());
+        String targetTask = task(instance, "4").getId();
+        withdraw(service, withdrawal(latest, rootId, 4L));
+        assertEquals(targetTask, task(instance, "4").getId());
+        Map<?, ?> origins = (Map<?, ?>) engine.getRuntimeService().getVariableLocal(rootId, BpmDispatchSources.SOURCES);
+        assertEquals(Collections.singleton("externalSource"), origins.get("4"));
+        assertFalse(service.targets(1L, latest).stream().anyMatch(row -> row.getUserId() == 4L));
+    }
+
+    @Test
+    void chainAggregationDoesNotAuthorizeAnotherAssigneesDispatch() throws Exception {
+        String instance = start(false, false); String original = dispatch(instance);
+        BpmTaskWithdrawService service = withdrawService();
+        String oldRoot = service.targets(1L, original).get(0).getExecutionId();
+        withdraw(service, withdrawal(original, oldRoot, 5L));
+        Task restored = task(instance, "1");
+        // 转办后由 2 完成恢复任务，历史办理人属于权限边界。
+        engine.getTaskService().setAssignee(restored.getId(), "2");
+        String latest = resendDirector(instance, 5L);
+        assertEquals(Collections.singleton(5L), service.targets(2L, latest).stream()
+                .map(BpmTaskWithdrawTargetRespVO::getUserId).collect(Collectors.toSet()));
+        assertEquals(new HashSet<>(Arrays.asList(4L, 6L)), service.targets(1L, original).stream()
+                .map(BpmTaskWithdrawTargetRespVO::getUserId).collect(Collectors.toSet()));
+        assertThrows(RuntimeException.class, () -> engine.getManagementService().executeCommand(context -> {
+            service.withdraw(2L, withdrawal(latest, oldRoot, 4L)); return null;
+        }));
+        assertNotNull(task(instance, "4"));
+    }
+
+    @Test
+    void unrelatedSameNodeAndAssigneeIsExcludedFromUnifiedWithdrawal() throws Exception {
+        String instance = start(false, false); String original = dispatch(instance);
+        BpmTaskWithdrawService service = withdrawService();
+        withdraw(service, withdrawal(original, service.targets(1L, original).get(0).getExecutionId(), 5L));
+        String latest = resendDirector(instance, 5L);
+        engine.getManagementService().executeCommand(context -> {
+            org.flowable.engine.impl.persistence.entity.ExecutionEntity process =
+                    org.flowable.engine.impl.util.CommandContextUtil.getExecutionEntityManager().findById(instance);
+            org.flowable.engine.impl.persistence.entity.ExecutionEntity branch =
+                    org.flowable.engine.impl.util.CommandContextUtil.getExecutionEntityManager().createChildExecution(process);
+            branch.setActive(false); branch.setScope(false);
+            BpmnModel model = engine.getRepositoryService().getBpmnModel(process.getProcessDefinitionId());
+            branch.setCurrentFlowElement(model.getMainProcess().findFlowElementsOfType(EndEvent.class).get(0));
+            branch.setVariableLocal(BpmDispatchSources.BRANCH, true);
+            // 故意没有 RESTORED_FROM：同人同节点的独立轮次，不属于这条恢复链。
+            org.flowable.engine.impl.persistence.entity.ExecutionEntity entry =
+                    org.flowable.engine.impl.util.CommandContextUtil.getExecutionEntityManager().createChildExecution(branch);
+            entry.setCurrentFlowElement(model.getFlowElement(SOURCE));
+            org.flowable.engine.impl.util.CommandContextUtil.getAgenda().planContinueProcessOperation(entry);
+            return null;
+        });
+        String independent = resendDirector(instance, 8L);
+        assertEquals(Collections.singleton(8L), service.targets(1L, independent).stream()
+                .map(BpmTaskWithdrawTargetRespVO::getUserId).collect(Collectors.toSet()));
+        assertEquals(new HashSet<>(Arrays.asList(4L, 5L, 6L)), service.targets(1L, latest).stream()
+                .map(BpmTaskWithdrawTargetRespVO::getUserId).collect(Collectors.toSet()));
+        String foreignRoot = service.targets(1L, independent).get(0).getExecutionId();
+        assertThrows(RuntimeException.class, () -> withdraw(service, withdrawal(latest, foreignRoot, 8L)));
+        assertNotNull(task(instance, "8"));
+    }
+
+    @Test
+    void missingLedgerInAnotherRoundRejectsUnifiedBatchBeforeAnyMutation() throws Exception {
+        String instance = start(false, false); String original = dispatch(instance);
+        BpmTaskWithdrawService service = withdrawService();
+        withdraw(service, withdrawal(original, service.targets(1L, original).get(0).getExecutionId(), 5L));
+        String latest = resendDirector(instance, 5L);
+        BpmTaskWithdrawReqVO request = selectRows(original, service.targets(1L, original), 4L, 5L);
+        engine.getRuntimeService().removeVariableLocal(instance, BpmDispatchSources.LEDGER_PREFIX + latest);
+        assertThrows(RuntimeException.class, () -> withdraw(service, request));
+        assertNotNull(task(instance, "4")); assertNotNull(task(instance, "5")); assertNotNull(task(instance, "6"));
+        assertNull(task(instance, "1"));
+        assertTrue(engine.getTaskService().getTaskComments(latest, "10").isEmpty());
+    }
+    @Test
+    void withdrawRemainingAfterOneCompletedAdvancesAndRestoresDirector() throws Exception {
         String instance = start(false, false); String source = dispatch(instance);
         String root = service().targets(1L, source).get(0).getExecutionId();
         engine.getTaskService().complete(task(instance, "4").getId());
         BpmTaskWithdrawService withdraw = withdrawService();
         assertFalse(withdraw.targets(1L, source).stream().filter(row -> row.getUserId() == 4L).findFirst().get().isWithdrawable());
         withdraw(withdraw, withdrawal(source, root, 5L, 6L));
-        assertNull(task(instance, "1")); assertNotNull(task(instance, "7"));
-        assertEquals(1, engine.getTaskService().createTaskQuery().processInstanceId(instance).count());
+        assertNotNull(task(instance, "1")); assertNotNull(task(instance, "7"));
+        assertEquals(2, engine.getTaskService().createTaskQuery().processInstanceId(instance).count());
         engine.getTaskService().complete(task(instance, "7").getId());
-        assertNull(engine.getRuntimeService().createProcessInstanceQuery().processInstanceId(instance).singleResult());
+        assertNotNull(engine.getRuntimeService().createProcessInstanceQuery().processInstanceId(instance).singleResult());
+        assertNotNull(task(instance, "1"));
     }
     @Test
     void withdrawAllRestoresExactlyOneSourceAndNoDownstream() throws Exception {
@@ -644,7 +922,7 @@ class BpmTaskAppendTest {
         String root = service().targets(1L, source).get(0).getExecutionId();
         engine.getTaskService().complete(task(instance, "4").getId());
         withdraw(withdrawService(), withdrawal(source, root, 5L, 6L));
-        assertNotNull(task(instance, "7")); assertNull(task(instance, "1"));
+        assertNotNull(task(instance, "7")); assertNotNull(task(instance, "1"));
     }
     @Test
     void withdrawalRejectsForeignSourceAndFinishedMemberAtomically() throws Exception {
@@ -660,7 +938,7 @@ class BpmTaskAppendTest {
 
 
     @Test
-    void withdrawalOfAddedBranchUnblocksInclusiveJoinWithoutSourceRestore() throws Exception {
+    void withdrawalOfAddedBranchRestoresDirectorAndKeepsProcessAlive() throws Exception {
         String instance = start(false, false, false, false, true); String source = dispatch(instance);
         BpmTaskAppendService append = service();
         submit(append, request(source, "new:extra", 9L));
@@ -668,7 +946,8 @@ class BpmTaskAppendTest {
         BpmTaskWithdrawService withdraw = withdrawService();
         BpmTaskWithdrawTargetRespVO extra = withdraw.targets(1L, source).stream().filter(row -> row.getUserId() == 9L).findFirst().get();
         withdraw(withdraw, withdrawal(source, extra.getExecutionId(), 9L));
-        assertNull(engine.getRuntimeService().createProcessInstanceQuery().processInstanceId(instance).singleResult());
+        assertNotNull(engine.getRuntimeService().createProcessInstanceQuery().processInstanceId(instance).singleResult());
+        assertNotNull(task(instance, "1"));
     }
     @Test
     void withdrawingOneWholeBranchPreservesOtherBranchAndLaterRestoresOnlyOnce() throws Exception {
@@ -678,7 +957,7 @@ class BpmTaskAppendTest {
         submit(append, request(source, "new:extra", 9L));
         BpmTaskWithdrawService withdraw = withdrawService();
         withdraw(withdraw, withdrawal(source, root, 4L, 5L, 6L));
-        assertNotNull(task(instance, "9")); assertNull(task(instance, "1")); assertNull(task(instance, "7"));
+        assertNotNull(task(instance, "9")); assertNotNull(task(instance, "1")); assertNull(task(instance, "7"));
         String extra = withdraw.targets(1L, source).stream().filter(row -> row.getUserId() == 9L).findFirst().get().getExecutionId();
         withdraw(withdraw, withdrawal(source, extra, 9L));
         assertNotNull(task(instance, "1"));

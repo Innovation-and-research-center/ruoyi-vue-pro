@@ -10,6 +10,7 @@ import cn.iocoder.yudao.framework.common.exception.ErrorCode;
 public interface ErrorCodeConstants {
     ErrorCode TASK_WITHDRAW_INVALID = new ErrorCode(1_009_007_091, "撤回失败：{}");
     ErrorCode TASK_APPEND_INVALID = new ErrorCode(1_009_007_090, "追加失败：{}");
+    ErrorCode TASK_RESTORED_RECIPIENT_DUPLICATE = new ErrorCode(1_009_007_092, "该环节（{}）仍有未撤回的派发记录，请勿重复派发");
 
     // ==========  通用流程处理 模块 1-009-000-000 ==========
 

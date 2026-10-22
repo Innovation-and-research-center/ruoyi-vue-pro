@@ -15,10 +15,37 @@ public final class BpmDispatchSources {
     public static final String BRANCH = "bpm_dispatch_branch";
     public static final String NEW_MEMBERS = "bpm_dispatch_new_members";
     public static final String LEDGER_PREFIX = "bpm_dispatch_ledger_";
+    /** 恢复分支保存节点到来源链的映射；对应来源任务上保存链快照，不能从表单传入。 */
+    public static final String RESTORED_FROM = "bpm_dispatch_restored_from";
     private static final java.util.regex.Pattern MANUAL_ROUTE = java.util.regex.Pattern.compile(
             "\\$\\{\\s*(?:variables:get\\(\\s*['\"]?(?:select_node_\\d+|next_node\\d+)['\"]?\\s*\\)|(?:select_node_\\d+|next_node\\d+))\\s*==\\s*['\"]([^'\"]+)['\"]\\s*}");
     private static final String PREFIX = "bpm_dispatch_pending_";
     private BpmDispatchSources() {}
+
+    public static Set<String> restoredSources(Object context, String nodeId) {
+        Set<String> result = new LinkedHashSet<>();
+        Object sources = context instanceof Map ? ((Map<?, ?>) context).get(nodeId) : null;
+        if (sources instanceof Collection) ((Collection<?>) sources).forEach(id -> result.add(id.toString()));
+        return result;
+    }
+
+    /** 恢复的来源重新选人时，未撤销的旧派发（包含已办）仍属已接收；已撤销人员可重新选择。 */
+    public static Map<String, Set<Long>> retainedRecipients(RuntimeService runtime, String instanceId,
+                                                           String executionId, String nodeId) {
+        Map<String, Set<Long>> result = new LinkedHashMap<>();
+        if (executionId == null) return result;
+        Set<String> sources = restoredSources(runtime.getVariable(executionId, RESTORED_FROM), nodeId);
+        for (String source : sources) {
+            Object ledger = runtime.getVariableLocal(instanceId, LEDGER_PREFIX + source);
+            if (!(ledger instanceof Map)) continue;
+            ((Map<?, ?>) ledger).forEach((target, users) -> {
+                if (!(users instanceof Collection)) return;
+                Set<Long> members = result.computeIfAbsent(target.toString(), key -> new LinkedHashSet<>());
+                for (Object user : (Collection<?>) users) members.add(Long.valueOf(user.toString()));
+            });
+        }
+        return result;
+    }
     public static boolean isInternal(String key) {
         return key != null && key.startsWith("bpm_dispatch_");
     }

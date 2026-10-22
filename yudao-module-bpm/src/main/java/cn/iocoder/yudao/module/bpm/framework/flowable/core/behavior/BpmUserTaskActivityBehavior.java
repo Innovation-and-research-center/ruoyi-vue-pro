@@ -5,6 +5,7 @@ import cn.hutool.core.util.RandomUtil;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.candidate.BpmTaskCandidateInvoker;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmTaskSmsPolicy;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmDispatchSources;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.bpmn.model.UserTask;
@@ -46,6 +47,9 @@ public class BpmUserTaskActivityBehavior extends UserTaskActivityBehavior {
     protected void handleAssignments(TaskService taskService, String assignee, String owner,
         List<String> candidateUsers, List<String> candidateGroups, TaskEntity task, ExpressionManager expressionManager,
         DelegateExecution execution, ProcessEngineConfigurationImpl processEngineConfiguration) {
+        Set<String> restoredSources = BpmDispatchSources.restoredSources(
+                execution.getVariable(BpmDispatchSources.RESTORED_FROM), execution.getCurrentActivityId());
+        if (!restoredSources.isEmpty()) task.setVariableLocal(BpmDispatchSources.RESTORED_FROM, restoredSources);
         if (BpmRegisterTaskUtils.isRegisterTask(execution)) {
             Set<Long> candidateUserIds = BpmRegisterTaskUtils.calculateCandidateUserIds(execution, taskCandidateInvoker);
             if (CollUtil.isNotEmpty(candidateUserIds)) {

@@ -581,6 +581,14 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                     }
                 }
             }
+            // 撤回恢复是新任务，但仍保留的旧派发不能因早于本轮开始时间而重新变成可选。
+            BpmDispatchSources.retainedRecipients(runtimeService, processInstanceId, task.getExecutionId(),
+                    task.getTaskDefinitionKey()).forEach((node, users) -> {
+                List<Long> received = selectedAssigneesMap.containsKey(node)
+                        ? Convert.toList(Long.class, selectedAssigneesMap.get(node)) : new ArrayList<>();
+                for (Long user : users) if (!received.contains(user)) received.add(user);
+                selectedAssigneesMap.put(node, received);
+            });
         }
         // =========================================================================================
 

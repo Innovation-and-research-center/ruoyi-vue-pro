@@ -53,7 +53,10 @@ public class BpmTaskWithdrawService {
 
     public List<BpmTaskWithdrawTargetRespVO> targets(Long userId, String taskId) {
         HistoricTaskInstance source = source(userId, taskId);
-        List<BpmTaskWithdrawTargetRespVO> result = managementService.executeCommand(context -> { requireMemberMode(source); requirePartialAllowed(source); return inspect(source); });
+        List<BpmTaskWithdrawTargetRespVO> result = managementService.executeCommand(context -> {
+            requireMemberMode(source); requirePartialAllowed(source);
+            return inspect(source, withdrawalSources(source).keySet());
+        });
         Map<Long, AdminUserRespDTO> users = adminUserApi.getUserList(result.stream()
                 .map(BpmTaskWithdrawTargetRespVO::getUserId).collect(Collectors.toSet())).stream()
                 .collect(Collectors.toMap(AdminUserRespDTO::getId, user -> user, (a, b) -> a));
@@ -65,13 +68,13 @@ public class BpmTaskWithdrawService {
     }
 
     @SuppressWarnings("unchecked")
-    private List<BpmTaskWithdrawTargetRespVO> inspect(HistoricTaskInstance source) {
+    private List<BpmTaskWithdrawTargetRespVO> inspect(HistoricTaskInstance source, Set<String> sourceIds) {
         List<BpmTaskWithdrawTargetRespVO> result = new ArrayList<>();
         BpmnModel model = repositoryService.getBpmnModel(source.getProcessDefinitionId());
         List<Task> tasks = flowableTaskService.createTaskQuery().processInstanceId(source.getProcessInstanceId()).active().list();
         for (ExecutionEntity root : CommandContextUtil.getExecutionEntityManager().findChildExecutionsByProcessInstanceId(source.getProcessInstanceId())) {
             Object originValue = root.getVariableLocal(BpmDispatchSources.SOURCES);
-            if (!root.isMultiInstanceRoot() || !BpmDispatchSources.contains(originValue, source.getId())) continue;
+            if (!root.isMultiInstanceRoot() || sourceIds.stream().noneMatch(id -> BpmDispatchSources.contains(originValue, id))) continue;
             FlowElement element = model.getFlowElement(root.getActivityId());
             if (!(element instanceof UserTask)) continue;
             UserTask node = (UserTask) element;
@@ -83,7 +86,7 @@ public class BpmTaskWithdrawService {
             int completed = number(root, "nrOfCompletedInstances");
             for (int index = 0; index < members.size(); index++) {
                 Long user = members.get(index);
-                if (user == null || !origins.getOrDefault(user.toString(), Collections.emptySet()).contains(source.getId())) continue;
+                if (user == null || Collections.disjoint(origins.getOrDefault(user.toString(), Collections.emptySet()), sourceIds)) continue;
                 ExecutionEntity child = children.stream().filter(e -> Objects.equals(user, memberId(e, node.getId())) && e.isActive()).findFirst().orElse(null);
                 Task task = child == null ? null : tasks.stream().filter(t -> child.getId().equals(t.getExecutionId())
                         && user.toString().equals(t.getAssignee())).findFirst().orElse(null);
@@ -97,16 +100,53 @@ public class BpmTaskWithdrawService {
                 result.add(row);
             }
         }
-        Object value = runtimeService.getVariableLocal(source.getProcessInstanceId(), BpmDispatchSources.LEDGER_PREFIX + source.getId());
-        if (value instanceof Map) ((Map<String, Set<Long>>) value).forEach((nodeId, users) -> {
-            FlowElement element = model.getFlowElement(nodeId);
-            for (Long user : users) {
-                if (result.stream().anyMatch(row -> row.getNodeId().equals(nodeId) && row.getUserId().equals(user))) continue;
-                BpmTaskWithdrawTargetRespVO row = new BpmTaskWithdrawTargetRespVO();
-                row.setExecutionId(""); row.setNodeId(nodeId); row.setNodeName(element == null || element.getName() == null ? nodeId : element.getName());
-                row.setUserId(user); row.setDisabledReason("目标已结束或尚未生成可撤回的会签实例"); result.add(row);
+        for (String sourceId : sourceIds) {
+            Object value = runtimeService.getVariableLocal(source.getProcessInstanceId(), BpmDispatchSources.LEDGER_PREFIX + sourceId);
+            if (value instanceof Map) ((Map<String, Set<Long>>) value).forEach((nodeId, users) -> {
+                FlowElement element = model.getFlowElement(nodeId);
+                for (Long user : users) {
+                    if (result.stream().anyMatch(row -> row.getNodeId().equals(nodeId) && row.getUserId().equals(user))) continue;
+                    BpmTaskWithdrawTargetRespVO row = new BpmTaskWithdrawTargetRespVO();
+                    row.setExecutionId(""); row.setNodeId(nodeId); row.setNodeName(element == null || element.getName() == null ? nodeId : element.getName());
+                    row.setUserId(user); row.setDisabledReason("目标已结束或尚未生成可撤回的会签实例"); result.add(row);
+                }
+            });
+        }
+        return result;
+    }
+
+    /** 仅聚合有明确恢复关系的本人同节点已办，不把同名节点、相邻时间或其他办理人的任务并入。 */
+    private Map<String, HistoricTaskInstance> withdrawalSources(HistoricTaskInstance source) {
+        Map<String, HistoricTaskInstance> result = new LinkedHashMap<>();
+        result.put(source.getId(), source);
+        if (!partialAllowed(source)) return result;
+        List<HistoricTaskInstance> candidates = historyService.createHistoricTaskInstanceQuery()
+                .processInstanceId(source.getProcessInstanceId()).taskDefinitionKey(source.getTaskDefinitionKey())
+                .includeTaskLocalVariables().list().stream()
+                .filter(task -> task.getEndTime() != null && Objects.equals(source.getAssignee(), task.getAssignee())
+                        && BpmTaskStatusEnum.APPROVE.getStatus().equals(task.getTaskLocalVariables()
+                        .get(BpmnVariableConstants.TASK_VARIABLE_STATUS))).collect(Collectors.toList());
+        Set<String> related = sourceLineage(source);
+        boolean expanded;
+        do {
+            expanded = false;
+            for (HistoricTaskInstance task : candidates) {
+                if (result.containsKey(task.getId())) continue;
+                Set<String> lineage = sourceLineage(task);
+                if (Collections.disjoint(related, lineage)) continue;
+                result.put(task.getId(), task);
+                related.addAll(lineage);
+                expanded = true;
             }
-        });
+        } while (expanded);
+        return result;
+    }
+
+    private Set<String> sourceLineage(HistoricTaskInstance task) {
+        Set<String> result = new LinkedHashSet<>();
+        result.add(task.getId());
+        Object value = task.getTaskLocalVariables().get(BpmDispatchSources.RESTORED_FROM);
+        if (value instanceof Collection) ((Collection<?>) value).forEach(id -> result.add(id.toString()));
         return result;
     }
 
@@ -189,15 +229,20 @@ public class BpmTaskWithdrawService {
             ExecutionEntity process = CommandContextUtil.getExecutionEntityManager().findById(source.getProcessInstanceId());
             if (process == null || process.isSuspended() || process.isEnded()) throw exception(TASK_WITHDRAW_FAIL_PROCESS_NOT_RUNNING);
             process.forceUpdate();
-            if (process.getVariableLocal(RESTORED + source.getId()) != null) throw exception(TASK_WITHDRAW_INVALID, "该来源已撤回并恢复待办，请刷新");
+            boolean director = partialAllowed(source);
+            if (!director && process.getVariableLocal(RESTORED + source.getId()) != null)
+                throw exception(TASK_WITHDRAW_INVALID, "该来源已撤回并恢复待办，请刷新");
             requireMemberMode(source);
-            if (!(process.getVariableLocal(BpmDispatchSources.LEDGER_PREFIX + source.getId()) instanceof Map))
+            Map<String, HistoricTaskInstance> sources = withdrawalSources(source);
+            Set<String> sourceIds = sources.keySet();
+            if (sourceIds.stream().noneMatch(id -> process.getVariableLocal(BpmDispatchSources.LEDGER_PREFIX + id) instanceof Map))
                 throw exception(TASK_WITHDRAW_INVALID, "新版派发记录尚未完整生成，请稍后重试，不能降级为原版撤回");
             boolean pending = runtimeService.createVariableInstanceQuery().processInstanceId(source.getProcessInstanceId())
                     .excludeTaskVariables().variableNameLike("bpm_dispatch_pending_%").list().stream()
-                    .anyMatch(variable -> variable.getValue() instanceof Collection && ((Collection<?>) variable.getValue()).contains(source.getId()));
+                    .anyMatch(variable -> variable.getValue() instanceof Collection
+                            && !Collections.disjoint((Collection<?>) variable.getValue(), sourceIds));
             if (pending) throw exception(TASK_WITHDRAW_INVALID, "本次派发尚有异步任务生成中，请稍后重试");
-            List<BpmTaskWithdrawTargetRespVO> allowed = inspect(source);
+            List<BpmTaskWithdrawTargetRespVO> allowed = inspect(source, sourceIds);
             if (all) {
                 // 非主任节点只能完整拉回本次派发，不能把“全撤”变成仅撤剩余可撤人员。
                 if (!partialAllowed(source) && allowed.stream().anyMatch(row -> !row.isWithdrawable()))
@@ -210,6 +255,7 @@ public class BpmTaskWithdrawService {
             }
             Map<String, Set<Long>> selected = new LinkedHashMap<>();
             List<BpmTaskWithdrawTargetRespVO> chosen = new ArrayList<>();
+            Map<String, List<BpmTaskWithdrawTargetRespVO>> chosenBySource = new LinkedHashMap<>();
             for (BpmTaskWithdrawReqVO.Member member : request.getMembers()) {
                 if (member == null || member.getUserId() == null || member.getExecutionId() == null)
                     throw exception(TASK_WITHDRAW_INVALID, "撤回目标不能为空");
@@ -219,24 +265,38 @@ public class BpmTaskWithdrawService {
                 if (!selected.computeIfAbsent(member.getExecutionId(), key -> new LinkedHashSet<>()).add(member.getUserId()))
                     throw exception(TASK_WITHDRAW_INVALID, "不能重复选择同一成员");
                 chosen.add(row);
+                ExecutionEntity root = CommandContextUtil.getExecutionEntityManager().findById(row.getExecutionId());
+                @SuppressWarnings("unchecked")
+                Map<String, Set<String>> origins = (Map<String, Set<String>>) root.getVariableLocal(BpmDispatchSources.SOURCES);
+                for (String id : origins.getOrDefault(row.getUserId().toString(), Collections.emptySet())) {
+                    if (!sourceIds.contains(id)) continue;
+                    Object ledger = process.getVariableLocal(BpmDispatchSources.LEDGER_PREFIX + id);
+                    Object recorded = ledger instanceof Map ? ((Map<?, ?>) ledger).get(row.getNodeId()) : null;
+                    if (!(recorded instanceof Collection) || !((Collection<?>) recorded).contains(row.getUserId()))
+                        throw exception(TASK_WITHDRAW_INVALID, "派发来源记录不完整，请刷新后重试");
+                    chosenBySource.computeIfAbsent(id, key -> new ArrayList<>()).add(row);
+                }
             }
             // 全批校验后再修改；一个无效成员使整个撤回回滚。
+            // 主任每次成功撤回都回到拟办；先恢复，避免最后一个目标结束时提前结束流程。
+            if (director && sources.values().stream().noneMatch(related -> hasRestoredSourceTask(related, process)))
+                restoreSource(source, process);
             List<ExecutionEntity> emptyRoots = new ArrayList<>();
             for (Map.Entry<String, Set<Long>> entry : selected.entrySet()) {
                 ExecutionEntity root = CommandContextUtil.getExecutionEntityManager().findById(entry.getKey());
-                removeMembers(source, root, entry.getValue(), chosen, emptyRoots);
+                removeMembers(sourceIds, root, entry.getValue(), chosen, emptyRoots);
             }
             Object remaining = process.getVariableLocal(BpmDispatchSources.LEDGER_PREFIX + source.getId());
-            if (((Map<?, ?>) remaining).isEmpty()) restoreSource(source, process);
+            if (!director && ((Map<?, ?>) remaining).isEmpty()) restoreSource(source, process);
             // 先恢复来源再结束空目标，避免最后一个目标的取消误结束整个流程。
             for (ExecutionEntity root : emptyRoots) cancelRoot(root);
-            writeComment(source, userId, request.getReason(), chosen);
+            chosenBySource.forEach((id, rows) -> writeComment(sources.get(id), userId, request.getReason(), rows));
             return null;
         });
     }
 
     @SuppressWarnings("unchecked")
-    private void removeMembers(HistoricTaskInstance source, ExecutionEntity root, Set<Long> requested,
+    private void removeMembers(Set<String> sourceIds, ExecutionEntity root, Set<Long> requested,
                                List<BpmTaskWithdrawTargetRespVO> chosen, List<ExecutionEntity> emptyRoots) {
         root.forceUpdate();
         UserTask node = (UserTask) root.getCurrentFlowElement();
@@ -245,10 +305,12 @@ public class BpmTaskWithdrawService {
         Map<String, Set<String>> origins = new LinkedHashMap<>((Map<String, Set<String>>) root.getVariableLocal(BpmDispatchSources.SOURCES));
         Set<Long> removed = new LinkedHashSet<>();
         for (Long user : requested) {
-            Set<String> sources = new LinkedHashSet<>(origins.get(user.toString())); sources.remove(source.getId());
+            Set<String> sources = new LinkedHashSet<>(origins.get(user.toString()));
+            Set<String> removedSources = new LinkedHashSet<>(sources); removedSources.retainAll(sourceIds);
+            sources.removeAll(removedSources);
             if (sources.isEmpty()) { origins.remove(user.toString()); removed.add(user); }
             else origins.put(user.toString(), sources);
-            BpmDispatchSources.forget(root, source.getId(), node.getId(), user);
+            for (String id : removedSources) BpmDispatchSources.forget(root, id, node.getId(), user);
         }
         root.setVariableLocal(BpmDispatchSources.SOURCES, origins);
         if (removed.isEmpty()) return;
@@ -286,6 +348,22 @@ public class BpmTaskWithdrawService {
         }
     }
 
+    private boolean hasRestoredSourceTask(HistoricTaskInstance source, ExecutionEntity process) {
+        Object previousBranch = process.getVariableLocal(RESTORED + source.getId());
+        for (Task task : flowableTaskService.createTaskQuery().processInstanceId(source.getProcessInstanceId())
+                .taskDefinitionKey(source.getTaskDefinitionKey()).includeTaskLocalVariables().list()) {
+            Object lineage = task.getTaskLocalVariables().get(BpmDispatchSources.RESTORED_FROM);
+            if (lineage instanceof Collection && ((Collection<?>) lineage).contains(source.getId())) return true;
+            // 兼容本次修改前已恢复、尚无来源链的待办。
+            ExecutionEntity execution = CommandContextUtil.getExecutionEntityManager().findById(task.getExecutionId());
+            while (execution != null && !execution.isProcessInstanceType()) {
+                if (execution.getId().equals(previousBranch)) return true;
+                execution = execution.getParent();
+            }
+        }
+        return false;
+    }
+
     private void restoreSource(HistoricTaskInstance source, ExecutionEntity process) {
         BpmnModel model = repositoryService.getBpmnModel(source.getProcessDefinitionId());
         FlowElement element = model.getFlowElement(source.getTaskDefinitionKey());
@@ -295,6 +373,23 @@ public class BpmTaskWithdrawService {
         ExecutionEntity branch = CommandContextUtil.getExecutionEntityManager().createChildExecution(process);
         branch.setActive(false); branch.setScope(false); branch.setCurrentFlowElement(BpmnModelUtils.getEndEvent(model));
         branch.setVariableLocal(BpmDispatchSources.BRANCH, true);
+        Set<String> lineage = new LinkedHashSet<>();
+        Object previous = source.getTaskLocalVariables().get(BpmDispatchSources.RESTORED_FROM);
+        if (previous instanceof Collection) ((Collection<?>) previous).forEach(id -> lineage.add(id.toString()));
+        lineage.add(source.getId());
+        // 原来源在恢复任务重新发送后仍可继续撤回。带上已产生的恢复轮次，避免漏掉那些轮次的保留派发。
+        Set<String> ancestors = new LinkedHashSet<>(lineage);
+        for (HistoricTaskInstance related : historyService.createHistoricTaskInstanceQuery()
+                .processInstanceId(source.getProcessInstanceId()).taskDefinitionKey(source.getTaskDefinitionKey())
+                .includeTaskLocalVariables().list()) {
+            Object context = related.getTaskLocalVariables().get(BpmDispatchSources.RESTORED_FROM);
+            if (context instanceof Collection && ((Collection<?>) context).stream().anyMatch(ancestors::contains)) {
+                lineage.add(related.getId());
+                ((Collection<?>) context).forEach(id -> lineage.add(id.toString()));
+            }
+        }
+        branch.setVariableLocal(BpmDispatchSources.RESTORED_FROM,
+                Collections.singletonMap(source.getTaskDefinitionKey(), lineage));
         // 恢复原任务的退回路径上下文；不继承流程级其他分支的路径。
         for (String key : Arrays.asList("RETURN_BRANCH_CONTEXT", "RETURNABLE_TASK_PATH")) {
             Object value = source.getTaskLocalVariables().get(key);
