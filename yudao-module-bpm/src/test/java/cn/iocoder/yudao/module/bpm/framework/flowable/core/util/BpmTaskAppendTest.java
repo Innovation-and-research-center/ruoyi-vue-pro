@@ -358,7 +358,7 @@ class BpmTaskAppendTest {
             SequenceFlow flow = new SequenceFlow(edge[0], edge[1]); flow.setId(edge[0] + edge[1]); process.addFlowElement(flow);
         }
         engine.getRepositoryService().createDeployment().addBpmnModel("branches.bpmn20.xml", model).deploy();
-        String instance = engine.getRuntimeService().startProcessInstanceByKey(RECEIVE).getId();
+        String instance = engine.getRuntimeService().startProcessInstanceByKey(RECEIVE, Collections.singletonMap(BpmProcessOperationVersion.KEY, BpmProcessOperationVersion.CURRENT)).getId();
         List<Task> sources = engine.getTaskService().createTaskQuery().processInstanceId(instance).list();
         for (Task task : sources) {
             engine.getTaskService().setAssignee(task.getId(), "1");
@@ -1144,6 +1144,7 @@ class BpmTaskAppendTest {
 
     private String legacyDispatch(String instance) {
         Task source = engine.getTaskService().createTaskQuery().processInstanceId(instance).singleResult();
+        engine.getRuntimeService().removeVariableLocal(instance, BpmProcessOperationVersion.KEY);
         engine.getTaskService().setVariableLocal(source.getId(), BpmnVariableConstants.TASK_VARIABLE_STATUS, 2);
         engine.getTaskService().complete(source.getId());
         return source.getId();
@@ -1206,6 +1207,7 @@ class BpmTaskAppendTest {
     void legacyUnfinishedSourceCountersignRestoresOnlyOriginalOperator() throws Exception {
         String instance = start(false, false, false, false, false, true);
         Task source = task(instance, "1");
+        engine.getRuntimeService().removeVariableLocal(instance, BpmProcessOperationVersion.KEY);
         org.flowable.engine.runtime.Execution added = engine.getRuntimeService().addMultiInstanceExecution(SOURCE, instance,
                 Collections.singletonMap(FlowableUtils.formatExecutionCollectionElementVariable(SOURCE), 2L));
         Task second = engine.getTaskService().createTaskQuery().executionId(added.getId()).singleResult();
@@ -1219,7 +1221,7 @@ class BpmTaskAppendTest {
     }
 
     @Test
-    void legacyAndNewDispatchAreRoutedPerTaskInSameProcess() throws Exception {
+    void laterDispatchInLegacyProcessStillUsesLegacyWithdrawal() throws Exception {
         String instance = start(false, false); String source = legacyDispatch(instance);
         BpmTaskWithdrawService service = withdrawService();
         assertEquals("LEGACY", service.mode(1L, source));
@@ -1227,7 +1229,7 @@ class BpmTaskAppendTest {
         engine.getTaskService().setVariableLocal(newer.getId(), BpmnVariableConstants.TASK_VARIABLE_STATUS, 2);
         engine.getTaskService().setVariableLocal(newer.getId(), BpmDispatchSources.OPTIONS, Collections.emptySet());
         engine.getTaskService().complete(newer.getId());
-        assertEquals("ALL", service.mode(4L, newer.getId()));
+        assertEquals("LEGACY", service.mode(4L, newer.getId()));
         assertEquals("LEGACY", service.mode(1L, source));
         assertThrows(RuntimeException.class, () -> service.mode(99L, source));
     }
@@ -1247,25 +1249,26 @@ class BpmTaskAppendTest {
     }
 
     @Test
-    void legacyGuardRejectsMixedProcessBeforeChangingTasksOrVariables() throws Exception {
+    void legacySourceStillUsesOriginalRulesWithLaterMetadata() throws Exception {
         String instance = start(false, false); String source = legacyDispatch(instance);
         engine.getRuntimeService().setVariableLocal(instance, BpmDispatchSources.LEDGER_PREFIX + "other-source", Collections.emptyMap());
         engine.getRuntimeService().setVariableLocal(instance, "select_node_2", "keep");
         BpmTaskServiceImpl service = routedWithdrawService();
-        assertThrows(RuntimeException.class, () -> service.withdrawTask(1L, source, "LEGACY"));
-        assertEquals(3, engine.getTaskService().createTaskQuery().processInstanceId(instance).count());
-        assertEquals("keep", engine.getRuntimeService().getVariableLocal(instance, "select_node_2"));
-        assertEquals(0, engine.getTaskService().getProcessInstanceComments(instance).size());
+        service.withdrawTask(1L, source, "LEGACY");
+        assertEquals(1, engine.getTaskService().createTaskQuery().processInstanceId(instance).count());
+        assertNotNull(task(instance, "1"));
+        assertNull(engine.getRuntimeService().getVariableLocal(instance, BpmProcessOperationVersion.KEY));
+        assertNull(task(instance, "4"));
     }
 
     @Test
-    void legacyPendingNewDispatchCannotFallBackToOldRules() throws Exception {
+    void legacyPendingDispatchDoesNotUpgradeSourceVersion() throws Exception {
         String instance = start(false, true);
         String source = legacyDispatch(instance);
         // 模拟来源已写入待消费标记、目标尚未消费生成派发账本的事务后状态。
         BpmDispatchSources.prepareDefault(engine.getRuntimeService(), instance, source, "target");
         assertNull(engine.getRuntimeService().getVariableLocal(instance, BpmDispatchSources.LEDGER_PREFIX + source));
-        assertEquals("MEMBERS", withdrawService().mode(1L, source));
+        assertEquals("LEGACY", withdrawService().mode(1L, source));
         BpmTaskServiceImpl service = routedWithdrawService();
         assertThrows(RuntimeException.class, () -> service.withdrawTask(1L, source, "LEGACY"));
     }
@@ -1313,6 +1316,9 @@ class BpmTaskAppendTest {
 
     @Test
     void donePageAppendFlagUsesProcessAndNodeKeysNotNames() throws Exception {
+        String modernInstance = start(false, false);
+        String legacyInstance = start(false, false);
+        engine.getRuntimeService().removeVariableLocal(legacyInstance, BpmProcessOperationVersion.KEY);
         BpmTaskServiceImpl service = routedWithdrawService();
         java.lang.reflect.Field field = service.getClass().getDeclaredField("taskSortMapper"); field.setAccessible(true);
         cn.iocoder.yudao.module.bpm.dal.mysql.task.BpmTaskSortMapper mapper =
@@ -1320,16 +1326,34 @@ class BpmTaskAppendTest {
         List<BpmTaskRespVO> rows = new ArrayList<>();
         for (String[] keys : new String[][]{{RECEIVE, SOURCE}, {RECEIVE, "otherSource"}, {"oa_leave", SOURCE}}) {
             BpmTaskRespVO row = new BpmTaskRespVO(); row.setName("主任拟办"); row.setStatus(2); row.setTaskDefinitionKey(keys[1]);
+            row.setProcessInstanceId(modernInstance);
             BpmTaskRespVO.ProcessInstance process = new BpmTaskRespVO.ProcessInstance(); process.setProcessDefinitionKey(keys[0]);
             row.setProcessInstance(process); rows.add(row);
         }
         BpmTaskRespVO history = new BpmTaskRespVO(); history.setStatus(2); history.setIsHistory(true);
         history.setTaskDefinitionKey(SOURCE); history.setProcessInstance(rows.get(0).getProcessInstance()); rows.add(history);
-        when(mapper.selectUnifiedDoneTaskCount(anyLong(), any())).thenReturn(4L);
+        BpmTaskRespVO legacy = new BpmTaskRespVO(); legacy.setStatus(2); legacy.setTaskDefinitionKey(SOURCE);
+        legacy.setProcessInstanceId(legacyInstance); legacy.setProcessInstance(rows.get(0).getProcessInstance()); rows.add(legacy);
+        when(mapper.selectUnifiedDoneTaskCount(anyLong(), any())).thenReturn(5L);
         when(mapper.selectUnifiedDoneTaskList(anyLong(), any())).thenReturn(rows);
         service.getUnifiedTaskDonePage(1L, new BpmTaskPageReqVO());
         assertTrue(rows.get(0).getAppendAllowed());
         assertFalse(rows.get(1).getAppendAllowed()); assertFalse(rows.get(2).getAppendAllowed()); assertFalse(rows.get(3).getAppendAllowed());
+        assertFalse(legacy.getAppendAllowed());
+    }
+
+    @Test
+    void legacyInstanceCannotAppendEvenWithModernDispatchMetadata() throws Exception {
+        String instance = start(false, false); String source = dispatch(instance);
+        String root = service().targets(1L, source).get(0).getExecutionId();
+        engine.getRuntimeService().removeVariableLocal(instance, BpmProcessOperationVersion.KEY);
+        Set<String> tasks = engine.getTaskService().createTaskQuery().processInstanceId(instance).list()
+                .stream().map(Task::getId).collect(Collectors.toSet());
+        assertThrows(RuntimeException.class, () -> service().targets(1L, source));
+        assertThrows(RuntimeException.class, () -> submit(service(), request(source, root, 8L)));
+        assertEquals(tasks, engine.getTaskService().createTaskQuery().processInstanceId(instance).list()
+                .stream().map(Task::getId).collect(Collectors.toSet()));
+        assertEquals("LEGACY", withdrawService().mode(1L, source));
     }
 
     @Test
@@ -1496,6 +1520,6 @@ class BpmTaskAppendTest {
             SequenceFlow finishReminder = new SequenceFlow("reminder", "end"); finishReminder.setId("reminderEnd"); process.addFlowElement(finishReminder);
         }
         engine.getRepositoryService().createDeployment().addBpmnModel("sms.bpmn20.xml", model).deploy();
-        return engine.getRuntimeService().startProcessInstanceByKey(processKey).getId();
+        return engine.getRuntimeService().startProcessInstanceByKey(processKey, Collections.singletonMap(BpmProcessOperationVersion.KEY, BpmProcessOperationVersion.CURRENT)).getId();
     }
 }

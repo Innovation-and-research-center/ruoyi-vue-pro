@@ -87,6 +87,22 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
     }
 
     @Test
+    void returnedTaskWithLegacyScopeStillListsAllOriginalRoutes() {
+        prepare(20L, false);
+        org.flowable.engine.history.HistoricActivityInstanceQuery activities = mock(
+                org.flowable.engine.history.HistoricActivityInstanceQuery.class, Answers.RETURNS_SELF);
+        when(historyService.createHistoricActivityInstanceQuery()).thenReturn(activities);
+        when(activities.list()).thenReturn(Collections.emptyList());
+        Task task = taskService.validateTask(20L, "task");
+        when(task.getExecutionId()).thenReturn("restoredExecution");
+        lenient().doReturn(null).when(runtimeService).getVariable(eq("restoredExecution"), anyString());
+        lenient().when(runtimeService.getVariable("restoredExecution", BpmTaskReturnService.SCOPE))
+                .thenReturn(Collections.singletonMap("current", "next"));
+        assertEquals(new HashSet<>(Arrays.asList("current_internal_loop", "current_specified", "next", "end")),
+                keys(getNodes(20L)));
+    }
+
+    @Test
     void ordinaryTaskKeepsExistingRoutes() {
         prepare(20L, false);
 
@@ -197,11 +213,12 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
         prepare(20L, false);
         Task task = taskService.validateTask(20L, "task");
         when(task.getExecutionId()).thenReturn("restoredExecution");
+        lenient().doReturn(null).when(runtimeService).getVariable(eq("restoredExecution"), anyString());
         org.flowable.engine.history.HistoricActivityInstanceQuery activities = mock(
                 org.flowable.engine.history.HistoricActivityInstanceQuery.class, Answers.RETURNS_SELF);
         when(historyService.createHistoricActivityInstanceQuery()).thenReturn(activities);
         when(activities.list()).thenReturn(Collections.emptyList());
-        doReturn(null).when(runtimeService).getVariable("restoredExecution", BpmTaskReturnService.SCOPE);
+
         when(runtimeService.getVariable("restoredExecution", BpmDispatchSources.RESTORED_FROM))
                 .thenReturn(Collections.singletonMap("current", Collections.singleton("originalSource")));
         when(runtimeService.getVariableLocal("instance", BpmDispatchSources.LEDGER_PREFIX + "originalSource"))
@@ -218,7 +235,7 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
         assertEquals(Collections.singletonList(40L), find(getNodes(20L), "next").getAssignedUserIds());
 
         // 上下文属于其他节点时，不限制当前节点的正常发送。
-        doReturn(null).when(runtimeService).getVariable("restoredExecution", BpmTaskReturnService.SCOPE);
+
         when(runtimeService.getVariable("restoredExecution", BpmDispatchSources.RESTORED_FROM))
                 .thenReturn(Collections.singletonMap("otherSource", Collections.singleton("originalSource")));
         List<Long> assigned = find(getNodes(20L), "next").getAssignedUserIds();

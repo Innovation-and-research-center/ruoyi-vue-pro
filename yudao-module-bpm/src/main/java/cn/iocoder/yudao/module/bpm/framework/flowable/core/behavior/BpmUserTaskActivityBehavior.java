@@ -50,6 +50,8 @@ public class BpmUserTaskActivityBehavior extends UserTaskActivityBehavior {
         if (execution.getCurrentActivityId().equals(execution.getVariable("bpm_dispatch_return_target"))) {
             execution.setVariableLocal(String.format(cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_RETURN_FLAG, execution.getCurrentActivityId()), true);
         }
+        Object returnSources = execution.getVariable("bpm_dispatch_return_sources");
+        if (returnSources instanceof java.util.Map) task.setVariableLocal("bpm_dispatch_return_sources", new java.util.LinkedHashMap<>((java.util.Map<?, ?>) returnSources));
         Object retainedRoots = execution.getVariable("bpm_dispatch_return_retained_roots");
         if (retainedRoots instanceof java.util.Map) task.setVariableLocal("bpm_dispatch_return_retained_roots", new java.util.LinkedHashMap<>((java.util.Map<?, ?>) retainedRoots));
         Object returnScope = execution.getVariable("bpm_dispatch_return_scope");

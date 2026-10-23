@@ -24,6 +24,9 @@ import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
 /** 单任务退回：新分支先创建，当前成员再退出；不移动会签根，不改兄弟变量。 */
 @Service
 public class BpmTaskReturnService {
+    public static final String RELEASED_PREFIX = "bpm_dispatch_return_released_";
+    public static final String RETAINED_SOURCES = "bpm_dispatch_return_sources";
+    // 兼容既有恢复任务：该键仅用于定位保留人员，不再限制发送流向。
     public static final String SCOPE = "bpm_dispatch_return_scope";
     public static final String RETAINED_ROOTS = "bpm_dispatch_return_retained_roots";
     public static final String RETAINED_PREFIX = "bpm_dispatch_return_retained_";
@@ -48,34 +51,17 @@ public class BpmTaskReturnService {
         return task;
     }
 
-    /** 只按运行记录分流；空来源集合不是新版派发，也不能按办件创建时间判断。 */
+    /** 只按流程实例启动时的固定版本分流；部署前无标记的实例始终使用旧版。 */
     public String mode(Long userId, String taskId) {
         return managementService.executeCommand(command -> mode(current(userId, taskId)));
     }
 
     private String mode(Task task) {
-        if (flowableTaskService.getVariableLocal(task.getId(), BpmInternalDispatch.SOURCE) != null
-                || !path(context(task)).isEmpty()) return "SINGLE";
-        ExecutionEntity execution = CommandContextUtil.getExecutionEntityManager().findById(task.getExecutionId());
-        while (execution != null && !execution.isProcessInstanceType()) {
-            if (execution.getVariablesLocal().entrySet().stream().anyMatch(entry -> modern(entry.getKey(), entry.getValue()))) return "SINGLE";
-            execution = execution.getParent();
-        }
-        return "LEGACY";
+        return BpmProcessOperationVersion.isCurrent(runtimeService.getVariableLocal(task.getProcessInstanceId(), BpmProcessOperationVersion.KEY))
+                ? "SINGLE" : "LEGACY";
     }
 
-    private boolean modern(String name, Object value) {
-        if (!BpmDispatchSources.isInternal(name)) return false;
-        if (BpmDispatchSources.SOURCES.equals(name)) return value instanceof Map && !((Map<?, ?>) value).isEmpty();
-        if (name.startsWith("bpm_dispatch_pending_")) return value instanceof Collection && !((Collection<?>) value).isEmpty();
-        if (BpmDispatchSources.BRANCH.equals(name)) return Boolean.TRUE.equals(value);
-        return true;
-    }
-
-    private void requirePureLegacy(Task task) {
-        boolean mixed = runtimeService.createVariableInstanceQuery().processInstanceId(task.getProcessInstanceId())
-                .variableNameLike("bpm_dispatch_%").list().stream().anyMatch(variable -> modern(variable.getName(), variable.getValue()));
-        if (mixed) throw exception(TASK_RETURN_INVALID, "该流程已混有新版派发、追加或恢复记录，不能使用旧版整体退回，以免影响其他分支");
+    private void requireLegacyReady(Task task) {
         if (managementService.createJobQuery().processInstanceId(task.getProcessInstanceId()).count() > 0
                 || managementService.createDeadLetterJobQuery().processInstanceId(task.getProcessInstanceId()).count() > 0)
             throw exception(TASK_RETURN_INVALID, "流程还有未完成的异步任务，请处理后重试整体退回");
@@ -105,7 +91,7 @@ public class BpmTaskReturnService {
             Task task = current(userId, request.getId());
             if (!"LEGACY".equals(mode(task)) || request.getExpectedMode() != null && !"LEGACY".equals(request.getExpectedMode()))
                 throw exception(TASK_RETURN_INVALID, "退回方式已变化，请刷新后重新确认");
-            requirePureLegacy(task);
+            requireLegacyReady(task);
             if (request.getReturnAssignees() != null && !request.getReturnAssignees().isEmpty())
                 throw exception(TASK_RETURN_INVALID, "旧任务仅支持整体退回，不能指定单人");
             if (legacyTargets(task).stream().noneMatch(target -> target.getTaskDefinitionKey().equals(request.getTargetTaskDefinitionKey())))
@@ -192,7 +178,7 @@ public class BpmTaskReturnService {
         return managementService.executeCommand(command -> {
             Task task = current(userId, taskId);
             if ("LEGACY".equals(mode(task))) {
-                requirePureLegacy(task);
+                requireLegacyReady(task);
                 return legacyTargets(task);
             }
             BpmnModel model = repositoryService.getBpmnModel(task.getProcessDefinitionId());
@@ -285,6 +271,15 @@ public class BpmTaskReturnService {
             branch.setActive(false); branch.setScope(false); branch.setCurrentFlowElement(BpmnModelUtils.getEndEvent(model));
             branch.setVariableLocal(BpmDispatchSources.BRANCH, true);
             branch.setVariableLocal(SCOPE, scope);
+            Map<String, Set<String>> retainedSources = new LinkedHashMap<>();
+            Object inheritedSources = child.getVariable(RETAINED_SOURCES);
+            if (inheritedSources instanceof Map) ((Map<?, ?>) inheritedSources).forEach((key, value) -> {
+                if (value instanceof Collection) retainedSources.put(key.toString(), ((Collection<?>) value).stream()
+                        .map(Object::toString).collect(Collectors.toCollection(LinkedHashSet::new)));
+            });
+            histories(task).forEach((key, records) -> retainedSources.computeIfAbsent(key, ignored -> new LinkedHashSet<>())
+                    .addAll(records.stream().map(HistoricTaskInstance::getId).collect(Collectors.toSet())));
+            branch.setVariableLocal(RETAINED_SOURCES, retainedSources);
             branch.setVariableLocal(TARGET, target.getId());
             if (internalTarget != null) {
                 Map<String, Object> inherited = new LinkedHashMap<>();
@@ -345,6 +340,19 @@ public class BpmTaskReturnService {
 
     private void exitMember(ExecutionEntity root, ExecutionEntity child, Task task, BpmnModel model) {
         root.forceUpdate();
+        Object origins = root.getVariableLocal(BpmDispatchSources.SOURCES);
+        Object sources = origins instanceof Map ? ((Map<?, ?>) origins).get(task.getAssignee()) : null;
+        if (sources instanceof Collection) for (Object source : (Collection<?>) sources) {
+            ExecutionEntity process = CommandContextUtil.getExecutionEntityManager().findById(task.getProcessInstanceId());
+            Object previous = process.getVariableLocal(RELEASED_PREFIX + source);
+            Map<String, Set<Long>> released = new LinkedHashMap<>();
+            if (previous instanceof Map) ((Map<?, ?>) previous).forEach((key, value) -> {
+                if (value instanceof Collection) released.put(key.toString(), ((Collection<?>) value).stream()
+                        .map(id -> Long.valueOf(id.toString())).collect(Collectors.toCollection(LinkedHashSet::new)));
+            });
+            released.computeIfAbsent(task.getTaskDefinitionKey(), ignored -> new LinkedHashSet<>()).add(Long.valueOf(task.getAssignee()));
+            process.setVariableLocal(RELEASED_PREFIX + source, released);
+        }
         int completed = number(root, "nrOfCompletedInstances") + 1;
         int returned = number(root, RETURNED) + 1;
         UserTask node = (UserTask) root.getCurrentFlowElement();
@@ -394,7 +402,87 @@ public class BpmTaskReturnService {
         return result;
     }
 
-    public static String nextInScope(RuntimeService runtime, String executionId, String node) {
+    /** 恢复全部原有流向，仅禁止重复派发仍保留的人员。 */
+    public static Map<String, Set<Long>> retainedRecipients(RuntimeService runtime, String instance, String execution, String node) {
+        return retainedRecipients(runtime, null, instance, execution, node);
+    }
+
+    public static Map<String, Set<Long>> retainedRecipients(RuntimeService runtime, HistoryService history,
+                                                           String instance, String execution, String node) {
+        Map<String, Set<Long>> result = new LinkedHashMap<>();
+        if (execution == null) return result;
+        Set<String> sources = BpmDispatchSources.restoredSources(runtime.getVariable(execution, RETAINED_SOURCES), node);
+        Object roots = runtime.getVariable(execution, RETAINED_ROOTS);
+        // 已生成的恢复任务没有新快照时，从其明确关联的原会签历史来源读取，不按时间猜测。
+        if (sources.isEmpty() && history != null && roots instanceof Map && ((Map<?, ?>) roots).get(node) != null) {
+            org.flowable.variable.api.history.HistoricVariableInstance origins = history.createHistoricVariableInstanceQuery()
+                    .executionId(((Map<?, ?>) roots).get(node).toString()).variableName(BpmDispatchSources.SOURCES).singleResult();
+            if (origins != null && origins.getValue() instanceof Map) {
+                Set<String> candidates = new LinkedHashSet<>();
+                ((Map<?, ?>) origins.getValue()).values().forEach(value -> {
+                    if (value instanceof Collection) ((Collection<?>) value).forEach(id -> candidates.add(id.toString()));
+                });
+                for (String candidate : candidates) {
+                    HistoricTaskInstance source = history.createHistoricTaskInstanceQuery().taskId(candidate).singleResult();
+                    if (source != null && instance.equals(source.getProcessInstanceId()) && node.equals(source.getTaskDefinitionKey())) sources.add(candidate);
+                }
+            }
+        }
+        Map<String, String> rootTargets = new LinkedHashMap<>();
+        addRetainedRoot(rootTargets, roots, runtime.getVariable(execution, SCOPE), node);
+        for (String source : sources) {
+            if (history != null) {
+                HistoricTaskInstance historic = history.createHistoricTaskInstanceQuery().taskId(source).includeTaskLocalVariables().singleResult();
+                if (historic != null && instance.equals(historic.getProcessInstanceId())) {
+                    Map<String, Object> locals = historic.getTaskLocalVariables();
+                    addRetainedRoot(rootTargets, locals.get(RETAINED_ROOTS), locals.get(SCOPE), node);
+                }
+            }
+            Object ledger = runtime.getVariableLocal(instance, BpmDispatchSources.LEDGER_PREFIX + source);
+            Object released = runtime.getVariableLocal(instance, RELEASED_PREFIX + source);
+            if (ledger instanceof Map) ((Map<?, ?>) ledger).forEach((target, users) -> {
+                if (users instanceof Collection) {
+                    Set<Long> members = result.computeIfAbsent(target.toString(), ignored -> new LinkedHashSet<>());
+                    Object excluded = released instanceof Map ? ((Map<?, ?>) released).get(target) : null;
+                    Set<Long> absent = excluded instanceof Collection ? ((Collection<?>) excluded).stream()
+                            .map(id -> Long.valueOf(id.toString())).collect(Collectors.toSet()) : Collections.emptySet();
+                    ((Collection<?>) users).forEach(user -> {
+                        Long id = Long.valueOf(user.toString()); if (!absent.contains(id)) members.add(id);
+                    });
+                }
+            });
+        }
+        // 每轮快照仅替换其自身会签的成员，不能用最新一轮的空集合覆盖前几轮保留人员。
+        Map<String, Set<Long>> snapshots = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : rootTargets.entrySet()) {
+            Object retained = runtime.getVariableLocal(instance, RETAINED_PREFIX + entry.getKey());
+            if (!(retained instanceof Collection)) continue;
+            Object members = null;
+            String collection = FlowableUtils.formatExecutionCollectionVariable(entry.getValue());
+            if (history != null) {
+                org.flowable.variable.api.history.HistoricVariableInstance variable = history.createHistoricVariableInstanceQuery()
+                        .executionId(entry.getKey()).variableName(collection).singleResult();
+                if (variable != null) members = variable.getValue();
+            } else if (runtime.createExecutionQuery().executionId(entry.getKey()).singleResult() != null) {
+                members = runtime.getVariableLocal(entry.getKey(), collection);
+            }
+            Set<Long> recipients = result.computeIfAbsent(entry.getValue(), ignored -> new LinkedHashSet<>());
+            if (members instanceof Collection) ((Collection<?>) members).forEach(id -> recipients.remove(Long.valueOf(id.toString())));
+            Set<Long> snapshot = snapshots.computeIfAbsent(entry.getValue(), ignored -> new LinkedHashSet<>());
+            ((Collection<?>) retained).forEach(id -> snapshot.add(Long.valueOf(id.toString())));
+        }
+        snapshots.forEach((target, users) -> result.computeIfAbsent(target, ignored -> new LinkedHashSet<>()).addAll(users));
+        return result;
+    }
+
+    private static void addRetainedRoot(Map<String, String> result, Object roots, Object scope, String node) {
+        Object root = roots instanceof Map ? ((Map<?, ?>) roots).get(node) : null;
+        if (root == null) return;
+        Object target = scope instanceof Map ? ((Map<?, ?>) scope).get(node) : null;
+        result.put(root.toString(), target == null ? node : target.toString());
+    }
+
+    public static String retainedTarget(RuntimeService runtime, String executionId, String node) {
         Object scope = runtime.getVariable(executionId, SCOPE);
         Object next = scope instanceof Map ? ((Map<?, ?>) scope).get(node) : null;
         return next == null ? null : next.toString();

@@ -232,7 +232,7 @@ class BpmTaskReturnTest {
         assertEquals(2, ((Number) engine.getRuntimeService().getVariableLocal(root, "nrOfActiveInstances")).intValue());
         assertEquals(cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum.RETURN.getStatus(), engine.getHistoryService().createHistoricTaskInstanceQuery().taskId(d.getId()).includeTaskLocalVariables().singleResult().getTaskLocalVariables().get(BpmnVariableConstants.TASK_VARIABLE_STATUS));
         assertTrue(engine.getTaskService().getTaskComments(d.getId(), "4").get(0).getFullMessage().contains("补充材料"));
-        assertEquals("target", BpmTaskReturnService.nextInScope(engine.getRuntimeService(), task(instance, "1").getExecutionId(), SOURCE));
+        assertEquals("target", BpmTaskReturnService.retainedTarget(engine.getRuntimeService(), task(instance, "1").getExecutionId(), SOURCE));
     }
     @Test void allMembersReturnCreatesIndependentTasksAndNoForwardToken() throws Exception {
         String instance = start(false, false); dispatch(instance);
@@ -289,7 +289,7 @@ class BpmTaskReturnTest {
         assertNull(task(instance, "1"));
     }
 
-    @Test void redoUsesFreshMembersAndRejectsRetainedRecipientsAndOtherRoutes() throws Exception {
+    @Test void redoAllowsOtherRoutesAndRejectsRetainedRecipients() throws Exception {
         String instance = start(false, false); dispatch(instance); back(instance, 4);
         Task restored = task(instance, "1"); Task oldE = task(instance, "5");
         Set<Long> retained = BpmTaskReturnService.retainedUsers(engine.getRuntimeService(), instance, restored.getExecutionId(), SOURCE);
@@ -298,7 +298,9 @@ class BpmTaskReturnTest {
         java.lang.reflect.Field runtime = BpmTaskServiceImpl.class.getDeclaredField("runtimeService"); runtime.setAccessible(true); runtime.set(approvals, engine.getRuntimeService());
         java.lang.reflect.Method validate = BpmTaskServiceImpl.class.getDeclaredMethod("validateRestoredDispatch", Task.class, BpmnModel.class, Set.class, Map.class); validate.setAccessible(true);
         BpmnModel model = engine.getRepositoryService().getBpmnModel(restored.getProcessDefinitionId());
-        assertThrows(java.lang.reflect.InvocationTargetException.class, () -> validate.invoke(approvals, restored, model, Collections.singleton("after"), Collections.emptyMap()));
+        ExtensionElement manual = new ExtensionElement(); manual.setName("candidateStrategy"); manual.setElementText("55");
+        ((UserTask) model.getFlowElement("target")).addExtensionElement(manual);
+        validate.invoke(approvals, restored, model, Collections.singleton("after"), Collections.emptyMap());
         assertThrows(java.lang.reflect.InvocationTargetException.class, () -> validate.invoke(approvals, restored, model, Collections.singleton("target"), Collections.singletonMap("target", Collections.singletonList(5L))));
         validate.invoke(approvals, restored, model, Collections.singleton("target"), Collections.singletonMap("target", Collections.singletonList(8L)));
         String branch = engine.getRuntimeService().createExecutionQuery().executionId(restored.getExecutionId()).singleResult().getParentId();
@@ -311,6 +313,94 @@ class BpmTaskReturnTest {
         String newRoot = engine.getRuntimeService().createExecutionQuery().executionId(task(instance, "8").getExecutionId()).singleResult().getParentId();
         assertNotEquals(oldRoot, newRoot);
     }
+    @Test void returnedSourceCanSendOtherBranchAndKeepsExistingSiblingRecipients() throws Exception {
+        String instance = start(false, false, false, false, true);
+        Task source = engine.getTaskService().createTaskQuery().processInstanceId(instance).singleResult();
+        engine.getRuntimeService().setVariable(instance, "select_node_2", "extra");
+        BpmDispatchSources.prepare(engine.getRuntimeService(), instance, source.getId(), Collections.singletonMap("extra", Collections.singletonList(7L)));
+        dispatch(instance); String sibling = task(instance, "7").getId(); back(instance, 4);
+        Task restored = task(instance, "1");
+        Map<String, Set<Long>> retained = BpmTaskReturnService.retainedRecipients(engine.getRuntimeService(), instance, restored.getExecutionId(), SOURCE);
+        assertEquals(new HashSet<>(Arrays.asList(5L, 6L)), retained.get("target"));
+        assertEquals(Collections.singleton(7L), retained.get("extra"));
+        BpmTaskServiceImpl approvals = new BpmTaskServiceImpl();
+        java.lang.reflect.Field runtime = BpmTaskServiceImpl.class.getDeclaredField("runtimeService"); runtime.setAccessible(true); runtime.set(approvals, engine.getRuntimeService());
+        java.lang.reflect.Method validate = BpmTaskServiceImpl.class.getDeclaredMethod("validateRestoredDispatch", Task.class, BpmnModel.class, Set.class, Map.class); validate.setAccessible(true);
+        BpmnModel model = engine.getRepositoryService().getBpmnModel(restored.getProcessDefinitionId());
+        for (String node : Arrays.asList("target", "extra")) {
+            ExtensionElement manual = new ExtensionElement(); manual.setName("candidateStrategy"); manual.setElementText("55");
+            ((UserTask) model.getFlowElement(node)).addExtensionElement(manual);
+        }
+        assertThrows(java.lang.reflect.InvocationTargetException.class, () -> validate.invoke(approvals, restored, model,
+                Collections.singleton("extra"), Collections.singletonMap("extra", Collections.singletonList(7L))));
+        Map<String, List<Long>> choices = new LinkedHashMap<>(); choices.put("target", Collections.singletonList(8L)); choices.put("extra", Collections.singletonList(9L));
+        validate.invoke(approvals, restored, model, choices.keySet(), choices);
+        String branch = engine.getRuntimeService().createExecutionQuery().executionId(restored.getExecutionId()).singleResult().getParentId();
+        engine.getRuntimeService().setVariableLocal(branch, "select_node_2", "extra");
+        engine.getRuntimeService().setVariableLocal(branch, BpmDispatchSources.NEW_MEMBERS, choices);
+        BpmDispatchSources.prepare(engine.getRuntimeService(), branch, restored.getId(), choices);
+        engine.getTaskService().complete(restored.getId());
+        assertNotNull(task(instance, "8")); assertNotNull(task(instance, "9"));
+        assertEquals(sibling, task(instance, "7").getId()); assertNotNull(task(instance, "5"));
+    }
+
+    @Test void siblingReturnReleasesRecipientForAlreadyOpenRestoredTask() throws Exception {
+        String instance = start(false, false, false, false, true);
+        Task source = engine.getTaskService().createTaskQuery().processInstanceId(instance).singleResult();
+        engine.getRuntimeService().setVariable(instance, "select_node_2", "extra");
+        BpmDispatchSources.prepare(engine.getRuntimeService(), instance, source.getId(), Collections.singletonMap("extra", Collections.singletonList(7L)));
+        dispatch(instance); back(instance, 4); Task restored = task(instance, "1");
+        String branch = engine.getRuntimeService().createExecutionQuery().executionId(restored.getExecutionId()).singleResult().getParentId();
+        engine.getRuntimeService().removeVariableLocal(branch, BpmTaskReturnService.RETAINED_SOURCES);
+        assertEquals(Collections.singleton(7L), BpmTaskReturnService.retainedRecipients(engine.getRuntimeService(), engine.getHistoryService(), instance, restored.getExecutionId(), SOURCE).get("extra"));
+        engine.getRuntimeService().setVariableLocal(branch, BpmTaskReturnService.RETAINED_SOURCES, Collections.singletonMap(SOURCE, Collections.singleton(source.getId())));
+        assertEquals(Collections.singleton(7L), BpmTaskReturnService.retainedRecipients(engine.getRuntimeService(), instance, restored.getExecutionId(), SOURCE).get("extra"));
+        back(instance, 7);
+        assertTrue(BpmTaskReturnService.retainedRecipients(engine.getRuntimeService(), instance, restored.getExecutionId(), SOURCE).get("extra").isEmpty());
+        assertEquals(2, engine.getTaskService().createTaskQuery().processInstanceId(instance).taskAssignee("1").count());
+        assertNotNull(task(instance, "5"));
+    }
+
+    @Test void secondReturnKeepsFirstRoundRecipientsAndTracksTheirLaterChanges() throws Exception {
+        String instance = start(false, false, false, false, true);
+        Task original = engine.getTaskService().createTaskQuery().processInstanceId(instance).singleResult();
+        engine.getRuntimeService().setVariable(instance, "select_node_2", "extra");
+        BpmDispatchSources.prepare(engine.getRuntimeService(), instance, original.getId(), Collections.singletonMap("extra", Collections.singletonList(7L)));
+        dispatch(instance); String peerId = task(instance, "5").getId(); String siblingId = task(instance, "7").getId();
+        back(instance, 4); Task first = task(instance, "1");
+        String branch = engine.getRuntimeService().createExecutionQuery().executionId(first.getExecutionId()).singleResult().getParentId();
+        engine.getTaskService().setVariablesLocal(first.getId(), new HashMap<String, Object>() {{
+            put("RETURNABLE_TASK_PATH", Collections.singletonList(SOURCE));
+            put("RETURN_BRANCH_CONTEXT", Collections.singletonMap(SOURCE, first.getId()));
+            put(BpmnVariableConstants.TASK_VARIABLE_STATUS, 2);
+        }});
+        engine.getRuntimeService().setVariableLocal(branch, BpmDispatchSources.NEW_MEMBERS, Collections.singletonMap("target", Collections.singleton(4L)));
+        BpmDispatchSources.prepare(engine.getRuntimeService(), branch, first.getId(), Collections.singletonMap("target", Collections.singletonList(4L)));
+        engine.getTaskService().complete(first.getId());
+        back(instance, 4); Task second = task(instance, "1");
+        Map<String, Set<Long>> retained = BpmTaskReturnService.retainedRecipients(engine.getRuntimeService(), engine.getHistoryService(), instance, second.getExecutionId(), SOURCE);
+        assertEquals(new HashSet<>(Arrays.asList(5L, 6L)), retained.get("target"));
+        assertEquals(Collections.singleton(7L), retained.get("extra"));
+        assertEquals(peerId, task(instance, "5").getId()); assertEquals(siblingId, task(instance, "7").getId());
+        BpmTaskServiceImpl approvals = new BpmTaskServiceImpl();
+        for (String name : Arrays.asList("runtimeService", "historyService")) {
+            java.lang.reflect.Field field = BpmTaskServiceImpl.class.getDeclaredField(name); field.setAccessible(true);
+            field.set(approvals, name.equals("runtimeService") ? engine.getRuntimeService() : engine.getHistoryService());
+        }
+        java.lang.reflect.Method validate = BpmTaskServiceImpl.class.getDeclaredMethod("validateRestoredDispatch", Task.class, BpmnModel.class, Set.class, Map.class); validate.setAccessible(true);
+        BpmnModel model = engine.getRepositoryService().getBpmnModel(second.getProcessDefinitionId());
+        ExtensionElement manual = new ExtensionElement(); manual.setName("candidateStrategy"); manual.setElementText("55");
+        ((UserTask) model.getFlowElement("target")).addExtensionElement(manual);
+        assertThrows(java.lang.reflect.InvocationTargetException.class, () -> validate.invoke(approvals, second, model, Collections.singleton("target"), Collections.singletonMap("target", Collections.singletonList(5L))));
+        validate.invoke(approvals, second, model, Collections.singleton("target"), Collections.singletonMap("target", Collections.singletonList(4L)));
+        String originalRoot = engine.getRuntimeService().createExecutionQuery().executionId(task(instance, "5").getExecutionId()).singleResult().getParentId();
+        internal(instance, 5, 8L);
+        BpmTaskReturnService.retainAddedMembers(engine.getRuntimeService(), instance, originalRoot, Collections.singleton(8L));
+        assertTrue(BpmTaskReturnService.retainedRecipients(engine.getRuntimeService(), engine.getHistoryService(), instance, second.getExecutionId(), SOURCE).get("target").contains(8L));
+        back(instance, 6);
+        assertFalse(BpmTaskReturnService.retainedRecipients(engine.getRuntimeService(), engine.getHistoryService(), instance, second.getExecutionId(), SOURCE).get("target").contains(6L));
+    }
+
     @Test void smsAndRouteDecisionsAreLocalToEachReturn() throws Exception {
         String instance = start(false, false); dispatch(instance);
         engine.getRuntimeService().setVariable(instance, "select_node_99", "old");
@@ -358,11 +448,11 @@ class BpmTaskReturnTest {
         assertNotNull(task(instance, "1"));
         assertEquals(1, engine.getTaskService().createTaskQuery().processInstanceId(instance).taskDefinitionKey(SOURCE).count());
     }
-    @Test void inheritedReworkRestrictionsSurviveAnotherReturn() throws Exception {
+    @Test void inheritedRecipientMappingSurvivesAnotherReturnWithoutRestrictingRoutes() throws Exception {
         String instance = start(false, false); dispatch(instance);
         engine.getRuntimeService().setVariableLocal(task(instance, "4").getExecutionId(), BpmTaskReturnService.SCOPE, Collections.singletonMap("target", "after"));
         back(instance, 4);
-        assertEquals("after", BpmTaskReturnService.nextInScope(engine.getRuntimeService(), task(instance, "1").getExecutionId(), "target"));
+        assertEquals("after", BpmTaskReturnService.retainedTarget(engine.getRuntimeService(), task(instance, "1").getExecutionId(), "target"));
     }
     @Test void singleInstanceReturnPreservesIndependentBranch() throws Exception {
         BpmnModel model = new BpmnModel(); org.flowable.bpmn.model.Process process = new org.flowable.bpmn.model.Process(); process.setId("singleReturn"); model.addProcess(process);
@@ -372,7 +462,7 @@ class BpmTaskReturnTest {
         String[] ids = {"start", SOURCE, "target", "end"};
         for (int i = 0; i < ids.length - 1; i++) { SequenceFlow f = new SequenceFlow(ids[i], ids[i+1]); f.setId("f" + i); process.addFlowElement(f); }
         engine.getRepositoryService().createDeployment().addBpmnModel("single.bpmn20.xml", model).deploy();
-        String instance = engine.getRuntimeService().startProcessInstanceByKey("singleReturn").getId();
+        String instance = engine.getRuntimeService().startProcessInstanceByKey("singleReturn", Collections.singletonMap(BpmProcessOperationVersion.KEY, BpmProcessOperationVersion.CURRENT)).getId();
         String source = dispatch(instance);
         Task target = engine.getTaskService().createTaskQuery().processInstanceId(instance).singleResult();
         engine.getRuntimeService().setVariableLocal(target.getExecutionId(), "RETURNABLE_TASK_PATH", Collections.singletonList(SOURCE));
@@ -389,10 +479,38 @@ class BpmTaskReturnTest {
         back(instance, 4); assertNotNull(task(instance, "1"));
     }
 
+    @Test void legacyProcessKeepsLegacyRulesForLaterSequentialTasks() throws Exception {
+        String instance = start(true, false);
+        engine.getRuntimeService().removeVariableLocal(instance, BpmProcessOperationVersion.KEY);
+        assertEquals("LEGACY", service().mode(1L, task(instance, "1").getId()));
+        dispatch(instance);
+        assertEquals("LEGACY", service().mode(4L, task(instance, "4").getId()));
+        engine.getTaskService().complete(task(instance, "4").getId());
+        assertEquals("LEGACY", service().mode(5L, task(instance, "5").getId()));
+        assertNull(task(instance, "6"));
+    }
+
+    @Test void taskAndBusinessVariablesCannotOverrideProcessVersion() throws Exception {
+        String instance = start(false, false); legacyDispatch(instance);
+        engine.getTaskService().setVariableLocal(task(instance, "4").getId(), BpmProcessOperationVersion.KEY, BpmProcessOperationVersion.CURRENT);
+        assertEquals("LEGACY", service().mode(4L, task(instance, "4").getId()));
+        Map<String, Object> form = new HashMap<>();
+        form.put(BpmProcessOperationVersion.KEY, 1); form.put("businessField", "keep");
+        assertEquals(Collections.singletonMap("businessField", "keep"), BpmDispatchSources.businessVariables(form));
+        assertEquals(1, form.get(BpmProcessOperationVersion.KEY));
+        legacySubmit(instance, legacyRequest(instance));
+        assertEquals("LEGACY", service().mode(1L, task(instance, "1").getId()));
+        String modern = start(false, false);
+        engine.getTaskService().setVariableLocal(task(modern, "1").getId(), BpmProcessOperationVersion.KEY, 1);
+        assertEquals("SINGLE", service().mode(1L, task(modern, "1").getId()));
+    }
+
     private String legacyDispatch(String instance) {
         Task source = engine.getTaskService().createTaskQuery().processInstanceId(instance).singleResult();
+        engine.getRuntimeService().removeVariableLocal(instance, BpmProcessOperationVersion.KEY);
         engine.getTaskService().setVariableLocal(source.getId(), BpmnVariableConstants.TASK_VARIABLE_STATUS, 2);
-        engine.getTaskService().complete(source.getId()); return source.getId();
+        engine.getTaskService().complete(source.getId());
+        return source.getId();
     }
     private BpmTaskReturnReqVO legacyRequest(String instance) {
         BpmTaskReturnReqVO req = new BpmTaskReturnReqVO(); req.setId(task(instance, "4").getId());
@@ -436,14 +554,15 @@ class BpmTaskReturnTest {
         assertEquals(1, engine.getTaskService().createTaskQuery().processInstanceId(instance).count());
         assertEquals(0, engine.getTaskService().createTaskQuery().processInstanceId(instance).taskDefinitionKey("target").count());
     }
-    @Test void mixedLegacyRejectsDisplayAndSubmitWithoutTouchingTasks() throws Exception {
+    @Test void legacyProcessIgnoresLaterMetadataAndRestoresLegacyTask() throws Exception {
         String instance = start(false, false); legacyDispatch(instance); BpmTaskReturnReqVO req = legacyRequest(instance);
         engine.getRuntimeService().setVariableLocal(instance, BpmDispatchSources.LEDGER_PREFIX + "other", Collections.emptyMap());
         assertEquals("LEGACY", service().mode(4L, req.getId()));
-        assertThrows(RuntimeException.class, () -> service().targets(4L, req.getId()));
-        assertThrows(RuntimeException.class, () -> legacySubmit(instance, req));
-        assertEquals(3, engine.getTaskService().createTaskQuery().processInstanceId(instance).count());
-        assertTrue(engine.getTaskService().getTaskComments(req.getId(), "4").isEmpty());
+        assertEquals("LEGACY", service().targets(4L, req.getId()).get(0).getReturnMode());
+        legacySubmit(instance, req);
+        assertEquals(1, engine.getTaskService().createTaskQuery().processInstanceId(instance).count());
+        assertEquals("LEGACY", service().mode(1L, task(instance, "1").getId()));
+        assertNull(engine.getRuntimeService().getVariableLocal(instance, BpmProcessOperationVersion.KEY));
     }
     @Test void legacyRejectsSinglePersonAndStaleModeAndUnvisitedTarget() throws Exception {
         String instance = start(false, false); legacyDispatch(instance); BpmTaskReturnReqVO req = legacyRequest(instance);
@@ -454,19 +573,21 @@ class BpmTaskReturnTest {
     }
     @Test void incompleteNewProvenanceNeverFallsBackToLegacy() throws Exception {
         String instance = start(false, false); legacyDispatch(instance); BpmTaskReturnReqVO req = legacyRequest(instance);
+        engine.getRuntimeService().setVariableLocal(instance, BpmProcessOperationVersion.KEY, BpmProcessOperationVersion.CURRENT);
         String root = engine.getRuntimeService().createExecutionQuery().executionId(task(instance, "4").getExecutionId()).singleResult().getParentId();
         engine.getRuntimeService().setVariableLocal(root, BpmDispatchSources.SOURCES, Collections.singletonMap("4", Collections.singleton("missingSource")));
         assertEquals("SINGLE", service().mode(4L, req.getId())); assertTrue(service().targets(4L, req.getId()).isEmpty());
         assertThrows(RuntimeException.class, () -> legacySubmit(instance, req));
         assertEquals(3, engine.getTaskService().createTaskQuery().processInstanceId(instance).count());
     }
-    @Test void modeChangesAfterOpeningLegacyDialogRejectSubmission() throws Exception {
+    @Test void legacyModeDoesNotChangeWhenPathIsAddedAfterOpeningDialog() throws Exception {
         String instance = start(false, false); legacyDispatch(instance); BpmTaskReturnReqVO req = legacyRequest(instance);
         assertEquals("LEGACY", service().targets(4L, req.getId()).get(0).getReturnMode());
         engine.getRuntimeService().setVariableLocal(task(instance, "4").getExecutionId(), "RETURNABLE_TASK_PATH", Collections.singletonList(SOURCE));
-        assertEquals("SINGLE", service().mode(4L, req.getId()));
-        assertThrows(RuntimeException.class, () -> legacySubmit(instance, req));
-        assertEquals(3, engine.getTaskService().createTaskQuery().processInstanceId(instance).count());
+        assertEquals("LEGACY", service().mode(4L, req.getId()));
+        legacySubmit(instance, req);
+        assertNotNull(task(instance, "1"));
+        assertNull(task(instance, "4"));
     }
     private String start(boolean sequential, boolean async) {
         return start(sequential, async, false);
@@ -551,6 +672,6 @@ class BpmTaskReturnTest {
             SequenceFlow finishReminder = new SequenceFlow("reminder", "end"); finishReminder.setId("reminderEnd"); process.addFlowElement(finishReminder);
         }
         engine.getRepositoryService().createDeployment().addBpmnModel("sms.bpmn20.xml", model).deploy();
-        return engine.getRuntimeService().startProcessInstanceByKey(processKey).getId();
+        return engine.getRuntimeService().startProcessInstanceByKey(processKey, Collections.singletonMap(BpmProcessOperationVersion.KEY, BpmProcessOperationVersion.CURRENT)).getId();
     }
 }

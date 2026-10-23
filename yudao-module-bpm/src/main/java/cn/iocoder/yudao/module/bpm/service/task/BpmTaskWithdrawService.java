@@ -153,7 +153,7 @@ public class BpmTaskWithdrawService {
         return result;
     }
 
-    /** 以本次派发的持久标记分流，不以流程创建时间判断，也不在新版失败后降级。 */
+    /** 按流程实例启动时的固定版本分流，新版失败不降级。 */
     public String mode(Long userId, String taskId) {
         HistoricTaskInstance source = source(userId, taskId);
         if (!memberMode(source)) return "LEGACY";
@@ -169,38 +169,19 @@ public class BpmTaskWithdrawService {
     }
 
     private boolean memberMode(HistoricTaskInstance source) {
-        if (source.getTaskLocalVariables().containsKey(BpmDispatchSources.OPTIONS)
-                || runtimeService.hasVariableLocal(source.getProcessInstanceId(), BpmDispatchSources.LEDGER_PREFIX + source.getId())
-                || runtimeService.hasVariableLocal(source.getProcessInstanceId(), RESTORED + source.getId())) return true;
-        return runtimeService.createVariableInstanceQuery().processInstanceId(source.getProcessInstanceId())
-                .excludeTaskVariables().variableNameLike("bpm_dispatch_%").list().stream().anyMatch(variable ->
-                        BpmDispatchSources.SOURCES.equals(variable.getName()) && BpmDispatchSources.contains(variable.getValue(), source.getId())
-                        || variable.getName().startsWith("bpm_dispatch_pending_") && variable.getValue() instanceof Collection
-                        && ((Collection<?>) variable.getValue()).contains(source.getId()));
+        return BpmProcessOperationVersion.isCurrent(runtimeService.getVariableLocal(source.getProcessInstanceId(), BpmProcessOperationVersion.KEY));
     }
 
     private void requireMemberMode(HistoricTaskInstance source) {
         if (!memberMode(source)) throw exception(TASK_WITHDRAW_INVALID, "该任务使用原版整体撤回，请刷新后重新操作");
     }
 
-    /** 原逻辑清理流程级变量，因此混有新版派发时不能进入；提交时重新核验并锁定流程。 */
+    /** 按流程实例的固定版本进入原规则；提交时重新核验并锁定流程。 */
     @Transactional(rollbackFor = Exception.class)
     public void executeLegacy(Long userId, String taskId, Runnable operation) {
         managementService.executeCommand(context -> {
             HistoricTaskInstance source = source(userId, taskId);
             if (memberMode(source)) throw exception(TASK_WITHDRAW_INVALID, "该任务已接入新版派发，请刷新后重新确认撤回方式");
-            boolean mixed = runtimeService.createVariableInstanceQuery().processInstanceId(source.getProcessInstanceId())
-                    .excludeTaskVariables().variableNameLike("bpm_dispatch_%").list().stream().anyMatch(variable -> {
-                        Object value = variable.getValue();
-                        // 新引擎也会给尚无来源的旧根写空 SOURCES；空集合不代表新版派发。
-                        if (BpmDispatchSources.SOURCES.equals(variable.getName())) return value instanceof Map && !((Map<?, ?>) value).isEmpty();
-                        if (variable.getName().startsWith("bpm_dispatch_pending_")) return value instanceof Collection && !((Collection<?>) value).isEmpty();
-                        return variable.getName().startsWith(BpmDispatchSources.LEDGER_PREFIX)
-                                || variable.getName().startsWith(RESTORED)
-                                || BpmDispatchSources.BRANCH.equals(variable.getName()) && Boolean.TRUE.equals(value)
-                                || BpmDispatchSources.NEW_MEMBERS.equals(variable.getName()) && value instanceof Map && !((Map<?, ?>) value).isEmpty();
-                    });
-            if (mixed) throw exception(TASK_WITHDRAW_INVALID, "该流程已混有新版派发或追加记录，不能使用原版整体撤回，以免影响其他分支");
             ExecutionEntity process = CommandContextUtil.getExecutionEntityManager().findById(source.getProcessInstanceId());
             if (process == null || process.isSuspended() || process.isEnded()) throw exception(TASK_WITHDRAW_FAIL_PROCESS_NOT_RUNNING);
             process.forceUpdate();
@@ -413,7 +394,7 @@ public class BpmTaskWithdrawService {
         branch.setVariableLocal(BpmDispatchSources.RESTORED_FROM,
                 Collections.singletonMap(source.getTaskDefinitionKey(), lineage));
         // 恢复原任务的退回路径上下文；不继承流程级其他分支的路径。
-        for (String key : Arrays.asList("RETURN_BRANCH_CONTEXT", "RETURNABLE_TASK_PATH", BpmTaskReturnService.SCOPE, BpmTaskReturnService.RETAINED_ROOTS)) {
+        for (String key : Arrays.asList("RETURN_BRANCH_CONTEXT", "RETURNABLE_TASK_PATH", BpmTaskReturnService.SCOPE, BpmTaskReturnService.RETAINED_ROOTS, BpmTaskReturnService.RETAINED_SOURCES)) {
             Object value = source.getTaskLocalVariables().get(key);
             branch.setVariableLocal(key, value instanceof Map ? new LinkedHashMap<>((Map<?, ?>) value)
                     : value instanceof Collection ? new ArrayList<>((Collection<?>) value) : null);

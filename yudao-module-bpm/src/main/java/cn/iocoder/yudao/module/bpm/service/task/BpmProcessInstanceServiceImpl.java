@@ -581,11 +581,9 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                     }
                 }
             }
-            String returnNext = BpmTaskReturnService.nextInScope(runtimeService, task.getExecutionId(), task.getTaskDefinitionKey());
-            if (returnNext != null) {
-                List<Long> retainedReturn = new ArrayList<>(BpmTaskReturnService.retainedUsers(runtimeService, processInstanceId, task.getExecutionId(), task.getTaskDefinitionKey()));
-                selectedAssigneesMap.put(returnNext, retainedReturn);
-            }
+            BpmTaskReturnService.retainedRecipients(runtimeService, historyService, processInstanceId, task.getExecutionId(),
+                    task.getTaskDefinitionKey()).forEach((node, users) ->
+                    selectedAssigneesMap.put(node, new ArrayList<>(users)));
             // 撤回恢复是新任务，但仍保留的旧派发不能因早于本轮开始时间而重新变成可选。
             BpmDispatchSources.retainedRecipients(runtimeService, processInstanceId, task.getExecutionId(),
                     task.getTaskDefinitionKey()).forEach((node, users) -> {
@@ -771,10 +769,6 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             }
         }
 
-        if (task != null) {
-            String returnNext = BpmTaskReturnService.nextInScope(runtimeService, task.getExecutionId(), task.getTaskDefinitionKey());
-            if (returnNext != null) result.removeIf(node -> !returnNext.equals(node.getTaskDefKey()) && !"end".equals(node.getTaskDefKey()));
-        }
         return result;
     }
 
@@ -1795,6 +1789,8 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         }
 
         // 3. 创建流程
+        variables.put(cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmProcessOperationVersion.KEY,
+                cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmProcessOperationVersion.CURRENT);
         ProcessInstanceBuilder processInstanceBuilder = runtimeService.createProcessInstanceBuilder()
                 .processDefinitionId(definition.getId())
                 .businessKey(businessKey)

@@ -42,6 +42,10 @@ public class BpmTaskAppendService {
                 || !BpmTaskStatusEnum.APPROVE.getStatus().equals(task.getTaskLocalVariables().get(BpmnVariableConstants.TASK_VARIABLE_STATUS))) {
             throw exception(TASK_APPEND_INVALID, "只能从本人已办理完成的任务追加");
         }
+        if (!BpmProcessOperationVersion.isCurrent(runtimeService.getVariableLocal(
+                task.getProcessInstanceId(), BpmProcessOperationVersion.KEY))) {
+            throw exception(TASK_APPEND_INVALID, "旧流程实例不支持追加");
+        }
         if (!BpmTaskDispatchPolicy.allowsMemberOperations(repositoryService.getBpmnModel(task.getProcessDefinitionId()), task.getTaskDefinitionKey())) {
             throw exception(TASK_APPEND_INVALID, "只有收文主任拟办节点允许追加");
         }

@@ -65,6 +65,23 @@ class BpmRestoredDispatchTest {
         assertDoesNotThrow(() -> validate(Collections.singleton("target"), 4L));
     }
 
+    @Test
+    void returnedTaskCanSelectOtherRoutesWhileRetainedPeopleStayProtected() {
+        when(runtime.getVariable("restored", BpmDispatchSources.RESTORED_FROM)).thenReturn(null);
+        when(runtime.getVariable("restored", BpmTaskReturnService.SCOPE))
+                .thenReturn(Collections.singletonMap("director", "oldRoute"));
+        when(runtime.getVariable("restored", BpmTaskReturnService.RETAINED_SOURCES))
+                .thenReturn(Collections.singletonMap("director", Collections.singleton("oldTask")));
+        assertDoesNotThrow(() -> validate(Collections.singleton("target"), 8L));
+        cn.iocoder.yudao.framework.common.exception.ServiceException error = assertThrows(
+                cn.iocoder.yudao.framework.common.exception.ServiceException.class,
+                () -> validate(Collections.singleton("target"), 4L));
+        assertEquals("发送失败：该环节（主办科室）仍有已接收人员，请勿重复选择", error.getMessage());
+        assertDoesNotThrow(() -> validate(Collections.emptySet()));
+        target.getExtensionElements().clear();
+        assertThrows(RuntimeException.class, () -> validate(Collections.singleton("target"), 8L));
+    }
+
     private void validate(Set<String> selected, Long... users) {
         service.validateRestoredDispatch(task, model, selected,
                 Collections.singletonMap("target", Arrays.asList(users)));

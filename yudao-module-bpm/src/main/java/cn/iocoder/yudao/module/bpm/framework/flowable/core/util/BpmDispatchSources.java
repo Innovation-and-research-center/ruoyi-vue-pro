@@ -181,7 +181,10 @@ public final class BpmDispatchSources {
         Map<String, Collection<Long>> map = (Map<String, Collection<Long>>) pending;
         Collection<Long> users = map.get(execution.getCurrentActivityId());
         if (users == null) return null;
-        execution.removeVariable(NEW_MEMBERS);
+        Map<String, Collection<Long>> remaining = new LinkedHashMap<>(map);
+        remaining.remove(execution.getCurrentActivityId());
+        if (remaining.isEmpty()) execution.removeVariable(NEW_MEMBERS);
+        else execution.setVariable(NEW_MEMBERS, remaining);
         return new LinkedHashSet<>(users);
     }
 

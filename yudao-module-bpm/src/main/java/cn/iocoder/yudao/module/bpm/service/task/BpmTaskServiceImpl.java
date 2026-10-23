@@ -486,7 +486,15 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             return PageResult.empty();
         }
         List<BpmTaskRespVO> list = taskSortMapper.selectUnifiedDoneTaskList(userId, pageVO);
+        Set<String> instanceIds = list.stream().filter(task -> !Boolean.TRUE.equals(task.getIsHistory()))
+                .map(BpmTaskRespVO::getProcessInstanceId).filter(Objects::nonNull).collect(Collectors.toSet());
+        Set<String> appendInstances = instanceIds.isEmpty() ? Collections.emptySet()
+                : runtimeService.createProcessInstanceQuery().processInstanceIds(instanceIds).active()
+                .variableValueEquals(cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmProcessOperationVersion.KEY,
+                        cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmProcessOperationVersion.CURRENT)
+                .list().stream().map(ProcessInstance::getId).collect(Collectors.toSet());
         list.forEach(task -> task.setAppendAllowed(!Boolean.TRUE.equals(task.getIsHistory())
+                && appendInstances.contains(task.getProcessInstanceId())
                 && BpmTaskStatusEnum.APPROVE.getStatus().equals(task.getStatus())
                 && task.getProcessInstance() != null
                 && BpmTaskDispatchPolicy.allowsMemberOperations(task.getProcessInstance().getProcessDefinitionKey(), task.getTaskDefinitionKey())));
@@ -976,10 +984,6 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 task.getProcessDefinitionId(), task.getTaskDefinitionKey(), internalTask)
                 && !BpmInternalLoopUtils.canContinueToSingleTarget(bpmnModel,
                 bpmnModel.getFlowElement(task.getTaskDefinitionKey()));
-        if (CollUtil.isNotEmpty(reqVO.getAddSignUserIds()) && BpmTaskReturnService.nextInScope(runtimeService,
-                task.getExecutionId(), task.getTaskDefinitionKey()) != null) {
-            throw exception(TASK_RETURN_INVALID, "退回重办期间请沿原路径发送，不允许改为同环节派发");
-        }
         if (CollUtil.isNotEmpty(reqVO.getAddSignUserIds())) {
             Set<Long> allowedInternal = processInstanceService.getInternalLoopCandidateUserIds(userId,
                     task.getProcessDefinitionId(), task.getTaskDefinitionKey(), internalTask);
@@ -1278,7 +1282,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
 
             Set<Long> retainedInternal = BpmTaskReturnService.retainedUsers(runtimeService, task.getProcessInstanceId(), task.getExecutionId(), task.getTaskDefinitionKey());
             if (reqVO.getAddSignUserIds().stream().anyMatch(retainedInternal::contains))
-                throw exception(TASK_RETURN_INVALID, "不能重复派发原会签中仍保留的办理人");
+                throw exception(TASK_RESTORED_RECIPIENT_DUPLICATE, task.getName());
             Map<String, Object> internalContext = new LinkedHashMap<>();
             internalContext.put(RETURNABLE_TASK_PATH_VARIABLE, new ArrayList<>(getReturnableTaskPath(task.getProcessInstanceId(), task.getExecutionId())));
             internalContext.put(RETURN_BRANCH_CONTEXT_VARIABLE, new LinkedHashMap<>(getReturnBranchContext(task.getProcessInstanceId(), task.getExecutionId())));
@@ -1357,15 +1361,18 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     /** 撤回恢复后不重复派发仍保留的成员；后端校验也防止过期弹窗或直接接口绕过禁选。 */
     void validateRestoredDispatch(Task task, BpmnModel model, Set<String> selectedTargets,
                                   Map<String, List<Long>> selections) {
-        String returnNext = BpmTaskReturnService.nextInScope(runtimeService, task.getExecutionId(), task.getTaskDefinitionKey());
-        if (returnNext != null && selectedTargets.contains(returnNext)) {
-            Set<Long> retainedReturn = BpmTaskReturnService.retainedUsers(runtimeService, task.getProcessInstanceId(), task.getExecutionId(), task.getTaskDefinitionKey());
-            List<Long> chosen = selections == null ? null : selections.get(returnNext);
-            if (!retainedReturn.isEmpty() && (chosen == null || chosen.stream().anyMatch(retainedReturn::contains)))
-                throw exception(TASK_RETURN_INVALID, "不能重复派发原会签中仍保留的办理人");
+        Map<String, Set<Long>> returned = BpmTaskReturnService.retainedRecipients(runtimeService, historyService,
+                task.getProcessInstanceId(), task.getExecutionId(), task.getTaskDefinitionKey());
+        for (String target : selectedTargets) {
+            Set<Long> existing = returned.getOrDefault(target, Collections.emptySet());
+            List<Long> chosen = selections == null ? null : selections.get(target);
+            FlowElement element = model.getFlowElement(target);
+            boolean manual = element instanceof UserTask && (ObjUtil.equals(parseCandidateStrategy(element), BpmTaskCandidateStrategyEnum.MANUAL_SELECTED.getStrategy())
+                    || ObjUtil.equals(parseCandidateStrategy(element), BpmTaskCandidateStrategyEnum.APPROVE_USER_SELECT.getStrategy())
+                    || ObjUtil.equals(parseCandidateStrategy(element), BpmTaskCandidateStrategyEnum.START_USER_SELECT.getStrategy()));
+            if (!existing.isEmpty() && (!manual || chosen == null || chosen.stream().anyMatch(existing::contains)))
+                throw exception(TASK_RESTORED_RECIPIENT_DUPLICATE, element == null ? target : element.getName());
         }
-        if (returnNext != null && selectedTargets.stream().anyMatch(id -> !returnNext.equals(id)))
-            throw exception(TASK_RETURN_INVALID, "重办只能发送到被退回路径的下一环节，不能重复派发其他分支");
         Map<String, Set<Long>> retained = BpmDispatchSources.retainedRecipients(runtimeService,
                 task.getProcessInstanceId(), task.getExecutionId(), task.getTaskDefinitionKey());
         if (retained.isEmpty()) return;
@@ -2131,7 +2138,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         }
     }
 
-    /** 纯旧运行数据保留原整体退回范围及恢复规则；禁止混合数据调用。 */
+    /** 旧流程实例始终保留原整体退回范围及恢复规则。 */
     private void returnLegacyTask(Long userId, BpmnModel bpmnModel, Task currentTask, FlowElement targetElement, BpmTaskReturnReqVO reqVO) {
         String processInstanceId = currentTask.getProcessInstanceId();
         String targetTaskKey = reqVO.getTargetTaskDefinitionKey();
@@ -3513,7 +3520,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
         }
     }
 
-    // 保留更新前的撤回规则；只能由 executeLegacy 完成分流、混用检查和事务锁定后调用。
+    // 保留更新前的撤回规则；只能由 executeLegacy 完成流程实例版本分流和事务锁定后调用。
     private void withdrawLegacyTask(Long userId, String taskId) {
         // 1.1 查询本人已办任务
         HistoricTaskInstance taskInstance = historyService.createHistoricTaskInstanceQuery()
