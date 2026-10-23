@@ -93,3 +93,5 @@ yudao-module-bpm/src/main/resources/templates/
 !/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/framework/flowable/core/util/BpmTaskSmsPolicyTest.java
 !/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/framework/flowable/core/util/BpmInternalLoopUtilsTest.java
 !/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/service/message/BpmTaskSmsMessageTest.java
+
+!/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/framework/flowable/core/util/BpmTaskReturnTest.java

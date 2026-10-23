@@ -99,6 +99,16 @@ public class BpmTaskAppendService {
             if (sourceNode instanceof org.flowable.bpmn.model.FlowNode) options.addAll(
                     BpmDispatchSources.optionalManualTargets((org.flowable.bpmn.model.FlowNode) sourceNode));
         }
+        Object returnScope = source.getTaskLocalVariables().get(BpmTaskReturnService.SCOPE);
+        Object returnNext = returnScope instanceof Map ? ((Map<?, ?>) returnScope).get(source.getTaskDefinitionKey()) : null;
+        if (returnNext != null) options.removeIf(node -> !returnNext.equals(node));
+        Object retainedRoots = source.getTaskLocalVariables().get(BpmTaskReturnService.RETAINED_ROOTS);
+        Object retainedRoot = retainedRoots instanceof Map ? ((Map<?, ?>) retainedRoots).get(source.getTaskDefinitionKey()) : null;
+        if (returnNext != null && retainedRoot != null) {
+            Object retained = runtimeService.getVariableLocal(instanceId, BpmTaskReturnService.RETAINED_PREFIX + retainedRoot);
+            if (retained instanceof Collection) for (Object id : (Collection<?>) retained)
+                disabledByNode.computeIfAbsent(returnNext.toString(), key -> new LinkedHashSet<>()).add(Long.valueOf(id.toString()));
+        }
         if (dispatched) {
             Set<String> liveNodes = result.stream().map(BpmTaskAppendTargetRespVO::getNodeId).collect(Collectors.toSet());
             for (String nodeId : options) {
@@ -290,6 +300,7 @@ public class BpmTaskAppendService {
             if (!Collections.disjoint(members, requested)) throw exception(TASK_APPEND_INVALID, "人员已经加入该实例");
             members.addAll(requested);
             root.setVariableLocal(collectionKey, members);
+            BpmTaskReturnService.retainAddedMembers(runtimeService, source.getProcessInstanceId(), root.getId(), requested);
             BpmTaskSmsPolicy.prepare(runtimeService, root.getId(), Collections.singletonMap(root.getActivityId(), requested), req.getSendSms());
             @SuppressWarnings("unchecked")
             Map<String, Set<String>> origins = new LinkedHashMap<>((Map<String, Set<String>>) root.getVariableLocal(BpmDispatchSources.SOURCES));
@@ -347,6 +358,11 @@ public class BpmTaskAppendService {
             if (end == null) throw exception(TASK_APPEND_INVALID, "模型缺少结束节点，无法创建独立追加分支");
             branch.setCurrentFlowElement(end);
             branch.setVariableLocal(BpmDispatchSources.BRANCH, true);
+            for (String key : Arrays.asList("RETURN_BRANCH_CONTEXT", "RETURNABLE_TASK_PATH", BpmTaskReturnService.SCOPE, BpmTaskReturnService.RETAINED_ROOTS)) {
+                Object value = source.getTaskLocalVariables().get(key);
+                if (value instanceof Map) branch.setVariableLocal(key, new LinkedHashMap<>((Map<?, ?>) value));
+                else if (value instanceof Collection) branch.setVariableLocal(key, new ArrayList<>((Collection<?>) value));
+            }
             branch.setVariableLocal(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, new LinkedHashMap<>());
             branch.setVariableLocal(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_UPDATE_TIME, new LinkedHashMap<>());
             // 仅遮蔽人工路由变量，不拷贝旧任务的业务表单、返回路径、短信或会签计数。

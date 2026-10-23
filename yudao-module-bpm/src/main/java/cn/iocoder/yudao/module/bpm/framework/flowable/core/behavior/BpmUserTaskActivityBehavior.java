@@ -47,10 +47,25 @@ public class BpmUserTaskActivityBehavior extends UserTaskActivityBehavior {
     protected void handleAssignments(TaskService taskService, String assignee, String owner,
         List<String> candidateUsers, List<String> candidateGroups, TaskEntity task, ExpressionManager expressionManager,
         DelegateExecution execution, ProcessEngineConfigurationImpl processEngineConfiguration) {
+        if (execution.getCurrentActivityId().equals(execution.getVariable("bpm_dispatch_return_target"))) {
+            execution.setVariableLocal(String.format(cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_RETURN_FLAG, execution.getCurrentActivityId()), true);
+        }
+        Object retainedRoots = execution.getVariable("bpm_dispatch_return_retained_roots");
+        if (retainedRoots instanceof java.util.Map) task.setVariableLocal("bpm_dispatch_return_retained_roots", new java.util.LinkedHashMap<>((java.util.Map<?, ?>) retainedRoots));
+        Object returnScope = execution.getVariable("bpm_dispatch_return_scope");
+        if (returnScope instanceof java.util.Map) task.setVariableLocal("bpm_dispatch_return_scope", new java.util.LinkedHashMap<>((java.util.Map<?, ?>) returnScope));
         Set<String> restoredSources = BpmDispatchSources.restoredSources(
                 execution.getVariable(BpmDispatchSources.RESTORED_FROM), execution.getCurrentActivityId());
         if (!restoredSources.isEmpty()) task.setVariableLocal(BpmDispatchSources.RESTORED_FROM, restoredSources);
         if (BpmRegisterTaskUtils.isRegisterTask(execution)) {
+            Set<Long> returnedUsers = BpmDispatchSources.takeNewMembers(execution);
+            if (returnedUsers != null && returnedUsers.size() == 1) {
+                Long user = returnedUsers.iterator().next();
+                task.setVariableLocal(BpmTaskSmsPolicy.TASK_SEND_SMS, BpmTaskSmsPolicy.forMember(execution, user));
+                TaskHelper.changeTaskAssignee(task, user.toString());
+                return;
+            }
+
             Set<Long> candidateUserIds = BpmRegisterTaskUtils.calculateCandidateUserIds(execution, taskCandidateInvoker);
             if (CollUtil.isNotEmpty(candidateUserIds)) {
                 task.setAssignee(null);
@@ -60,6 +75,7 @@ public class BpmUserTaskActivityBehavior extends UserTaskActivityBehavior {
         }
         // 第一步，获得任务的候选用户
         Long assigneeUserId = calculateTaskCandidateUsers(execution);
+        cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmInternalDispatch.capture(execution, task, assigneeUserId);
         // 在分配事件触发前固定到任务，异步通知不再依赖可变的执行流上下文。
         task.setVariableLocal(BpmTaskSmsPolicy.TASK_SEND_SMS, BpmTaskSmsPolicy.forMember(execution, assigneeUserId));
         // 第二步，设置作为负责人

@@ -581,6 +581,11 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                     }
                 }
             }
+            String returnNext = BpmTaskReturnService.nextInScope(runtimeService, task.getExecutionId(), task.getTaskDefinitionKey());
+            if (returnNext != null) {
+                List<Long> retainedReturn = new ArrayList<>(BpmTaskReturnService.retainedUsers(runtimeService, processInstanceId, task.getExecutionId(), task.getTaskDefinitionKey()));
+                selectedAssigneesMap.put(returnNext, retainedReturn);
+            }
             // 撤回恢复是新任务，但仍保留的旧派发不能因早于本轮开始时间而重新变成可选。
             BpmDispatchSources.retainedRecipients(runtimeService, processInstanceId, task.getExecutionId(),
                     task.getTaskDefinitionKey()).forEach((node, users) -> {
@@ -766,6 +771,10 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             }
         }
 
+        if (task != null) {
+            String returnNext = BpmTaskReturnService.nextInScope(runtimeService, task.getExecutionId(), task.getTaskDefinitionKey());
+            if (returnNext != null) result.removeIf(node -> !returnNext.equals(node.getTaskDefKey()) && !"end".equals(node.getTaskDefKey()));
+        }
         return result;
     }
 

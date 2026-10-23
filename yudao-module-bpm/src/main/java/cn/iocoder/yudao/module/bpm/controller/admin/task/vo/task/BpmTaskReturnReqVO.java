@@ -25,4 +25,13 @@ public class BpmTaskReturnReqVO {
 
     @Schema(description = "退回节点指定的审批人 ID 集合")
     private List<Long> returnAssignees;
+
+    @Schema(description = "本次退回是否发送短信，缺省不发送")
+    private Boolean sendSms;
+
+    @Schema(description = "打开弹窗时的退回方式：SINGLE/LEGACY")
+    private String expectedMode;
+
+    @Schema(description = "内循环退回的精确历史任务编号")
+    private String targetTaskId;
 }

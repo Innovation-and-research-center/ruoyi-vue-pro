@@ -100,6 +100,16 @@ public class BpmParallelMultiInstanceBehavior extends ParallelMultiInstanceBehav
         return super.resolveNrOfInstances(execution);
     }
 
+    @Override
+    public boolean completionConditionSatisfied(org.flowable.engine.delegate.DelegateExecution execution) {
+        String pending = cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmInternalDispatch.PENDING;
+        if (Boolean.TRUE.equals(execution.getVariableLocal(pending))) {
+            execution.removeVariableLocal(pending);
+            return false; // 内循环交接本身不能使或签通过、取消刚派出的任务。
+        }
+        return super.completionConditionSatisfied(execution);
+    }
+
     /** 撤回不计为通过；仅在服务已确认剩余已办满足条件后结束会签。 */
     public void completeAfterWithdrawal(org.flowable.engine.impl.persistence.entity.ExecutionEntity root) {
         org.flowable.engine.impl.util.CommandContextUtil.getActivityInstanceEntityManager().recordActivityEnd(root, null);

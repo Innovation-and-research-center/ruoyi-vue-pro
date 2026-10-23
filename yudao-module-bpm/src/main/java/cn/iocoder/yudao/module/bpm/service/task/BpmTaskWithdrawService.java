@@ -81,8 +81,11 @@ public class BpmTaskWithdrawService {
             List<Long> members = members(root);
             List<ExecutionEntity> children = children(root);
             Map<String, Set<String>> origins = (Map<String, Set<String>>) originValue;
+            // 旧会签缺少全员来源时，只允许有新内循环标记的本环节发送人撤回其精确派发。
+            boolean trackedInternal = root.getVariableLocal(BpmInternalDispatch.HANDOFFS) instanceof Number
+                    && node.getId().equals(source.getTaskDefinitionKey());
             boolean consistent = members.size() == number(root, "nrOfInstances")
-                    && members.stream().allMatch(user -> user != null && !origins.getOrDefault(user.toString(), Collections.emptySet()).isEmpty());
+                    && members.stream().allMatch(id -> id != null && (trackedInternal || origins.containsKey(id.toString())));
             int completed = number(root, "nrOfCompletedInstances");
             for (int index = 0; index < members.size(); index++) {
                 Long user = members.get(index);
@@ -279,7 +282,7 @@ public class BpmTaskWithdrawService {
             }
             // 全批校验后再修改；一个无效成员使整个撤回回滚。
             // 主任每次成功撤回都回到拟办；先恢复，避免最后一个目标结束时提前结束流程。
-            if (director && sources.values().stream().noneMatch(related -> hasRestoredSourceTask(related, process)))
+            if (!director || sources.values().stream().noneMatch(related -> hasRestoredSourceTask(related, process)))
                 restoreSource(source, process);
             List<ExecutionEntity> emptyRoots = new ArrayList<>();
             for (Map.Entry<String, Set<Long>> entry : selected.entrySet()) {
@@ -287,7 +290,8 @@ public class BpmTaskWithdrawService {
                 removeMembers(sourceIds, root, entry.getValue(), chosen, emptyRoots);
             }
             Object remaining = process.getVariableLocal(BpmDispatchSources.LEDGER_PREFIX + source.getId());
-            if (!director && ((Map<?, ?>) remaining).isEmpty()) restoreSource(source, process);
+            if (!director && !((Map<?, ?>) remaining).isEmpty())
+                throw exception(TASK_WITHDRAW_INVALID, "派发记录未完整撤回，请刷新重试");
             // 先恢复来源再结束空目标，避免最后一个目标的取消误结束整个流程。
             for (ExecutionEntity root : emptyRoots) cancelRoot(root);
             chosenBySource.forEach((id, rows) -> writeComment(sources.get(id), userId, request.getReason(), rows));
@@ -316,6 +320,12 @@ public class BpmTaskWithdrawService {
         if (removed.isEmpty()) return;
         int completed = number(root, "nrOfCompletedInstances");
         List<Long> members = members(root); members.removeAll(removed);
+        ExecutionEntity process = CommandContextUtil.getExecutionEntityManager().findById(root.getProcessInstanceId());
+        Object retained = process.getVariableLocal(BpmTaskReturnService.RETAINED_PREFIX + root.getId());
+        if (retained instanceof Collection) {
+            Set<Object> remainingReturn = new LinkedHashSet<>((Collection<?>) retained); remainingReturn.removeAll(removed);
+            process.setVariableLocal(BpmTaskReturnService.RETAINED_PREFIX + root.getId(), remainingReturn);
+        }
         List<ExecutionEntity> activeChildren = children(root);
         boolean removedCurrent = false;
         for (ExecutionEntity child : activeChildren) {
@@ -334,10 +344,18 @@ public class BpmTaskWithdrawService {
         root.setVariableLocal("nrOfInstances", members.size());
         // 清掉被撤回成员尚未消费的短信参数，不影响其他成员。
         BpmTaskSmsPolicy.removeMembers(root, node.getId(), removed);
+        BpmInternalDispatch.removeContext(root, node.getId(), removed);
         if (members.isEmpty()) { emptyRoots.add(root); return; }
         MultiInstanceActivityBehavior behavior = (MultiInstanceActivityBehavior) node.getBehavior();
-        boolean finished = completed > 0 && (completed == members.size() || behavior.completionConditionSatisfied(root));
-        if (finished) {
+        Object returnedValue = root.getVariableLocal(BpmTaskReturnService.RETURNED);
+        int returned = returnedValue instanceof Number ? ((Number) returnedValue).intValue() : 0;
+        Object handoffs = root.getVariableLocal(BpmInternalDispatch.HANDOFFS);
+        returned += handoffs instanceof Number ? ((Number) handoffs).intValue() : 0;
+        boolean finished = completed > 0 && (completed == members.size()
+                || completed > returned && behavior.completionConditionSatisfied(root));
+        if (finished && completed == returned) {
+            emptyRoots.add(root);
+        } else if (finished) {
             if (behavior instanceof BpmParallelMultiInstanceBehavior) ((BpmParallelMultiInstanceBehavior) behavior).completeAfterWithdrawal(root);
             else ((BpmSequentialMultiInstanceBehavior) behavior).completeAfterWithdrawal(root);
         } else if (node.getLoopCharacteristics().isSequential() && removedCurrent) {
@@ -373,6 +391,10 @@ public class BpmTaskWithdrawService {
         ExecutionEntity branch = CommandContextUtil.getExecutionEntityManager().createChildExecution(process);
         branch.setActive(false); branch.setScope(false); branch.setCurrentFlowElement(BpmnModelUtils.getEndEvent(model));
         branch.setVariableLocal(BpmDispatchSources.BRANCH, true);
+        if (source.getTaskLocalVariables().get(BpmInternalDispatch.SOURCE) != null) {
+            BpmInternalDispatch.prepareContext(branch, node.getId(), Long.valueOf(source.getAssignee()),
+                    Collections.singletonMap(BpmInternalDispatch.SOURCE, source.getTaskLocalVariables().get(BpmInternalDispatch.SOURCE)));
+        }
         Set<String> lineage = new LinkedHashSet<>();
         Object previous = source.getTaskLocalVariables().get(BpmDispatchSources.RESTORED_FROM);
         if (previous instanceof Collection) ((Collection<?>) previous).forEach(id -> lineage.add(id.toString()));
@@ -391,10 +413,26 @@ public class BpmTaskWithdrawService {
         branch.setVariableLocal(BpmDispatchSources.RESTORED_FROM,
                 Collections.singletonMap(source.getTaskDefinitionKey(), lineage));
         // 恢复原任务的退回路径上下文；不继承流程级其他分支的路径。
-        for (String key : Arrays.asList("RETURN_BRANCH_CONTEXT", "RETURNABLE_TASK_PATH")) {
+        for (String key : Arrays.asList("RETURN_BRANCH_CONTEXT", "RETURNABLE_TASK_PATH", BpmTaskReturnService.SCOPE, BpmTaskReturnService.RETAINED_ROOTS)) {
             Object value = source.getTaskLocalVariables().get(key);
             branch.setVariableLocal(key, value instanceof Map ? new LinkedHashMap<>((Map<?, ?>) value)
                     : value instanceof Collection ? new ArrayList<>((Collection<?>) value) : null);
+        }
+        // 同环节内循环撤回后，原会签的其他成员仍属于原实例，恢复任务不能重复派发给他们。
+        for (ExecutionEntity original : CommandContextUtil.getExecutionEntityManager().findChildExecutionsByProcessInstanceId(source.getProcessInstanceId())) {
+            if (!original.isMultiInstanceRoot() || !node.getId().equals(original.getActivityId())
+                    || !BpmDispatchSources.contains(original.getVariableLocal(BpmDispatchSources.SOURCES), source.getId())) continue;
+            Map<String, String> retainedRoots = new LinkedHashMap<>();
+            Object inherited = branch.getVariableLocal(BpmTaskReturnService.RETAINED_ROOTS);
+            if (inherited instanceof Map) ((Map<?, ?>) inherited).forEach((key, value) -> retainedRoots.put(key.toString(), value.toString()));
+            retainedRoots.put(node.getId(), original.getId());
+            branch.setVariableLocal(BpmTaskReturnService.RETAINED_ROOTS, retainedRoots);
+            Object existing = process.getVariableLocal(BpmTaskReturnService.RETAINED_PREFIX + original.getId());
+            Set<Long> retained = new LinkedHashSet<>();
+            if (existing instanceof Collection) ((Collection<?>) existing).forEach(id -> retained.add(Long.valueOf(id.toString())));
+            else retained.addAll(members(original));
+            retained.remove(Long.valueOf(source.getAssignee()));
+            process.setVariableLocal(BpmTaskReturnService.RETAINED_PREFIX + original.getId(), retained);
         }
         branch.setVariableLocal(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, new LinkedHashMap<>());
         branch.setVariableLocal(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_UPDATE_TIME, new LinkedHashMap<>());

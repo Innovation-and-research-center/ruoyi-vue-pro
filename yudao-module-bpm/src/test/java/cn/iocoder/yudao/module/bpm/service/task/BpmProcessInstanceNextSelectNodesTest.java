@@ -201,6 +201,7 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
                 org.flowable.engine.history.HistoricActivityInstanceQuery.class, Answers.RETURNS_SELF);
         when(historyService.createHistoricActivityInstanceQuery()).thenReturn(activities);
         when(activities.list()).thenReturn(Collections.emptyList());
+        doReturn(null).when(runtimeService).getVariable("restoredExecution", BpmTaskReturnService.SCOPE);
         when(runtimeService.getVariable("restoredExecution", BpmDispatchSources.RESTORED_FROM))
                 .thenReturn(Collections.singletonMap("current", Collections.singleton("originalSource")));
         when(runtimeService.getVariableLocal("instance", BpmDispatchSources.LEDGER_PREFIX + "originalSource"))
@@ -217,6 +218,7 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
         assertEquals(Collections.singletonList(40L), find(getNodes(20L), "next").getAssignedUserIds());
 
         // 上下文属于其他节点时，不限制当前节点的正常发送。
+        doReturn(null).when(runtimeService).getVariable("restoredExecution", BpmTaskReturnService.SCOPE);
         when(runtimeService.getVariable("restoredExecution", BpmDispatchSources.RESTORED_FROM))
                 .thenReturn(Collections.singletonMap("otherSource", Collections.singleton("originalSource")));
         List<Long> assigned = find(getNodes(20L), "next").getAssignedUserIds();

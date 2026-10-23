@@ -283,11 +283,12 @@ public class BpmTaskController {
     @Operation(summary = "获取所有可退回的节点", description = "用于【流程详情】的【退回】按钮")
     @Parameter(name = "taskId", description = "当前任务ID", required = true)
     @PreAuthorize("@ss.hasPermission('bpm:task:update')")
-    public CommonResult<List<BpmTaskRespVO>> getTaskListByReturn(@RequestParam("id") String id) {
-        List<UserTask> userTaskList = taskService.getUserTaskListByReturn(id);
-        return success(convertList(userTaskList, userTask -> // 只返回 id 和 name
-                new BpmTaskRespVO().setName(userTask.getName()).setTaskDefinitionKey(userTask.getId())));
+    public CommonResult<List<BpmTaskReturnTargetRespVO>> getTaskListByReturn(@RequestParam("id") String id) {
+        return success(taskReturnService.targets(getLoginUserId(), id));
     }
+
+    @Resource
+    private cn.iocoder.yudao.module.bpm.service.task.BpmTaskReturnService taskReturnService;
 
     @PutMapping("/return")
     @Operation(summary = "退回任务", description = "用于【流程详情】的【退回】按钮")

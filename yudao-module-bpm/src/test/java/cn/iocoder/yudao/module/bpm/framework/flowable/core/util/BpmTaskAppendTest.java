@@ -1384,6 +1384,35 @@ class BpmTaskAppendTest {
         assertEquals(1, engine.getTaskService().createTaskQuery().processInstanceId(instance).count());
     }
 
+
+    @Test
+    void returnThenWithdrawRemainingDoesNotTreatReturnAsApproval() throws Exception {
+        String instance = start(false, false); String source = dispatch(instance);
+        Task d = task(instance, "4");
+        // 用唯一历史来源补上实际运行路径，不按时间猜测来源。
+        engine.getRuntimeService().setVariableLocal(d.getExecutionId(), "RETURNABLE_TASK_PATH", Collections.singletonList(SOURCE));
+        BpmTaskReturnService returns = new BpmTaskReturnService();
+        AdminUserApi users = mock(AdminUserApi.class); when(users.getUser(anyLong())).thenAnswer(call -> user(call.getArgument(0)));
+        Map<String, Object> fields = new HashMap<>();
+        fields.put("runtimeService", engine.getRuntimeService()); fields.put("historyService", engine.getHistoryService());
+        fields.put("repositoryService", engine.getRepositoryService()); fields.put("managementService", engine.getManagementService());
+        fields.put("flowableTaskService", engine.getTaskService()); fields.put("adminUserApi", users);
+        for (Map.Entry<String, Object> field : fields.entrySet()) {
+            java.lang.reflect.Field target = returns.getClass().getDeclaredField(field.getKey()); target.setAccessible(true); target.set(returns, field.getValue());
+        }
+        BpmTaskReturnReqVO req = new BpmTaskReturnReqVO(); req.setId(d.getId()); req.setTargetTaskDefinitionKey(SOURCE); req.setReturnAssignees(Collections.singletonList(1L)); req.setReason("退回补正");
+        returns.returnTask(4L, req);
+        String originalRoot = engine.getRuntimeService().createExecutionQuery().executionId(task(instance, "5").getExecutionId()).singleResult().getParentId();
+        submit(service(), request(source, originalRoot, 8L));
+        assertTrue(BpmTaskReturnService.retainedUsers(engine.getRuntimeService(), instance, task(instance, "1").getExecutionId(), SOURCE).contains(8L));
+        BpmTaskWithdrawService withdraw = withdrawService();
+        List<BpmTaskWithdrawTargetRespVO> rows = withdraw.targets(1L, source);
+        assertFalse(rows.stream().filter(row -> row.getUserId() == 4L).findFirst().get().isWithdrawable());
+        withdraw.withdraw(1L, selectRows(source, rows, 5L, 6L, 8L));
+        assertEquals(0, engine.getTaskService().createTaskQuery().processInstanceId(instance).taskDefinitionKey("after").count());
+        assertEquals(0, engine.getTaskService().createTaskQuery().processInstanceId(instance).taskDefinitionKey("target").count());
+        assertEquals(2, engine.getTaskService().createTaskQuery().processInstanceId(instance).taskDefinitionKey(SOURCE).count());
+    }
     private String start(boolean sequential, boolean async) {
         return start(sequential, async, false);
     }
