@@ -1315,6 +1315,31 @@ class BpmTaskAppendTest {
     }
 
     @Test
+    void withdrawalRestoresOwnOpinionWithoutOverwritingRecoveryDraft() throws Exception {
+        String instance = start(false, false);
+        engine.getTaskService().setVariableLocal(task(instance, "1").getId(), BpmnVariableConstants.TASK_VARIABLE_REASON, "original opinion");
+        String source = dispatch(instance);
+        String root = service().targets(1L, source).get(0).getExecutionId();
+        withdraw(withdrawService(), withdrawal(source, root, 4L));
+        Task restored = task(instance, "1");
+        assertEquals("original opinion", engine.getTaskService().getVariableLocal(restored.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON));
+        assertEquals(source, engine.getTaskService().getVariableLocal(restored.getId(), BpmRestoredOpinion.SOURCE_TASK));
+        engine.getTaskService().setVariableLocal(restored.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON, "edited draft");
+        withdraw(withdrawService(), withdrawal(source, root, 5L));
+        assertEquals(restored.getId(), task(instance, "1").getId());
+        assertEquals("edited draft", engine.getTaskService().getVariableLocal(restored.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON));
+    }
+
+    @Test
+    void legacyWithdrawalRestoresOwnOpinion() throws Exception {
+        String instance = start(false, false);
+        engine.getTaskService().setVariableLocal(task(instance, "1").getId(), BpmnVariableConstants.TASK_VARIABLE_REASON, "legacy opinion");
+        String source = legacyDispatch(instance);
+        routedWithdrawService().withdrawTask(1L, source, "LEGACY");
+        assertEquals("legacy opinion", engine.getTaskService().getVariableLocal(task(instance, "1").getId(), BpmnVariableConstants.TASK_VARIABLE_REASON));
+    }
+
+    @Test
     void donePageAppendFlagUsesProcessAndNodeKeysNotNames() throws Exception {
         String modernInstance = start(false, false);
         String legacyInstance = start(false, false);

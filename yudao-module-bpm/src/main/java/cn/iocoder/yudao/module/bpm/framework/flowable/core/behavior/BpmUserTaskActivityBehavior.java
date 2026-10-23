@@ -65,6 +65,7 @@ public class BpmUserTaskActivityBehavior extends UserTaskActivityBehavior {
                 Long user = returnedUsers.iterator().next();
                 task.setVariableLocal(BpmTaskSmsPolicy.TASK_SEND_SMS, BpmTaskSmsPolicy.forMember(execution, user));
                 TaskHelper.changeTaskAssignee(task, user.toString());
+                cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRestoredOpinion.capture(execution, task);
                 return;
             }
 
@@ -83,6 +84,7 @@ public class BpmUserTaskActivityBehavior extends UserTaskActivityBehavior {
         // 第二步，设置作为负责人
         if (assigneeUserId != null) {
             TaskHelper.changeTaskAssignee(task, String.valueOf(assigneeUserId));
+            cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRestoredOpinion.capture(execution, task);
         }
     }
 
@@ -90,6 +92,13 @@ public class BpmUserTaskActivityBehavior extends UserTaskActivityBehavior {
         // 情况一，如果是多实例的任务，例如说会签、或签等情况，则从 Variable 中获取。
         // 顺序审批可见 BpmSequentialMultiInstanceBehavior，并发审批可见 BpmSequentialMultiInstanceBehavior
         if (super.multiInstanceActivityBehavior != null) {
+            // 动态成员直接执行内部 UserTask 行为，不经过多实例初始化。
+            // 部署/缓存重载后行为对象仍可能保留 XML 原变量名，优先读取本任务实际写入的节点专属人员变量。
+            String memberVariable = cn.iocoder.yudao.module.bpm.framework.flowable.core.util.FlowableUtils
+                    .formatExecutionCollectionElementVariable(execution.getCurrentActivityId());
+            if (execution.hasVariableLocal(memberVariable)) {
+                return execution.getVariableLocal(memberVariable, Long.class);
+            }
             return execution.getVariable(super.multiInstanceActivityBehavior.getCollectionElementVariable(), Long.class);
         }
 

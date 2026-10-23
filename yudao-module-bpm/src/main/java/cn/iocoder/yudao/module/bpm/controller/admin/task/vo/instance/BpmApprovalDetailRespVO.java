@@ -104,6 +104,9 @@ public class BpmApprovalDetailRespVO {
         @Schema(description = "审批意见", example = "同意")
         private String reason;
 
+        @Schema(description = "本次恢复对应的原办理任务编号，仅用于意见展示，不合并其他独立派发")
+        private String restoredFromTaskId;
+
         @Schema(description = "签名", example = "https://www.iocoder.cn/sign.png")
         private String signPicUrl;
 

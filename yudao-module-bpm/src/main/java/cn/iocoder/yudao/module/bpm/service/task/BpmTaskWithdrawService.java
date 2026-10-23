@@ -372,6 +372,7 @@ public class BpmTaskWithdrawService {
         ExecutionEntity branch = CommandContextUtil.getExecutionEntityManager().createChildExecution(process);
         branch.setActive(false); branch.setScope(false); branch.setCurrentFlowElement(BpmnModelUtils.getEndEvent(model));
         branch.setVariableLocal(BpmDispatchSources.BRANCH, true);
+        branch.setVariableLocal(BpmRestoredOpinion.KEY, BpmRestoredOpinion.draft(source));
         if (source.getTaskLocalVariables().get(BpmInternalDispatch.SOURCE) != null) {
             BpmInternalDispatch.prepareContext(branch, node.getId(), Long.valueOf(source.getAssignee()),
                     Collections.singletonMap(BpmInternalDispatch.SOURCE, source.getTaskLocalVariables().get(BpmInternalDispatch.SOURCE)));

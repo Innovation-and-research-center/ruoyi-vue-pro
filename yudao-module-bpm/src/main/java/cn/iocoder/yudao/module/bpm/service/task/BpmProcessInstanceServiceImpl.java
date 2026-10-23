@@ -275,6 +275,8 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                     historicProcessInstance, processInstanceStatus, activities, tasks);
             runActivityNodes = getRunApproveNodeList(startUserId, bpmnModel, processDefinition, processVariables,
                     activities, tasks);
+            cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRestoredOpinion.enrichView(tasks, endActivityNodes);
+            cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRestoredOpinion.enrichView(tasks, runActivityNodes);
         }
 
         // 2.2 流程已经结束，直接 return，无需预测

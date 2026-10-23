@@ -101,6 +101,47 @@ class BpmTaskReturnTest {
         assertEquals(d, engine.getTaskService().getVariableLocal(task(instance, "8").getId(), BpmInternalDispatch.SOURCE));
         internalBack(instance, 8, 4, d); assertNotNull(task(instance, "4"));
     }
+    @Test void internalRecoveryCanSendAgainWithoutCreatingUnassignedTask() throws Exception {
+        String instance = start(false, false); dispatch(instance);
+        String peer = task(instance, "5").getId();
+        internal(instance, 4, 8L); String e = internal(instance, 8, 9L);
+        internalBack(instance, 9, 8, e);
+        // 模拟部署/重启后重新解析模型：不能依赖上次创建会签时修改过的行为对象。
+        org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl config =
+                (org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl) engine.getProcessEngineConfiguration();
+        config.getDeploymentManager().getProcessDefinitionCache().clear();
+        internal(instance, 8, 9L);
+        assertNotNull(task(instance, "9"));
+        assertNull(task(instance, "8"));
+        assertEquals(peer, task(instance, "5").getId());
+        assertEquals(0, engine.getTaskService().createTaskQuery().processInstanceId(instance).taskUnassigned().count());
+    }
+    @Test void existingInternalRecoveryCanResolveOriginalOpinionWithoutMergingIndependentDispatch() throws Exception {
+        String instance = start(false, false); dispatch(instance); internal(instance, 4, 8L);
+        engine.getTaskService().setVariableLocal(task(instance, "8").getId(), BpmnVariableConstants.TASK_VARIABLE_REASON, "send to F");
+        String e = internal(instance, 8, 9L); internalBack(instance, 9, 8, e);
+        Task recovered = task(instance, "8");
+        // 模拟意见回填改造之前已经恢复的待办。
+        engine.getTaskService().removeVariableLocal(recovered.getId(), BpmRestoredOpinion.SOURCE_TASK);
+        engine.getTaskService().removeVariableLocal(recovered.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON);
+        List<org.flowable.task.api.history.HistoricTaskInstance> history = engine.getHistoryService()
+                .createHistoricTaskInstanceQuery().processInstanceId(instance).includeTaskLocalVariables().list();
+        cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmApprovalDetailRespVO.ActivityNode node =
+                new cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmApprovalDetailRespVO.ActivityNode();
+        node.setTasks(history.stream().map(cn.iocoder.yudao.module.bpm.convert.task.BpmProcessInstanceConvert.INSTANCE::buildApprovalTaskInfo).collect(Collectors.toList()));
+        BpmRestoredOpinion.enrichView(history, Collections.singletonList(node));
+        cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmApprovalDetailRespVO.ActivityNodeTask view =
+                node.getTasks().stream().filter(t -> recovered.getId().equals(t.getId())).findFirst().get();
+        assertEquals(e, view.getRestoredFromTaskId()); assertEquals("send to F", view.getReason());
+        assertNull(engine.getTaskService().getVariableLocal(recovered.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON));
+        // 非恢复任务虽同处这条历史链，不能得到恢复关联。
+        assertNull(node.getTasks().stream().filter(t -> e.equals(t.getId())).findFirst().get().getRestoredFromTaskId());
+        engine.getTaskService().setVariableLocal(recovered.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON, "");
+        history = engine.getHistoryService().createHistoricTaskInstanceQuery().processInstanceId(instance).includeTaskLocalVariables().list();
+        node.setTasks(history.stream().map(cn.iocoder.yudao.module.bpm.convert.task.BpmProcessInstanceConvert.INSTANCE::buildApprovalTaskInfo).collect(Collectors.toList()));
+        BpmRestoredOpinion.enrichView(history, Collections.singletonList(node));
+        assertEquals("", node.getTasks().stream().filter(t -> recovered.getId().equals(t.getId())).findFirst().get().getReason());
+    }
     @Test void internalWithdrawOnlyBeforeDirectRecipientCompletes() throws Exception {
         String instance = start(false, false); dispatch(instance); String d = internal(instance, 4, 8L); String e = internal(instance, 8, 9L);
         assertThrows(RuntimeException.class, () -> withdrawService().withdrawAll(4L, d)); assertNotNull(task(instance, "9"));
@@ -477,6 +518,25 @@ class BpmTaskReturnTest {
         assertThrows(RuntimeException.class, () -> service().targets(9L, d.getId()));
         engine.getTaskService().resolveTask(d.getId());
         back(instance, 4); assertNotNull(task(instance, "1"));
+    }
+
+    @Test void returnedTaskRestoresTargetOpinionInsteadOfReturnReason() throws Exception {
+        for (boolean legacy : new boolean[]{false, true}) {
+            String instance = start(false, false);
+            String originalTaskId = task(instance, "1").getId();
+            engine.getTaskService().setVariableLocal(task(instance, "1").getId(), BpmnVariableConstants.TASK_VARIABLE_REASON, "target opinion");
+            if (legacy) { legacyDispatch(instance); legacySubmit(instance, legacyRequest(instance)); }
+            else { dispatch(instance); back(instance, 4); }
+            Task restored = task(instance, "1");
+            assertEquals("target opinion", engine.getTaskService().getVariableLocal(restored.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON));
+            assertEquals(originalTaskId, engine.getTaskService().getVariableLocal(restored.getId(), BpmRestoredOpinion.SOURCE_TASK));
+            assertEquals(originalTaskId, cn.iocoder.yudao.module.bpm.convert.task.BpmProcessInstanceConvert.INSTANCE
+                    .buildApprovalTaskInfo(engine.getHistoryService().createHistoricTaskInstanceQuery()
+                            .taskId(restored.getId()).includeTaskLocalVariables().singleResult()).getRestoredFromTaskId());
+            engine.getTaskService().complete(restored.getId());
+            for (Task next : engine.getTaskService().createTaskQuery().processInstanceId(instance).list())
+                assertNotEquals("target opinion", engine.getTaskService().getVariableLocal(next.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON));
+        }
     }
 
     @Test void legacyProcessKeepsLegacyRulesForLaterSequentialTasks() throws Exception {

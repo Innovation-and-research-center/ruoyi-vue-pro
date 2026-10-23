@@ -2142,6 +2142,12 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     private void returnLegacyTask(Long userId, BpmnModel bpmnModel, Task currentTask, FlowElement targetElement, BpmTaskReturnReqVO reqVO) {
         String processInstanceId = currentTask.getProcessInstanceId();
         String targetTaskKey = reqVO.getTargetTaskDefinitionKey();
+        List<HistoricTaskInstance> opinionSources = historyService.createHistoricTaskInstanceQuery()
+                .processInstanceId(processInstanceId).taskDefinitionKey(targetTaskKey).finished()
+                .includeTaskLocalVariables().orderByHistoricTaskInstanceEndTime().desc().list().stream()
+                .filter(h -> BpmTaskStatusEnum.APPROVE.getStatus().equals(
+                        h.getTaskLocalVariables().get(BpmnVariableConstants.TASK_VARIABLE_STATUS)))
+                .collect(Collectors.toList());
 
         // 1. 构建需要预测的任务流程变量
         Set<String> needSimulateTaskDefinitionKeys = getNeedSimulateTaskDefinitionKeys(bpmnModel, currentTask, targetElement);
@@ -2477,6 +2483,13 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 Task newTargetTask = newTargetTasks.get(0);
                 taskService.setAssignee(newTargetTask.getId(), targetAssignee);
                 taskService.setOwner(newTargetTask.getId(), targetAssignee);
+            }
+            Set<String> previousTaskIds = allActiveTasks.stream().map(Task::getId).collect(Collectors.toSet());
+            for (Task restored : taskService.createTaskQuery().processInstanceId(processInstanceId)
+                    .taskDefinitionKey(targetTaskKey).active().list()) {
+                if (previousTaskIds.contains(restored.getId())) continue;
+                opinionSources.stream().filter(h -> Objects.equals(h.getAssignee(), restored.getAssignee()))
+                        .findFirst().ifPresent(h -> cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRestoredOpinion.copy(taskService, h, restored));
             }
         }
     }
@@ -3524,7 +3537,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     private void withdrawLegacyTask(Long userId, String taskId) {
         // 1.1 查询本人已办任务
         HistoricTaskInstance taskInstance = historyService.createHistoricTaskInstanceQuery()
-                .taskId(taskId).taskAssignee(userId.toString()).finished().singleResult();
+                .taskId(taskId).taskAssignee(userId.toString()).finished().includeTaskLocalVariables().singleResult();
         if (ObjUtil.isNull(taskInstance)) {
             throw exception(TASK_WITHDRAW_FAIL_TASK_NOT_EXISTS);
         }
@@ -3597,6 +3610,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 if (newlyCreatedTask != null) {
                     taskService.setAssignee(newlyCreatedTask.getId(), userId.toString());
                     taskService.setOwner(newlyCreatedTask.getId(), userId.toString());
+                    cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRestoredOpinion.copy(taskService, taskInstance, newlyCreatedTask);
                 }
             }
             return;
@@ -3831,6 +3845,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 taskService.setAssignee(revertedTask.getId(), userId.toString());
                 taskService.setOwner(revertedTask.getId(), userId.toString());
                 updateTaskStatus(revertedTask.getId(), BpmTaskStatusEnum.RUNNING.getStatus());
+                cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRestoredOpinion.copy(taskService, taskInstance, revertedTask);
             }
         }
     }

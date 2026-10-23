@@ -206,6 +206,9 @@ public interface BpmProcessInstanceConvert {
         }
         return BeanUtils.toBean(task, BpmApprovalDetailRespVO.ActivityNodeTask.class)
                 .setStatus(FlowableUtils.getTaskStatus(task)).setReason(FlowableUtils.getTaskReason(task))
+                .setRestoredFromTaskId(task.getTaskLocalVariables() == null ? null :
+                        (String) task.getTaskLocalVariables().get(
+                                cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRestoredOpinion.SOURCE_TASK))
                 .setSignPicUrl(FlowableUtils.getTaskSignPicUrl(task));
     }
 

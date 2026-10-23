@@ -270,6 +270,10 @@ public class BpmTaskReturnService {
             ExecutionEntity branch = CommandContextUtil.getExecutionEntityManager().createChildExecution(process);
             branch.setActive(false); branch.setScope(false); branch.setCurrentFlowElement(BpmnModelUtils.getEndEvent(model));
             branch.setVariableLocal(BpmDispatchSources.BRANCH, true);
+            List<HistoricTaskInstance> opinionSources = histories.stream()
+                    .filter(h -> assignee.toString().equals(h.getAssignee())).collect(Collectors.toList());
+            if (opinionSources.size() == 1)
+                branch.setVariableLocal(BpmRestoredOpinion.KEY, BpmRestoredOpinion.draft(opinionSources.get(0)));
             branch.setVariableLocal(SCOPE, scope);
             Map<String, Set<String>> retainedSources = new LinkedHashMap<>();
             Object inheritedSources = child.getVariable(RETAINED_SOURCES);
