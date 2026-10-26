@@ -4410,34 +4410,56 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             // 2. 校验任务存在性及权限（复用现有校验逻辑）
             Task task = validateTask(userId, taskId);
 
-            // 3. 【核心校验】判断下一节点是否为“主流程的结束节点”
-            if (!isNextNodeMainProcessEnd(task)) {
-                // 如果不满足条件，直接抛出异常，提示具体的任务名称
-                throw exception(PROCESS_INSTANCE_NOT_END, task.getName());
-            }
+            // 3. 从模型明确选择办结出线，并覆盖当前节点残留的人工转出选择。
+            Map<String, Object> completionVariables = getBatchCompletionVariables(task);
 
             // 4. 执行审批（复用现有的 approveTask 方法）
             BpmTaskApproveReqVO approveReq = new BpmTaskApproveReqVO()
                     .setId(taskId)
+                    .setNextNode("end")
+                    .setVariables(completionVariables)
                     .setReason(StrUtil.isBlank(reqVO.getReason()) ? "批量办结" : reqVO.getReason()); // 默认原因
             approveTask(userId, approveReq);
         }
     }
 
-    private boolean isNextNodeMainProcessEnd(Task task) {
-        // 1. 获取 BPMN 模型
+    private Map<String, Object> getBatchCompletionVariables(Task task) {
         BpmnModel bpmnModel = modelService.getBpmnModelByDefinitionId(task.getProcessDefinitionId());
         if (bpmnModel == null) {
-            return false;
+            throw exception(PROCESS_INSTANCE_NOT_END, task.getName());
         }
-
-        // 2. 获取当前任务节点元素
         FlowElement source = BpmnModelUtils.getFlowElementById(bpmnModel, task.getTaskDefinitionKey());
         if (!(source instanceof FlowNode)) {
-            return false;
+            throw exception(PROCESS_INSTANCE_NOT_END, task.getName());
         }
-        // 3. 通过递归向下寻找，判断是否能直接/经过网关到达主流程的结束节点
-        return checkPathToEnd((FlowNode) source, new HashSet<>());
+        // 只填写模型声明的人工路由字段，不能为办结篡改金额、审批结果等业务条件。
+        java.util.regex.Pattern manualRoute = java.util.regex.Pattern.compile(
+                "\\$\\{\\s*variables:get\\(\\s*['\"]?((?:select_node_\\d+|next_node\\d+))"
+                        + "['\"]?\\s*\\)\\s*==\\s*['\"]([^'\"]+)['\"]\\s*}");
+        Map<String, Object> variables = new LinkedHashMap<>();
+        SequenceFlow completion = null;
+        for (SequenceFlow flow : ((FlowNode) source).getOutgoingFlows()) {
+            java.util.regex.Matcher matcher = manualRoute.matcher(StrUtil.blankToDefault(flow.getConditionExpression(), "").trim());
+            boolean manual = matcher.matches();
+            if (StrUtil.isNotBlank(flow.getConditionExpression()) && !manual) {
+                throw exception(PROCESS_INSTANCE_NOT_END, task.getName());
+            }
+            if (manual) variables.put(matcher.group(1), null);
+            FlowElement target = flow.getTargetFlowElement();
+            boolean ends = target instanceof EndEvent && target.getParentContainer() instanceof Process
+                    || target instanceof Gateway && checkPathToEnd((FlowNode) target, new HashSet<>());
+            if (ends) {
+                if (completion != null) throw exception(PROCESS_INSTANCE_NOT_END, task.getName());
+                completion = flow;
+            } else if (!manual) {
+                // 无条件的其他出线无法通过人工选择关闭，不能批量办结时顺带创建新待办。
+                throw exception(PROCESS_INSTANCE_NOT_END, task.getName());
+            }
+        }
+        if (completion == null) throw exception(PROCESS_INSTANCE_NOT_END, task.getName());
+        java.util.regex.Matcher selected = manualRoute.matcher(StrUtil.blankToDefault(completion.getConditionExpression(), "").trim());
+        if (selected.matches()) variables.put(selected.group(1), selected.group(2));
+        return variables;
     }
 
     private boolean checkPathToEnd(FlowNode node, Set<String> visited) {
@@ -4449,7 +4471,8 @@ public class BpmTaskServiceImpl implements BpmTaskService {
 
         // 获取当前节点的所有流出线
         List<SequenceFlow> outgoingFlows = node.getOutgoingFlows();
-        if (CollUtil.isEmpty(outgoingFlows)) {
+        // 仅穿过无条件单出口网关；分叉或带业务条件的路径不能当作确定的办结路径。
+        if (outgoingFlows.size() != 1 || StrUtil.isNotBlank(outgoingFlows.get(0).getConditionExpression())) {
             return false;
         }
 
