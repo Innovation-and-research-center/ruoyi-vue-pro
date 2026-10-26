@@ -88,6 +88,115 @@ class BpmTaskReturnTest {
         req.setReturnAssignees(Collections.singletonList(recipient)); req.setReason("内循环补充材料");
         service().returnTask(sender, req);
     }
+    @Test void legacyInternalMissingMembersCanContinueWithoutChangingExistingTasks() {
+        String instance = start(false, false); dispatch(instance);
+        engine.getRuntimeService().removeVariableLocal(instance, BpmProcessOperationVersion.KEY);
+        Task original = task(instance, "4");
+        String root = engine.getRuntimeService().createExecutionQuery().executionId(original.getExecutionId()).singleResult().getParentId();
+        String peer = task(instance, "5").getId();
+        // 旧版已增加真实实例和计数，但没有同步节点专属的人员集合。
+        engine.getRuntimeService().addMultiInstanceExecution("target", instance,
+                Collections.singletonMap(FlowableUtils.formatExecutionCollectionElementVariable("target"), 8L));
+        // 更早版本直接指定任务办理人，未保留节点专属的成员变量。
+        engine.getRuntimeService().removeVariableLocal(task(instance, "8").getExecutionId(),
+                FlowableUtils.formatExecutionCollectionElementVariable("target"));
+        engine.getTaskService().complete(original.getId());
+        assertEquals(4, engine.getRuntimeService().getVariableLocal(root, "nrOfInstances"));
+        assertEquals(3, ((Collection<?>) engine.getRuntimeService().getVariableLocal(root,
+                FlowableUtils.formatExecutionCollectionVariable("target"))).size());
+
+        String source = internal(instance, 8, 9L);
+        assertEquals(5, engine.getRuntimeService().getVariableLocal(root, "nrOfInstances"));
+        assertEquals(source, engine.getTaskService().getVariableLocal(task(instance, "9").getId(), BpmInternalDispatch.SOURCE));
+        assertEquals(Boolean.FALSE, engine.getTaskService().getVariableLocal(task(instance, "9").getId(), BpmTaskSmsPolicy.TASK_SEND_SMS));
+        assertEquals(peer, task(instance, "5").getId());
+        assertNull(task(instance, "7"));
+        assertNull(engine.getRuntimeService().getVariableLocal(instance, BpmProcessOperationVersion.KEY));
+        engine.getTaskService().complete(task(instance, "5").getId());
+        engine.getTaskService().complete(task(instance, "6").getId());
+        assertNull(task(instance, "7"));
+        engine.getTaskService().complete(task(instance, "9").getId());
+        assertNotNull(task(instance, "7"));
+    }
+    @Test void legacyRepeatedUserKeepsInstanceCountAcrossConsecutiveInternalHandoffs() {
+        String instance = start(false, false); dispatch(instance);
+        engine.getRuntimeService().removeVariableLocal(instance, BpmProcessOperationVersion.KEY);
+        Task original = task(instance, "4");
+        String root = engine.getRuntimeService().createExecutionQuery().executionId(original.getExecutionId()).singleResult().getParentId();
+        engine.getTaskService().complete(original.getId());
+        // 同一人历史上办过一次、又被追加一次，实例总数大于去重人数。
+        engine.getRuntimeService().addMultiInstanceExecution("target", instance,
+                Collections.singletonMap(FlowableUtils.formatExecutionCollectionElementVariable("target"), 4L));
+        internal(instance, 4, 8L);
+        assertEquals(5, engine.getRuntimeService().getVariableLocal(root, "nrOfInstances"));
+        assertEquals(4, ((Collection<?>) engine.getRuntimeService().getVariableLocal(root,
+                FlowableUtils.formatExecutionCollectionVariable("target"))).size());
+        internal(instance, 8, 9L);
+        assertEquals(6, engine.getRuntimeService().getVariableLocal(root, "nrOfInstances"));
+        engine.getTaskService().complete(task(instance, "5").getId());
+        engine.getTaskService().complete(task(instance, "6").getId());
+        assertNull(task(instance, "7"));
+        engine.getTaskService().complete(task(instance, "9").getId());
+        assertNotNull(task(instance, "7"));
+    }
+    @Test void modernInternalStillRejectsInconsistentMemberCount() {
+        String instance = start(false, false); dispatch(instance);
+        Task original = task(instance, "4");
+        String root = engine.getRuntimeService().createExecutionQuery().executionId(original.getExecutionId()).singleResult().getParentId();
+        engine.getRuntimeService().addMultiInstanceExecution("target", instance,
+                Collections.singletonMap(FlowableUtils.formatExecutionCollectionElementVariable("target"), 8L));
+        RuntimeException error = assertThrows(RuntimeException.class, () -> BpmInternalDispatch.add(
+                engine.getManagementService(), engine.getRuntimeService(), original, root,
+                Collections.singletonList(9L), false, Collections.emptyMap()));
+        assertTrue(error.getMessage().contains("内循环成员计数不一致"));
+        assertEquals(4, engine.getRuntimeService().getVariableLocal(root, "nrOfInstances"));
+        assertNull(task(instance, "9"));
+        assertNotNull(task(instance, "4"));
+    }
+    @Test void legacyMissingMemberCannotBeDispatchedAgainWhileItsTaskIsRunning() {
+        String instance = start(false, false); dispatch(instance);
+        engine.getRuntimeService().removeVariableLocal(instance, BpmProcessOperationVersion.KEY);
+        Task original = task(instance, "4");
+        String root = engine.getRuntimeService().createExecutionQuery().executionId(original.getExecutionId()).singleResult().getParentId();
+        engine.getRuntimeService().addMultiInstanceExecution("target", instance,
+                Collections.singletonMap(FlowableUtils.formatExecutionCollectionElementVariable("target"), 8L));
+        String existing = task(instance, "8").getId();
+        engine.getRuntimeService().removeVariableLocal(task(instance, "8").getExecutionId(),
+                FlowableUtils.formatExecutionCollectionElementVariable("target"));
+        RuntimeException error = assertThrows(RuntimeException.class, () -> BpmInternalDispatch.add(
+                engine.getManagementService(), engine.getRuntimeService(), original, root,
+                Collections.singletonList(8L), false, Collections.emptyMap()));
+        assertTrue(error.getMessage().contains("所选人员已参与本轮办理"));
+        assertEquals(existing, task(instance, "8").getId());
+        assertEquals(4, engine.getRuntimeService().getVariableLocal(root, "nrOfInstances"));
+    }
+    @Test void legacySequentialInternalKeepsQueuedMembersInOrder() {
+        String instance = start(true, false); dispatch(instance);
+        engine.getRuntimeService().removeVariableLocal(instance, BpmProcessOperationVersion.KEY);
+        String source = internal(instance, 4, 8L);
+        assertNotNull(task(instance, "5"));
+        assertNull(task(instance, "8"));
+        engine.getTaskService().complete(task(instance, "5").getId());
+        assertNotNull(task(instance, "6"));
+        engine.getTaskService().complete(task(instance, "6").getId());
+        assertEquals(source, engine.getTaskService().getVariableLocal(task(instance, "8").getId(), BpmInternalDispatch.SOURCE));
+        engine.getTaskService().complete(task(instance, "8").getId());
+        assertNotNull(task(instance, "7"));
+    }
+    @Test void legacySequentialInconsistentQueueIsNotGuessedOrRenumbered() {
+        String instance = start(true, false); dispatch(instance);
+        engine.getRuntimeService().removeVariableLocal(instance, BpmProcessOperationVersion.KEY);
+        Task original = task(instance, "4");
+        String root = engine.getRuntimeService().createExecutionQuery().executionId(original.getExecutionId()).singleResult().getParentId();
+        engine.getRuntimeService().setVariableLocal(root, "nrOfInstances", 4);
+        RuntimeException error = assertThrows(RuntimeException.class, () -> BpmInternalDispatch.add(
+                engine.getManagementService(), engine.getRuntimeService(), original, root,
+                Collections.singletonList(8L), false, Collections.emptyMap()));
+        assertTrue(error.getMessage().contains("内循环成员计数不一致"));
+        assertEquals(original.getId(), task(instance, "4").getId());
+        assertEquals(4, engine.getRuntimeService().getVariableLocal(root, "nrOfInstances"));
+        assertNull(task(instance, "8"));
+    }
     @Test void internalChainReturnsToOriginalWithoutTouchingPeers() throws Exception {
         String instance = start(false, false); dispatch(instance); String peer = task(instance, "5").getId();
         String d = internal(instance, 4, 8L); internal(instance, 8, 9L);

@@ -76,18 +76,37 @@ public final class BpmInternalDispatch {
             Object value = root.getVariableLocal(key);
             if (!(value instanceof Collection)) throw exception(TASK_APPEND_INVALID, "内循环成员集合不完整");
             Set<Long> members = new LinkedHashSet<>(); ((Collection<?>) value).forEach(id -> members.add(Long.valueOf(id.toString())));
+            int count = ((Number) root.getVariableLocal("nrOfInstances")).intValue();
+            boolean legacy = !BpmProcessOperationVersion.isCurrent(runtime.getVariableLocal(
+                    source.getProcessInstanceId(), BpmProcessOperationVersion.KEY));
+            if (legacy && !node.getLoopCharacteristics().isSequential()) {
+                // 旧内循环/撤回可能只增加实例而漏记人员；只从当前会签的子实例补充，不混入同名分支。
+                String element = FlowableUtils.formatExecutionCollectionElementVariable(node.getId());
+                for (ExecutionEntity child : CommandContextUtil.getExecutionEntityManager()
+                        .findChildExecutionsByParentExecutionId(rootId)) {
+                    Object user = child.getVariableLocal(element);
+                    if (user != null) members.add(Long.valueOf(user.toString()));
+                    else {
+                        // 更早的任务只直接设置了办理人，没有节点专属的成员变量。
+                        for (TaskEntity task : CommandContextUtil.getTaskService().findTasksByExecutionId(child.getId())) {
+                            if (task.getAssignee() != null) members.add(Long.valueOf(task.getAssignee()));
+                        }
+                    }
+                }
+            }
             Set<Long> added = new LinkedHashSet<>(requested);
             if (added.size() != requested.size() || added.isEmpty() || added.stream().anyMatch(members::contains))
                 throw exception(TASK_APPEND_INVALID, "所选人员已参与本轮办理，不能重复派发；需要重办请使用退回");
-            int count = ((Number) root.getVariableLocal("nrOfInstances")).intValue();
-            if (members.size() != count) throw exception(TASK_APPEND_INVALID, "内循环成员计数不一致，请先核查历史数据");
+            // 旧并行会签同人可能有多个实例，去重人数不能替代真实计数；顺序会签仍需完整、有序的集合。
+            if (count < members.size() || ((!legacy || node.getLoopCharacteristics().isSequential()) && members.size() != count))
+                throw exception(TASK_APPEND_INVALID, "内循环成员计数不一致，请先核查历史数据");
             Object originsValue = root.getVariableLocal(BpmDispatchSources.SOURCES);
             Map<String, Set<String>> origins = originsValue instanceof Map ? new LinkedHashMap<>((Map<String, Set<String>>) originsValue) : new LinkedHashMap<>();
             Map<String, Object> snapshot = new LinkedHashMap<>(context); snapshot.put(SOURCE, source.getId());
             for (Long id : added) {
                 origins.put(id.toString(), Collections.singleton(source.getId())); prepareContext(root, node.getId(), id, snapshot);
             }
-            members.addAll(added); root.setVariableLocal(key, members); root.setVariableLocal("nrOfInstances", members.size());
+            members.addAll(added); root.setVariableLocal(key, members); root.setVariableLocal("nrOfInstances", count + added.size());
             root.setVariableLocal(BpmDispatchSources.SOURCES, origins);
             BpmDispatchSources.remember(root, source.getId(), node.getId(), added);
             BpmTaskSmsPolicy.prepare(runtime, rootId, Collections.singletonMap(node.getId(), added), sendSms);
