@@ -12,6 +12,7 @@ import cn.iocoder.yudao.module.bpm.controller.admin.definition.vo.group.BpmUserG
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmUserOptionsReqVO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmUserGroupDO;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmUserGroupService;
+import cn.iocoder.yudao.module.bpm.service.task.BpmDeptMemberCandidateService;
 import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserSimpleRespVO;
 import cn.iocoder.yudao.module.system.convert.user.UserConvert;
 import cn.iocoder.yudao.module.system.dal.dataobject.dept.DeptDO;
@@ -35,11 +36,15 @@ import java.util.stream.Collectors;
 
 import static cn.iocoder.yudao.framework.common.pojo.CommonResult.success;
 import static cn.iocoder.yudao.framework.common.util.collection.CollectionUtils.convertList;
+import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 
 @RestController
 @RequestMapping("/bpm/user-select")
 @Validated
 public class BpmUserSelectController {
+    @Resource
+    private BpmDeptMemberCandidateService deptMemberCandidateService;
+
     @Resource
     private BpmUserGroupService userGroupService;
 
@@ -53,7 +58,9 @@ public class BpmUserSelectController {
     @DataPermission(enable = false) // 关闭数据权限，避免查询不到用户数据。相关案例：https://gitee.com/zhijiantianya/yudao-cloud/issues/ID1UYA
     public CommonResult<List<UserSimpleRespVO>> getUserGroupPage(@Valid BpmUserOptionsReqVO reqVO) {
         List<AdminUserDO> users;
-        if(reqVO.getChooseRule().equals("role")){
+        if (BpmDeptMemberCandidateService.RULE.equals(reqVO.getChooseRule())) {
+            users = deptMemberCandidateService.getCandidates(getLoginUserId());
+        } else if(reqVO.getChooseRule().equals("role")){
             Set<Long> roleIds = StrUtils.splitToLongSet(reqVO.getRuleValue());
             users = userService.getUserListByRoleIds(roleIds);
         } else if (reqVO.getChooseRule().equals("group")) {

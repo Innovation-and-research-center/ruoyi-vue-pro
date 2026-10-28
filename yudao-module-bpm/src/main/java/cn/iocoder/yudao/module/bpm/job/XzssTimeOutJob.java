@@ -4,17 +4,17 @@ import cn.hutool.core.collection.CollUtil;
 import cn.iocoder.yudao.framework.quartz.core.handler.JobHandler;
 import cn.iocoder.yudao.framework.tenant.core.context.TenantContextHolder;
 import cn.iocoder.yudao.framework.tenant.core.job.TenantJob;
-import cn.iocoder.yudao.module.bpm.dal.dataobject.xzfy.XzfyDO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.xzss.XzssDO;
 import cn.iocoder.yudao.module.bpm.dal.mysql.xzss.XzssMapper;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
-import cn.iocoder.yudao.module.system.service.holiday.HolidayService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.engine.RuntimeService;
+import org.flowable.engine.ManagementService;
 import org.flowable.engine.TaskService;
+import org.flowable.engine.runtime.Execution;
 import org.flowable.task.api.Task;
 import org.springframework.stereotype.Component;
 
@@ -32,24 +32,25 @@ public class XzssTimeOutJob implements JobHandler {
     private XzssMapper xzssMapper;
 
     @Resource
-    private HolidayService holidayService;
-
-    @Resource
     private TaskService taskService;
 
     @Resource
     private RuntimeService runtimeService;
 
-    // BPMN中定义的“法规科(结果录入)”的任务节点 ID
-    private static final String TARGET_ACTIVITY_ID = "Activity_01ukxlz";
+    @Resource
+    private ManagementService managementService;
 
-    // 超时工作日天数阈值
+    // 新旧流程共用的汇合后“法规科办理”，仍使用 transactorUserId。
+    private static final String TARGET_ACTIVITY_ID = "Activity_01ukxlz";
+    private static final String JOIN_ACTIVITY_ID = "Gateway_1cwnri4";
+
+    // 沿用收文日期起算 15 个自然日。
     private static final int TIMEOUT_DAYS = 15;
 
     private static final String TIMEOUT_REMARK = "过期系统自动完成";
 
     private static final List<String> ALLOW_TIMEOUT_ACTIVITY_IDS = Arrays.asList(
-            "Activity_06bpq99", "Activity_16wkjql", "Activity_1q3wpn8"
+            "Activity_06bpq99", "Activity_16wkjql", "Activity_1q3wpn8", "Activity_0xurhyv"
     );
     @TenantJob
     @Override
@@ -75,7 +76,9 @@ public class XzssTimeOutJob implements JobHandler {
         int successCount = 0;
         for (XzssDO xzssDO : timeoutList) {
             try {
-                boolean jumped = jumpToTargetNode(xzssDO.getProcessInstanceId());
+                // 超时意见、状态和跳转共用事务，失败时整体回滚。
+                boolean jumped = managementService.executeCommand(
+                        context -> jumpToTargetNode(xzssDO.getProcessInstanceId()));
                 if (jumped) {
                     successCount++;
                 }
@@ -105,20 +108,32 @@ public class XzssTimeOutJob implements JobHandler {
                 .distinct()
                 .collect(Collectors.toList());
 
-        // 3. 拦截：如果当前已经在目标节点了，则不需要重复跳
-        if (currentActivityIds.size() == 1 && currentActivityIds.contains(TARGET_ACTIVITY_ID)) {
-            return false;
-        }
-
-        // ================= 【核心拦截：白名单校验】 =================
-        boolean canTimeout = currentActivityIds.stream().anyMatch(ALLOW_TIMEOUT_ACTIVITY_IDS::contains);
+        // 只处理本阶段的前期支线，不误结束后续办理或上诉阶段任务。
+        boolean canTimeout = currentActivityIds.stream().allMatch(ALLOW_TIMEOUT_ACTIVITY_IDS::contains);
 
         if (!canTimeout) {
             log.info("[XzssTimeOutJob] 实例 {} 当前节点 {} 不在允许超时的范围内（已流转到后续阶段或已结束），跳过跳转",
                     processInstanceId, currentActivityIds);
             return false;
         }
-        // =========================================================
+
+        // 包含网关上已完成、正在等待的支线（这些执行没有对应待办）。
+        List<Execution> executions = runtimeService.createExecutionQuery()
+                .processInstanceId(processInstanceId).list();
+        boolean hasOtherStage = executions.stream().map(Execution::getActivityId)
+                .filter(java.util.Objects::nonNull)
+                .anyMatch(id -> !ALLOW_TIMEOUT_ACTIVITY_IDS.contains(id) && !JOIN_ACTIVITY_ID.equals(id));
+        if (hasOtherStage) {
+            log.warn("[XzssTimeOutJob] 实例 {} 存在本阶段之外的执行节点，跳过跳转", processInstanceId);
+            return false;
+        }
+        // 合并同一父执行下的多实例根，避免按活动 ID 跳转生成多个后续办理。
+        List<String> branchExecutionIds = executions.stream()
+                .filter(execution -> processInstanceId.equals(execution.getParentId()))
+                .map(Execution::getId).collect(Collectors.toList());
+        if (branchExecutionIds.isEmpty()) {
+            return false;
+        }
 
         // ================= 【核心拦截：办理人校验】 =================
         Object transactorUserId = runtimeService.getVariable(processInstanceId, "transactorUserId");
@@ -142,7 +157,7 @@ public class XzssTimeOutJob implements JobHandler {
         // 4. 调用 Flowable 官方 API 动态移动执行实例
         runtimeService.createChangeActivityStateBuilder()
                 .processInstanceId(processInstanceId)
-                .moveActivityIdsToSingleActivityId(currentActivityIds, TARGET_ACTIVITY_ID)
+                .moveExecutionsToSingleActivityId(branchExecutionIds, TARGET_ACTIVITY_ID)
                 .changeState();
         return true;
     }

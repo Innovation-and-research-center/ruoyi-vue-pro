@@ -13,6 +13,8 @@ import cn.iocoder.yudao.module.system.service.holiday.HolidayService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.engine.RuntimeService;
+import org.flowable.engine.ManagementService;
+import org.flowable.engine.runtime.Execution;
 import org.flowable.task.api.Task;
 import org.springframework.stereotype.Component;
 import org.flowable.engine.TaskService;
@@ -39,15 +41,21 @@ public class XzfyTimeOutJob implements JobHandler {
     @Resource
     private RuntimeService runtimeService;
 
-    // BPMN中定义的“法规科(结果录入)”的任务节点 ID
+    @Resource
+    private ManagementService managementService;
+
+    // 新旧流程共用的汇合后“法规科办理”节点，办理人仍取 transactorUserId。
     private static final String TARGET_ACTIVITY_ID = "Activity_1tghx6r";
+    private static final String JOIN_ACTIVITY_ID = "Gateway_0mwzqw4";
 
     // 超时工作日天数阈值
     private static final int TIMEOUT_WORK_DAYS = 10;
 
-    private static final String TIMEOUT_REMARK = "过期系统自动取消";
+    private static final String TIMEOUT_REMARK = "超时系统自动完成";
 
-    private static final List<String> ALLOW_TIMEOUT_ACTIVITY_IDS = Arrays.asList("Activity_176l096", "Activity_0f53oqt", "Activity_0c9a0ni"
+    // 保留旧版三个节点，并兼容新版可选的“法规科人员办理”。
+    private static final List<String> ALLOW_TIMEOUT_ACTIVITY_IDS = Arrays.asList(
+            "Activity_176l096", "Activity_0f53oqt", "Activity_0c9a0ni", "Activity_1h0vaw7"
     );
     @TenantJob
     @Override
@@ -71,7 +79,7 @@ public class XzfyTimeOutJob implements JobHandler {
         for (XzfyDO xzfyDO : runningList) {
             try {
                 // 2. 计算是否超过 10 个工作日
-                // 使用 BaseDO 继承过来的 createTime 作为流程发起的基准时间
+                // 沿用收文日期起算，兼容旧流程。
                 LocalDateTime startTime = xzfyDO.getSwRq();
                 if (startTime == null) {
                     continue;
@@ -82,7 +90,9 @@ public class XzfyTimeOutJob implements JobHandler {
 
                 // 3. 判断当前时间是否已经超过了截止期限
                 if (LocalDateTime.now().isAfter(deadline)) {
-                    boolean jumped = jumpToTargetNode(xzfyDO.getProcessInstanceId());
+                    // 查询、超时意见和跳转共用引擎事务；跳转失败时不留下伪已办记录。
+                    boolean jumped = managementService.executeCommand(
+                            context -> jumpToTargetNode(xzfyDO.getProcessInstanceId()));
                     if (jumped) {
                         successCount++;
                     }
@@ -111,16 +121,39 @@ public class XzfyTimeOutJob implements JobHandler {
                 .distinct()
                 .collect(Collectors.toList());
 
-        // ================= 【核心拦截：白名单校验】 =================
-        // 检查当前所有的活动节点中，是否包含在白名单内的节点
-        boolean canTimeout = currentActivityIds.stream().anyMatch(ALLOW_TIMEOUT_ACTIVITY_IDS::contains);
+        // 只处理前期办理阶段；已进入后续办理或退回其他阶段时不强行跳转。
+        boolean canTimeout = currentActivityIds.stream().allMatch(ALLOW_TIMEOUT_ACTIVITY_IDS::contains);
 
         if (!canTimeout) {
             log.info("[XzfyTimeOutJob] 实例 {} 当前节点 {} 不在允许超时的范围内（已流转到后续阶段或已结束），跳过跳转",
                     processInstanceId, currentActivityIds);
             return false;
         }
-        // =========================================================
+
+        // 已完成的并行支线可能正在包容网关等待，没有对应任务，必须一起收拢。
+        List<Execution> executions = runtimeService.createExecutionQuery()
+                .processInstanceId(processInstanceId).list();
+        List<String> executionActivityIds = executions.stream()
+                .map(Execution::getActivityId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .collect(Collectors.toList());
+        if (executionActivityIds.stream().anyMatch(id -> !ALLOW_TIMEOUT_ACTIVITY_IDS.contains(id)
+                && !JOIN_ACTIVITY_ID.equals(id))) {
+            log.warn("[XzfyTimeOutJob] 实例 {} 存在前期办理之外的执行节点 {}，跳过跳转",
+                    processInstanceId, executionActivityIds);
+            return false;
+        }
+
+        // 按流程直属执行分支合并（包含多实例根和网关等待分支）。按活动 ID 跳转时，
+        // Flowable 会为不同多实例根分别创建目标，可能生成重复的后续办理任务。
+        List<String> branchExecutionIds = executions.stream()
+                .filter(execution -> processInstanceId.equals(execution.getParentId()))
+                .map(Execution::getId)
+                .collect(Collectors.toList());
+        if (branchExecutionIds.isEmpty()) {
+            return false;
+        }
 
         // 校验：如果没有办理人变量，直接退出不执行 (之前的防御逻辑)
         Object transactorUserId = runtimeService.getVariable(processInstanceId, "transactorUserId");
@@ -129,16 +162,15 @@ public class XzfyTimeOutJob implements JobHandler {
             return false;
         }
 
-        // ... 正常的伪装完成和跳转逻辑 ...
         for (Task task : currentTasks) {
-            taskService.addComment(task.getId(), processInstanceId, "超时系统自动完成");
+            taskService.addComment(task.getId(), processInstanceId, TIMEOUT_REMARK);
             taskService.setVariableLocal(task.getId(), BpmnVariableConstants.TASK_VARIABLE_STATUS, BpmTaskStatusEnum.APPROVE.getStatus());
-            taskService.setVariableLocal(task.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON, "超时系统自动完成");
+            taskService.setVariableLocal(task.getId(), BpmnVariableConstants.TASK_VARIABLE_REASON, TIMEOUT_REMARK);
         }
 
         runtimeService.createChangeActivityStateBuilder()
                 .processInstanceId(processInstanceId)
-                .moveActivityIdsToSingleActivityId(currentActivityIds, TARGET_ACTIVITY_ID)
+                .moveExecutionsToSingleActivityId(branchExecutionIds, TARGET_ACTIVITY_ID)
                 .changeState();
 
         return true;

@@ -9,11 +9,12 @@ import cn.iocoder.yudao.module.bpm.dal.mysql.xzss.XzssMapper;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
-import cn.iocoder.yudao.module.system.service.holiday.HolidayService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.engine.RuntimeService;
+import org.flowable.engine.ManagementService;
 import org.flowable.engine.TaskService;
+import org.flowable.engine.runtime.Execution;
 import org.flowable.task.api.Task;
 import org.springframework.stereotype.Component;
 
@@ -31,25 +32,26 @@ public class XzssAppealTimeOutJob implements JobHandler {
     private XzssMapper xzssMapper;
 
     @Resource
-    private HolidayService holidayService;
-
-    @Resource
     private TaskService taskService;
 
     @Resource
     private RuntimeService runtimeService;
 
+    @Resource
+    private ManagementService managementService;
+
     // 上诉阶段的目标节点：法规科办理(上诉)
     private static final String TARGET_ACTIVITY_ID = "Activity_0gfzyss";
+    private static final String JOIN_ACTIVITY_ID = "Gateway_0trntwd";
 
-    // 超时天数阈值 (可根据业务调整)
+    // 沿用收文日期起算 15 个自然日。
     private static final int TIMEOUT_DAYS = 15;
 
     private static final String TIMEOUT_REMARK = "上诉阶段过期系统自动完成";
 
-    // 允许触发跳转的白名单节点：局长(上诉)、分管领导(上诉)、相关单位(上诉)
+    // 保留旧流程节点，新增可选的法规科人员办理(上诉)。
     private static final List<String> ALLOW_TIMEOUT_ACTIVITY_IDS = Arrays.asList(
-            "Activity_03i9nb5", "Activity_1j3mjl5", "Activity_0c22of2"
+            "Activity_03i9nb5", "Activity_1j3mjl5", "Activity_0c22of2", "Activity_1g5bzru"
     );
 
     @TenantJob
@@ -76,7 +78,9 @@ public class XzssAppealTimeOutJob implements JobHandler {
         int successCount = 0;
         for (XzssDO xzssDO : runningList) {
             try {
-                boolean jumped = jumpToAppealTargetNode(xzssDO.getProcessInstanceId());
+                // 超时意见、状态和跳转共用事务，失败时整体回滚。
+                boolean jumped = managementService.executeCommand(
+                        context -> jumpToAppealTargetNode(xzssDO.getProcessInstanceId()));
                 if (jumped) {
                     successCount++;
                 }
@@ -103,8 +107,26 @@ public class XzssAppealTimeOutJob implements JobHandler {
                 .collect(Collectors.toList());
 
         // 1. 白名单校验：必须在指定的上诉审批节点才触发
-        boolean canTimeout = currentActivityIds.stream().anyMatch(ALLOW_TIMEOUT_ACTIVITY_IDS::contains);
+        boolean canTimeout = currentActivityIds.stream().allMatch(ALLOW_TIMEOUT_ACTIVITY_IDS::contains);
         if (!canTimeout) {
+            return false;
+        }
+
+        // 包含网关上的等待执行，并避免跨阶段强制跳转。
+        List<Execution> executions = runtimeService.createExecutionQuery()
+                .processInstanceId(processInstanceId).list();
+        boolean hasOtherStage = executions.stream().map(Execution::getActivityId)
+                .filter(java.util.Objects::nonNull)
+                .anyMatch(id -> !ALLOW_TIMEOUT_ACTIVITY_IDS.contains(id) && !JOIN_ACTIVITY_ID.equals(id));
+        if (hasOtherStage) {
+            log.warn("[XzssAppealTimeOutJob] 实例 {} 存在本阶段之外的执行节点，跳过跳转", processInstanceId);
+            return false;
+        }
+        // 同父执行的多实例根统一合并，只生成一份后续法规科办理。
+        List<String> branchExecutionIds = executions.stream()
+                .filter(execution -> processInstanceId.equals(execution.getParentId()))
+                .map(Execution::getId).collect(Collectors.toList());
+        if (branchExecutionIds.isEmpty()) {
             return false;
         }
 
@@ -126,7 +148,7 @@ public class XzssAppealTimeOutJob implements JobHandler {
 
         runtimeService.createChangeActivityStateBuilder()
                 .processInstanceId(processInstanceId)
-                .moveActivityIdsToSingleActivityId(currentActivityIds, TARGET_ACTIVITY_ID)
+                .moveExecutionsToSingleActivityId(branchExecutionIds, TARGET_ACTIVITY_ID)
                 .changeState();
 
         return true;

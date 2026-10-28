@@ -159,6 +159,9 @@ public class BpmTaskServiceImpl implements BpmTaskService {
     private BpmProcessInstanceCopyService processInstanceCopyService;
     @Resource
     private BpmModelService modelService;
+
+    @Resource
+    private BpmDeptMemberCandidateService deptMemberCandidateService;
     @Resource
     private BpmMessageService messageService;
     @Resource
@@ -979,6 +982,13 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             throw exception(PROCESS_INSTANCE_NOT_EXISTS);
         }
         BpmnModel bpmnModel = modelService.getBpmnModelByDefinitionId(task.getProcessDefinitionId());
+        Map<String, List<Long>> requestedAssignees = CollUtil.isNotEmpty(reqVO.getNextAssignees())
+                ? reqVO.getNextAssignees() : reqVO.getNextNodeAssignees();
+        if (requestedAssignees != null && requestedAssignees.keySet().stream().anyMatch(nodeId ->
+                BpmDeptMemberCandidateService.RULE.equals(BpmRegisterTaskUtils.getProperty(
+                        bpmnModel.getFlowElement(nodeId), "choose_rule")))) {
+            deptMemberCandidateService.validateSelections(userId, bpmnModel, requestedAssignees);
+        }
         boolean internalTask = taskService.getVariableLocal(task.getId(), "internal_source_task_id") != null;
         boolean restrictedInternal = processInstanceService.isRestrictedInternalOperator(userId,
                 task.getProcessDefinitionId(), task.getTaskDefinitionKey(), internalTask)
