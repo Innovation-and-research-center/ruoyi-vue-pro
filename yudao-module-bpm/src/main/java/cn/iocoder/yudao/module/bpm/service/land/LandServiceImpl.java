@@ -25,6 +25,7 @@ import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.flowable.engine.HistoryService;
+import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
 import org.flowable.task.api.DelegationState;
 import org.flowable.task.api.Task;
@@ -57,6 +58,7 @@ public class LandServiceImpl implements LandService {
     @Resource private BpmRegisterTaskService registerTaskService;
     @Resource private TaskService taskService;
     @Resource private HistoryService historyService;
+    @Resource private RuntimeService runtimeService;
     @Resource private AdminUserApi userApi;
     @Resource private DeptApi deptApi;
 
@@ -87,6 +89,7 @@ public class LandServiceImpl implements LandService {
         land.setProcessInstanceId(processId);
         landMapper.updateById(new LandDO().setId(land.getId()).setProcessInstanceId(processId)
                 .setFilepath(land.getFilepath()));
+        syncProcessName(land);
         if (registerTaskService.claim(userId, processId) != 1) throw exception(LAND_REGISTER_NOT_ACTIVE);
         return saveResult(land, requireRegistration(userId, land));
     }
@@ -174,7 +177,7 @@ public class LandServiceImpl implements LandService {
 
     private Map<String, Object> variables(LandDO land) {
         Map<String, Object> variables = new HashMap<>();
-        variables.put(PROCESS_CUSTOM_NAME, "土地用途认定：" + land.getProjectName());
+        variables.put(PROCESS_CUSTOM_NAME, land.getProjectName());
         variables.put("projectName", land.getProjectName());
         variables.put("location", land.getLocation());
         variables.put("deptOpinion", land.getDeptOpinion());
@@ -207,6 +210,13 @@ public class LandServiceImpl implements LandService {
         land.setFilepath(syncAttachments(userId, land.getId(), request.getFileList()));
         landMapper.updateById(new LandDO().setId(land.getId()).setProjectName(land.getProjectName())
                 .setLocation(land.getLocation()).setDeptOpinion(land.getDeptOpinion()).setFilepath(land.getFilepath()));
+        syncProcessName(land);
+    }
+
+    private void syncProcessName(LandDO land) {
+        // 业务保存、标题变量和引擎流程名称同事务更新，避免只修改表单或只在发送时生效。
+        runtimeService.setVariables(land.getProcessInstanceId(), variables(land));
+        runtimeService.setProcessInstanceName(land.getProcessInstanceId(), land.getProjectName());
     }
 
     private Map<Long, FileDO> files(Collection<Long> ids) {

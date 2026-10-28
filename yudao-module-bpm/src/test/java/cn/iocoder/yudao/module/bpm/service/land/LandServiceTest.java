@@ -17,6 +17,7 @@ import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
 import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserSimpleRespVO;
 import org.flowable.engine.HistoryService;
+import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
 import org.flowable.task.api.Task;
 import org.flowable.task.api.TaskQuery;
@@ -45,6 +46,7 @@ class LandServiceTest {
     private final BpmRegisterTaskService registration = mock(BpmRegisterTaskService.class);
     private final TaskService tasks = mock(TaskService.class);
     private final HistoryService history = mock(HistoryService.class);
+    private final RuntimeService runtime = mock(RuntimeService.class);
     private final TaskQuery query = mock(TaskQuery.class, RETURNS_SELF);
     private final Task task = mock(Task.class);
     private final AdminUserApi users = mock(AdminUserApi.class);
@@ -59,6 +61,7 @@ class LandServiceTest {
         ReflectionTestUtils.setField(service, "registerTaskService", registration);
         ReflectionTestUtils.setField(service, "taskService", tasks);
         ReflectionTestUtils.setField(service, "historyService", history);
+        ReflectionTestUtils.setField(service, "runtimeService", runtime);
         ReflectionTestUtils.setField(service, "userApi", users);
         ReflectionTestUtils.setField(service, "deptApi", mock(DeptApi.class));
         when(tasks.createTaskQuery()).thenReturn(query);
@@ -90,7 +93,8 @@ class LandServiceTest {
         verify(processes).createProcessInstance(eq(7L), process.capture());
         assertEquals(PROCESS_KEY, process.getValue().getProcessDefinitionKey());
         assertEquals("10", process.getValue().getBusinessKey());
-        assertEquals("土地用途认定：测试项目", process.getValue().getVariables().get(PROCESS_CUSTOM_NAME));
+        assertEquals("测试项目", process.getValue().getVariables().get(PROCESS_CUSTOM_NAME));
+        verify(runtime).setProcessInstanceName("process-10", "测试项目");
     }
 
     @Test
@@ -108,6 +112,18 @@ class LandServiceTest {
         assertEquals(10L, service.save(7L, request()).getId());
         verifyNoInteractions(processes, registration);
         verify(lands).selectForUpdate(10L);
+        verify(runtime).setProcessInstanceName("process-10", "测试项目");
+    }
+
+    @Test
+    void updateSynchronizesTrimmedProjectNameAndTitleVariablesWithoutChangingProcessIdentity() {
+        service.update(7L, request().setProjectName("  修改后的项目  "));
+        verify(runtime).setProcessInstanceName("process-10", "修改后的项目");
+        ArgumentCaptor<Map<String, Object>> variables = ArgumentCaptor.forClass(Map.class);
+        verify(runtime).setVariables(eq("process-10"), variables.capture());
+        assertEquals("修改后的项目", variables.getValue().get(PROCESS_CUSTOM_NAME));
+        assertEquals("修改后的项目", variables.getValue().get("projectName"));
+        verifyNoInteractions(processes, registration);
     }
 
     @Test
@@ -123,6 +139,8 @@ class LandServiceTest {
                 variables.getValue().get(PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES));
         assertFalse(variables.getValue().containsKey(PROCESS_INSTANCE_VARIABLE_START_USER_ID));
         assertFalse(variables.getValue().containsKey("nrOfInstances"));
+        assertEquals("测试项目", variables.getValue().get(PROCESS_CUSTOM_NAME));
+        verify(runtime).setProcessInstanceName("process-10", "测试项目");
         verify(lands).selectForUpdate(10L);
     }
 

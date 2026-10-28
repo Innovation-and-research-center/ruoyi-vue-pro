@@ -44,15 +44,19 @@ public class BpmSequentialMultiInstanceBehavior extends SequentialMultiInstanceB
     protected int resolveNrOfInstances(DelegateExecution execution) {
         // 情况一：UserTask 节点
         if (execution.getCurrentFlowElement() instanceof UserTask) {
-            if (BpmRegisterTaskUtils.isRegisterTask(execution)) {
-                return 1;
-            }
             // 第一步，设置 collectionVariable 和 CollectionVariable
             // 从  execution.getVariable() 读取所有任务处理人的 key
             super.collectionExpression = null; // collectionExpression 和 collectionVariable 是互斥的
             super.collectionVariable = FlowableUtils.formatExecutionCollectionVariable(execution.getCurrentActivityId());
             // 从 execution.getVariable() 读取当前所有任务处理的人的 key
             super.collectionElementVariable = FlowableUtils.formatExecutionCollectionElementVariable(execution.getCurrentActivityId());
+
+            if (BpmRegisterTaskUtils.isRegisterTask(execution)) {
+                // 登记仍只生成一份共享候选任务，但串行行为执行前必须能解析集合。
+                // 实际候选人由 BpmUserTaskActivityBehavior 计算，此处仅提供一个实例占位。
+                execution.setVariableLocal(super.collectionVariable, SetUtils.asSet((Long) null));
+                return 1;
+            }
 
             // 第二步，获取任务的所有处理人
             // 不使用 execution.getVariable 原因：目前依次审批任务回退后 collectionVariable 变量没有清理， 如果重新进入该任务不会重新分配审批人
