@@ -2073,19 +2073,14 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
 
     @Override
-    @DataPermission(enable = false) // 与选人列表保持一致，候选范围由节点规则和部门关系控制
     public boolean isRestrictedInternalOperator(Long userId, String definitionId, String nodeId, boolean internalTask) {
         if (!internalTask) return false;
         FlowElement node = processDefinitionService.getProcessDefinitionBpmnModel(definitionId).getFlowElement(nodeId);
         CandidateRule rule = parseCandidateRule(parseAllProperties(node));
-        List<AdminUserDO> candidates = BpmDeptMemberCandidateService.RULE.equals(rule.getType())
-                ? deptMemberCandidateService.getCandidates(userId)
-                : getCandidateUsers(rule.getType(), rule.getValue());
-        return candidates.stream().noneMatch(user -> Objects.equals(userId, user.getId()));
+        return getCandidateUsers(rule.getType(), rule.getValue()).stream().noneMatch(user -> Objects.equals(userId, user.getId()));
     }
 
     @Override
-    @DataPermission(enable = false) // 提交校验不能比选人列表额外过滤合法候选人
     public Set<Long> getInternalLoopCandidateUserIds(Long userId, String definitionId, String nodeId, boolean internalTask) {
         FlowElement node = processDefinitionService.getProcessDefinitionBpmnModel(definitionId).getFlowElement(nodeId);
         Map<String, String> properties = parseAllProperties(node);
@@ -2094,10 +2089,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         Set<Long> result = new LinkedHashSet<>();
         if (!restricted) {
             CandidateRule rule = parseCandidateRule(properties);
-            List<AdminUserDO> candidates = BpmDeptMemberCandidateService.RULE.equals(rule.getType())
-                    ? deptMemberCandidateService.getCandidates(userId)
-                    : getCandidateUsers(rule.getType(), rule.getValue());
-            candidates.forEach(user -> result.add(user.getId()));
+            getCandidateUsers(rule.getType(), rule.getValue()).forEach(user -> result.add(user.getId()));
         }
         AdminUserDO operator = userService.getUser(userId);
         if (operator != null && operator.getDeptId() != null) {

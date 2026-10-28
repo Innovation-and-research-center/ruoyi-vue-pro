@@ -33,6 +33,12 @@ public interface ErrorCodeConstants {
 
     ErrorCode FILE_EXCHANGE_NOT_EXISTS = new ErrorCode(1_009_027_001, "文件交换不存在");
 
+    ErrorCode LAND_NOT_EXISTS = new ErrorCode(1_009_028_001, "土地用途认定办件不存在");
+    ErrorCode LAND_REGISTER_NOT_ACTIVE = new ErrorCode(1_009_028_002, "当前办件不在本人登记环节，不能修改或重复发送");
+    ErrorCode LAND_ACCESS_DENIED = new ErrorCode(1_009_028_003, "无权查看该土地用途认定办件");
+    ErrorCode LAND_ASSIGNEES_INVALID = new ErrorCode(1_009_028_004, "请选择当前主办科室候选范围内的有效办理人");
+    ErrorCode LAND_ATTACHMENT_INVALID = new ErrorCode(1_009_028_005, "附件不存在或无权关联，请重新上传");
+
     // ========== 流程模型 1-009-002-000 ==========
     ErrorCode MODEL_KEY_EXISTS = new ErrorCode(1_009_002_000, "已经存在流程标识为【{}】的流程");
     ErrorCode MODEL_NOT_EXISTS = new ErrorCode(1_009_002_001, "流程模型不存在");

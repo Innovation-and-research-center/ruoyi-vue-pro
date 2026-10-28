@@ -82,6 +82,7 @@ yudao-module-bpm/src/main/resources/templates/
 !/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/service/task/BpmReceivedUsersRoundTest.java
 !/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/service/task/BpmRestoredDispatchTest.java
 !/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/service/task/BpmDeptMemberCandidateServiceTest.java
+!/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/service/land/*.java
 !/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/job/ForestryAttachmentFileNameTest.java
 !/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/job/XzfyTimeOutJobTest.java
 !/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/job/XzssTimeOutJobTest.java

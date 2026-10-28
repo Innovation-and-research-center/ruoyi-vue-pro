@@ -8,11 +8,6 @@ import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmNextTask
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmUserOptionsReqVO;
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskApproveReqVO;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmModelService;
-import cn.iocoder.yudao.module.bpm.service.definition.BpmUserGroupService;
-import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmUserGroupDO;
-import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
-import cn.iocoder.yudao.framework.datapermission.core.aop.DataPermissionAnnotationAdvisor;
-import cn.iocoder.yudao.framework.datapermission.core.aop.DataPermissionContextHolder;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmProcessDefinitionService;
 import cn.iocoder.yudao.module.infra.api.config.ConfigApi;
 import cn.iocoder.yudao.module.system.dal.dataobject.dept.DeptDO;
@@ -26,7 +21,6 @@ import org.flowable.bpmn.model.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 
@@ -179,72 +173,6 @@ class BpmDeptMemberCandidateServiceTest {
                 new BpmTaskApproveReqVO().setId("current").setNextNodeAssignees(selection(99L))));
         assertThrows(ServiceException.class, () -> tasks.approveTask(1L,
                 new BpmTaskApproveReqVO().setId("current").setNextAssignees(selection(99L))));
-    }
-
-    @Test
-    void internalLoopAcceptsSecondaryDepartmentMembersWithoutRuleValue() {
-        when(users.getUser(1L)).thenReturn(user(1L, 10L, 0));
-        when(users.getUserDeptIds(1L)).thenReturn(Collections.singleton(20L));
-        when(users.getUserListByDeptIds(Collections.singleton(10L)))
-                .thenReturn(Collections.singletonList(user(1L, 10L, 0)));
-        when(users.getUserListByDeptIds(Collections.singleton(20L)))
-                .thenReturn(Arrays.asList(user(22L, 99L, 0), user(23L, 20L, 1)));
-        BpmnModel model = model("dept_members");
-        model.getFlowElement("staff").getExtensionElements().get("properties").get(0)
-                .addChildElement(property("loop_flag", "1"));
-        BpmProcessInstanceServiceImpl instances = internalLoopService(model);
-
-        assertFalse(instances.isRestrictedInternalOperator(1L, "definition", "staff", true));
-        for (boolean internalTask : Arrays.asList(false, true)) {
-            assertEquals(new HashSet<>(Arrays.asList(1L, 22L)),
-                    instances.getInternalLoopCandidateUserIds(1L, "definition", "staff", internalTask));
-        }
-    }
-
-    @Test
-    void departmentRuleDoesNotEnableLoopWhenFlagIsOff() {
-        BpmProcessInstanceServiceImpl instances = internalLoopService(model("dept_members"));
-        assertTrue(instances.getInternalLoopCandidateUserIds(1L, "definition", "staff", false).isEmpty());
-        verifyNoInteractions(users);
-    }
-
-    @Test
-    void submissionQueriesUseSameDataPermissionScopeAsCandidateListAndRestoreContext() {
-        BpmnModel model = model("group");
-        ExtensionElement properties = model.getFlowElement("staff").getExtensionElements().get("properties").get(0);
-        properties.addChildElement(property("rule_value", "7"));
-        properties.addChildElement(property("loop_flag", "1"));
-        BpmProcessInstanceServiceImpl instances = internalLoopService(model);
-        BpmUserGroupService groups = mock(BpmUserGroupService.class);
-        ReflectionTestUtils.setField(instances, "userGroupService", groups);
-        when(groups.getUserGroupList(Collections.singleton(7L))).thenReturn(Collections.singletonList(
-                new BpmUserGroupDO()
-                        .setId(7L).setUserIds(new HashSet<>(Arrays.asList(1L, 40L)))));
-        when(users.getUserList(new HashSet<>(Arrays.asList(1L, 40L)))).thenAnswer(invocation -> {
-            DataPermission permission = DataPermissionContextHolder.get();
-            // 模拟普通数据权限会过滤掉当前节点中其他部门的合法成员。
-            return permission != null && !permission.enable()
-                    ? Arrays.asList(user(1L, 10L, 0), user(40L, 20L, 0)) : Collections.emptyList();
-        });
-        ProxyFactory factory = new ProxyFactory(instances);
-        factory.setProxyTargetClass(true);
-        factory.addAdvisor(new DataPermissionAnnotationAdvisor());
-        BpmProcessInstanceServiceImpl proxy = (BpmProcessInstanceServiceImpl) factory.getProxy();
-
-        assertFalse(proxy.isRestrictedInternalOperator(1L, "definition", "staff", true));
-        assertEquals(new HashSet<>(Arrays.asList(1L, 40L)),
-                proxy.getInternalLoopCandidateUserIds(1L, "definition", "staff", true));
-        assertNull(DataPermissionContextHolder.get());
-    }
-
-    private BpmProcessInstanceServiceImpl internalLoopService(BpmnModel model) {
-        BpmProcessInstanceServiceImpl instances = new BpmProcessInstanceServiceImpl();
-        BpmProcessDefinitionService definitions = mock(BpmProcessDefinitionService.class);
-        ReflectionTestUtils.setField(instances, "processDefinitionService", definitions);
-        ReflectionTestUtils.setField(instances, "deptMemberCandidateService", service);
-        ReflectionTestUtils.setField(instances, "userService", users);
-        when(definitions.getProcessDefinitionBpmnModel("definition")).thenReturn(model);
-        return instances;
     }
 
     static BpmnModel model(String rule) {
