@@ -2073,6 +2073,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
 
     @Override
+    @DataPermission(enable = false) // 与选人列表保持一致，避免合法节点成员被数据权限过滤
     public boolean isRestrictedInternalOperator(Long userId, String definitionId, String nodeId, boolean internalTask) {
         if (!internalTask) return false;
         FlowElement node = processDefinitionService.getProcessDefinitionBpmnModel(definitionId).getFlowElement(nodeId);
@@ -2081,6 +2082,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
     }
 
     @Override
+    @DataPermission(enable = false) // 候选范围由节点规则和部门关系控制，与选人列表保持一致
     public Set<Long> getInternalLoopCandidateUserIds(Long userId, String definitionId, String nodeId, boolean internalTask) {
         FlowElement node = processDefinitionService.getProcessDefinitionBpmnModel(definitionId).getFlowElement(nodeId);
         Map<String, String> properties = parseAllProperties(node);
