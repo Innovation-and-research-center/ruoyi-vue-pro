@@ -2,6 +2,8 @@ package cn.iocoder.yudao.module.bpm.service.commentattach;
 
 import cn.hutool.core.collection.CollUtil;
 import org.springframework.stereotype.Service;
+import cn.iocoder.yudao.module.bpm.service.land.LandTaskAttachmentService;
+import static cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils.getLoginUserId;
 import javax.annotation.Resource;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,8 +34,12 @@ public class CommentAttachServiceImpl implements CommentAttachService {
     @Resource
     private CommentAttachMapper commentAttachMapper;
 
+    @Resource
+    private LandTaskAttachmentService landTaskAttachmentService;
+
     @Override
     public Long createCommentAttach(CommentAttachSaveReqVO createReqVO) {
+        if (LandTaskAttachmentService.DOC_TYPE.equals(createReqVO.getDocType())) throw exception(LAND_ACCESS_DENIED);
         // 插入
         CommentAttachDO commentAttach = BeanUtils.toBean(createReqVO, CommentAttachDO.class);
         commentAttachMapper.insert(commentAttach);
@@ -46,6 +52,10 @@ public class CommentAttachServiceImpl implements CommentAttachService {
     public void updateCommentAttach(CommentAttachSaveReqVO updateReqVO) {
         // 校验存在
         validateCommentAttachExists(updateReqVO.getId());
+        if (LandTaskAttachmentService.DOC_TYPE.equals(updateReqVO.getDocType())
+                || LandTaskAttachmentService.DOC_TYPE.equals(commentAttachMapper.selectById(updateReqVO.getId()).getDocType())) {
+            throw exception(LAND_ACCESS_DENIED);
+        }
         // 更新
         CommentAttachDO updateObj = BeanUtils.toBean(updateReqVO, CommentAttachDO.class);
         commentAttachMapper.updateById(updateObj);
@@ -55,13 +65,21 @@ public class CommentAttachServiceImpl implements CommentAttachService {
     public void deleteCommentAttach(Long id) {
         // 校验存在
         validateCommentAttachExists(id);
+        if (LandTaskAttachmentService.DOC_TYPE.equals(commentAttachMapper.selectById(id).getDocType())) {
+            landTaskAttachmentService.delete(getLoginUserId(), id);
+            return;
+        }
         // 删除
         commentAttachMapper.deleteById(id);
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
         public void deleteCommentAttachListByIds(List<Long> ids) {
         // 删除
+        for (CommentAttachDO attachment : commentAttachMapper.selectBatchIds(ids)) {
+            if (LandTaskAttachmentService.DOC_TYPE.equals(attachment.getDocType())) throw exception(LAND_ACCESS_DENIED);
+        }
         commentAttachMapper.deleteByIds(ids);
         }
 
@@ -74,17 +92,26 @@ public class CommentAttachServiceImpl implements CommentAttachService {
 
     @Override
     public CommentAttachDO getCommentAttach(Long id) {
-        return commentAttachMapper.selectById(id);
+        CommentAttachDO attachment = commentAttachMapper.selectById(id);
+        if (attachment != null && LandTaskAttachmentService.DOC_TYPE.equals(attachment.getDocType())) {
+            landTaskAttachmentService.validateRead(getLoginUserId(), attachment.getDocId());
+        }
+        return attachment;
     }
 
     @Override
     public PageResult<CommentAttachDO> getCommentAttachPage(CommentAttachPageReqVO pageReqVO) {
-        return commentAttachMapper.selectPage(pageReqVO);
+        PageResult<CommentAttachDO> page = commentAttachMapper.selectPage(pageReqVO);
+        page.getList().stream().filter(a -> LandTaskAttachmentService.DOC_TYPE.equals(a.getDocType()))
+                .map(CommentAttachDO::getDocId).distinct()
+                .forEach(docId -> landTaskAttachmentService.validateRead(getLoginUserId(), docId));
+        return page;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void saveCommentAttachList(String docId, String docType, List<CommentAttachDO> list) {
+        if (LandTaskAttachmentService.DOC_TYPE.equals(docType)) throw exception(LAND_ACCESS_DENIED);
         if (list == null) {
             list = new ArrayList<>();
         }
@@ -122,6 +149,9 @@ public class CommentAttachServiceImpl implements CommentAttachService {
 
     @Override
     public List<CommentAttachDO> getCommentAttachList(String docId, String docType) {
+        if (LandTaskAttachmentService.DOC_TYPE.equals(docType)) {
+            landTaskAttachmentService.validateRead(getLoginUserId(), docId);
+        }
         // 核心修改：追加 docType 过滤
         return commentAttachMapper.selectList(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<CommentAttachDO>()
@@ -133,6 +163,7 @@ public class CommentAttachServiceImpl implements CommentAttachService {
 
     @Override
     public void deleteCommentAttach(String docId, String docType) {
+        if (LandTaskAttachmentService.DOC_TYPE.equals(docType)) throw exception(LAND_ACCESS_DENIED);
         // 核心修改：追加 docType 过滤
         commentAttachMapper.delete(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<CommentAttachDO>()
