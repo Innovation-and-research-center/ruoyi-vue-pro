@@ -43,7 +43,9 @@ public class BpmDeptMemberCandidateService {
         for (Long deptId : deptIds) {
             // 按实际成员关系查询，兼任人员显示在共同科室，而非其账号的其他主部门。
             for (AdminUserDO member : userService.getUserListByDeptIds(Collections.singleton(deptId))) {
-                if (CommonStatusEnum.ENABLE.getStatus().equals(member.getStatus())) {
+                // 无论成员展示在哪个部门，都按用户编号排除当前办理人。
+                if (!Objects.equals(operatorId, member.getId())
+                        && CommonStatusEnum.ENABLE.getStatus().equals(member.getStatus())) {
                     candidates.putIfAbsent(member.getId(),
                             BeanUtils.toBean(member, AdminUserDO.class).setDeptId(deptId));
                 }
@@ -70,7 +72,7 @@ public class BpmDeptMemberCandidateService {
                 }
             }
             if (selection.getValue() != null && !allowed.containsAll(selection.getValue())) {
-                throw exception(TASK_APPEND_INVALID, "部门人员只能选择当前办理人主部门或兼任科室的有效人员");
+                throw exception(TASK_APPEND_INVALID, "部门人员只能选择当前办理人主部门或兼任科室的其他有效人员，不能选择本人");
             }
         }
     }

@@ -47,15 +47,60 @@ class BpmDeptMemberCandidateServiceTest {
         when(users.getUserDeptIds(1L)).thenReturn(Collections.singleton(20L));
         AdminUserDO shared = user(3L, 99L, 0);
         when(users.getUserListByDeptIds(Collections.singleton(10L)))
-                .thenReturn(Arrays.asList(user(2L, 10L, 0), shared, user(4L, 10L, 1)));
+                .thenReturn(Arrays.asList(user(1L, 10L, 0), user(2L, 10L, 0), shared, user(4L, 10L, 1)));
         when(users.getUserListByDeptIds(Collections.singleton(20L)))
-                .thenReturn(Arrays.asList(shared, user(5L, 99L, 0)));
+                .thenReturn(Arrays.asList(user(1L, 10L, 0), shared, user(5L, 99L, 0)));
 
         List<AdminUserDO> result = service.getCandidates(1L);
         assertEquals(Arrays.asList(2L, 3L, 5L), ids(result));
         assertEquals(Arrays.asList(10L, 10L, 20L),
                 result.stream().map(AdminUserDO::getDeptId).collect(Collectors.toList()));
         assertEquals(99L, shared.getDeptId(), "展示分组不得修改原用户数据");
+    }
+
+    @Test
+    void excludesOperatorEvenWhenOnlySecondaryDepartmentReturnsThem() {
+        AdminUserDO operator = user(1L, 10L, 0);
+        when(users.getUser(1L)).thenReturn(operator);
+        when(users.getUserDeptIds(1L)).thenReturn(Collections.singleton(20L));
+        when(users.getUserListByDeptIds(Collections.singleton(10L)))
+                .thenReturn(Collections.singletonList(user(2L, 10L, 0)));
+        when(users.getUserListByDeptIds(Collections.singleton(20L)))
+                .thenReturn(Arrays.asList(operator, user(3L, 20L, 0)));
+        assertEquals(Arrays.asList(2L, 3L), ids(service.getCandidates(1L)));
+        assertEquals(10L, operator.getDeptId(), "不能修改原始主部门");
+    }
+
+    @Test
+    void departmentRuleRejectsSelfSubmittedDirectlyOrMixedWithValidMembers() {
+        when(users.getUser(1L)).thenReturn(user(1L, 10L, 0));
+        when(users.getUserDeptIds(1L)).thenReturn(Collections.singleton(20L));
+        when(users.getUserListByDeptIds(Collections.singleton(20L)))
+                .thenReturn(Arrays.asList(user(1L, 10L, 0), user(2L, 20L, 0)));
+        assertThrows(ServiceException.class, () -> service.validateSelections(1L, model("dept_members"), selection(1L)));
+        assertThrows(ServiceException.class, () -> service.validateSelections(1L, model("dept_members"), selection(2L, 1L)));
+        assertDoesNotThrow(() -> service.validateSelections(1L, model("dept_members"), selection(2L)));
+    }
+
+    @Test
+    void fallbackEndpointAlsoExcludesOperatorFromSecondaryDepartment() {
+        when(users.getUser(1L)).thenReturn(user(1L, 10L, 0));
+        when(users.getUserDeptIds(1L)).thenReturn(Collections.singleton(20L));
+        when(users.getUserListByDeptIds(Collections.singleton(20L)))
+                .thenReturn(Arrays.asList(user(1L, 10L, 0), user(2L, 20L, 0)));
+        BpmUserSelectController controller = new BpmUserSelectController();
+        ReflectionTestUtils.setField(controller, "deptMemberCandidateService", service);
+        ReflectionTestUtils.setField(controller, "deptService", mock(DeptService.class));
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new LoginUser().setId(1L), null));
+        try {
+            assertEquals(Collections.singletonList(2L), controller.getUserGroupPage(new BpmUserOptionsReqVO()
+                    .setChooseRule("dept_members")).getData().stream()
+                    .map(cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserSimpleRespVO::getId)
+                    .collect(Collectors.toList()));
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
     }
 
     @Test
