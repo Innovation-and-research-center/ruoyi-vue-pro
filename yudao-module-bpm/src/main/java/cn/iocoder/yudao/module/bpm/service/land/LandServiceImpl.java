@@ -4,6 +4,8 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.util.object.BeanUtils;
+import cn.iocoder.yudao.framework.common.pojo.PageResult;
+import cn.iocoder.yudao.module.system.api.permission.PermissionApi;
 import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
@@ -17,6 +19,10 @@ import cn.iocoder.yudao.module.bpm.dal.mysql.land.LandMapper;
 import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
 import cn.iocoder.yudao.module.bpm.service.task.BpmProcessInstanceService;
 import cn.iocoder.yudao.module.bpm.service.task.BpmRegisterTaskService;
+import cn.iocoder.yudao.module.bpm.dal.mysql.task.BpmTaskSortMapper;
+import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
 import cn.iocoder.yudao.module.infra.dal.dataobject.file.FileDO;
 import cn.iocoder.yudao.module.infra.dal.mysql.file.FileMapper;
 import cn.iocoder.yudao.module.system.api.dept.DeptApi;
@@ -44,7 +50,7 @@ import static cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVari
 
 @Service
 @Validated
-@DataPermission(enable = false) // 数据权限由下方登记任务/流程参与关系校验；租户过滤仍生效。
+@DataPermission(enable = false) // 按登记任务、流程参与关系及管理操作权限校验；租户过滤仍生效。
 public class LandServiceImpl implements LandService {
     public static final String PROCESS_KEY = "lang_use";
     public static final String REGISTER_NODE = "Activity_1waprli";
@@ -61,6 +67,11 @@ public class LandServiceImpl implements LandService {
     @Resource private RuntimeService runtimeService;
     @Resource private AdminUserApi userApi;
     @Resource private DeptApi deptApi;
+    @Resource private PermissionApi permissionApi;
+    @Resource private BpmTaskSortMapper taskSortMapper;
+    @Resource private BpmInvalidateHelper invalidateHelper;
+    @Resource private BpmUpdateOperateLogService updateLogService;
+    @Resource private BpmDeleteOperateLogService deleteLogService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -104,6 +115,40 @@ public class LandServiceImpl implements LandService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    public void managementUpdate(Long userId, LandSaveReqVO request) {
+        requirePermission(userId, "bpm:land:update");
+        LandDO land = requireLand(request.getId(), true);
+        LandDO oldData = BeanUtils.toBean(land, LandDO.class);
+        List<LandAttachDO> oldAttachments = landAttachMapper.selectByLandId(land.getId());
+        updateData(userId, land, request, true);
+        updateLogService.recordUpdate("土地用途认定", land.getId(), oldData, land,
+                oldAttachments, landAttachMapper.selectByLandId(land.getId()));
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void delete(Long userId, Long id, String reason) {
+        requirePermission(userId, "bpm:land:delete");
+        if (StrUtil.isBlank(reason)) throw exception(LAND_DELETE_REASON_REQUIRED);
+        LandDO land = requireLand(id, true);
+        if (Objects.equals(land.getStatus(), BpmProcessInstanceStatusEnum.INVALID.getStatus())
+                || Objects.equals(land.getStatus(), BpmProcessInstanceStatusEnum.CANCEL.getStatus())) {
+            throw exception(LAND_CANNOT_DELETE);
+        }
+        invalidateHelper.executeInvalidate(userId, land.getProcessInstanceId(), land.getStatus(), reason.trim(),
+                () -> landMapper.updateById(new LandDO().setId(id)
+                        .setStatus(BpmProcessInstanceStatusEnum.INVALID.getStatus())));
+        deleteLogService.recordDelete("土地用途认定", id, reason.trim());
+    }
+
+    private void requirePermission(Long userId, String permission) {
+        if (userId == null || !permissionApi.hasAnyPermissions(userId, permission)) {
+            throw exception(LAND_ACCESS_DENIED);
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
     public void submit(Long userId, LandSaveReqVO request) {
         // 同一办件串行校验登记任务，防止重复点击/并发提交重复派发。
         LandDO land = requireLand(request.getId(), true);
@@ -117,12 +162,25 @@ public class LandServiceImpl implements LandService {
     }
 
     @Override
+    public PageResult<LandPageRespVO> getPage(Long userId, LandPageReqVO request) {
+        // 与业务管理列表一致，查询授权用户可查看当前租户办件；不授予办理、修改权限。
+        if (!canManage(userId)) throw exception(LAND_ACCESS_DENIED);
+        return BeanUtils.toBean(landMapper.selectPage(request), LandPageRespVO.class);
+    }
+
+    private boolean canManage(Long userId) {
+        return userId != null && permissionApi.hasAnyPermissions(userId, "bpm:land:query");
+    }
+
+    @Override
     public LandDetailRespVO get(Long userId, Long id) {
         LandDO land = requireLand(id, false);
         if (!Objects.equals(userId, land.getUserId()) && (userId == null
                 || StrUtil.isBlank(land.getProcessInstanceId())
                 || historyService.createHistoricTaskInstanceQuery().processInstanceId(land.getProcessInstanceId())
-                .or().taskAssignee(String.valueOf(userId)).taskOwner(String.valueOf(userId)).endOr().count() == 0)) {
+                .or().taskAssignee(String.valueOf(userId)).taskOwner(String.valueOf(userId)).endOr().count() == 0)
+                && !canManage(userId)
+                && (userId == null || !permissionApi.hasAnyPermissions(userId, "bpm:land:update"))) {
             throw exception(LAND_ACCESS_DENIED);
         }
         LandDetailRespVO result = BeanUtils.toBean(land, LandDetailRespVO.class);
@@ -145,7 +203,8 @@ public class LandServiceImpl implements LandService {
         // 初次创建事件可能早于业务流程编号回写；已初始化为运行中，无需覆盖。
         if (id == null || StrUtil.isBlank(processInstanceId) || status == null) return;
         landMapper.update(new LandDO().setStatus(status), new LambdaQueryWrapper<LandDO>()
-                .eq(LandDO::getId, id).eq(LandDO::getProcessInstanceId, processInstanceId));
+                .eq(LandDO::getId, id).eq(LandDO::getProcessInstanceId, processInstanceId)
+                .ne(LandDO::getStatus, BpmProcessInstanceStatusEnum.INVALID.getStatus()));
     }
 
     private LandDO requireLand(Long id, boolean lock) {
@@ -204,13 +263,28 @@ public class LandServiceImpl implements LandService {
     }
 
     private void updateData(Long userId, LandDO land, LandSaveReqVO request) {
+        updateData(userId, land, request, false);
+    }
+
+    private void updateData(Long userId, LandDO land, LandSaveReqVO request, boolean management) {
         land.setProjectName(request.getProjectName().trim()).setLocation(request.getLocation().trim())
                 .setDeptOpinion(StrUtil.nullToEmpty(request.getDeptOpinion()));
         // 身份、日期、状态和流程编号沿用服务端记录，不能由页面越权修改。
         land.setFilepath(syncAttachments(userId, land.getId(), request.getFileList()));
         landMapper.updateById(new LandDO().setId(land.getId()).setProjectName(land.getProjectName())
                 .setLocation(land.getLocation()).setDeptOpinion(land.getDeptOpinion()).setFilepath(land.getFilepath()));
-        syncProcessName(land);
+        if (management) syncManagedProcessName(land);
+        else syncProcessName(land);
+    }
+
+    private void syncManagedProcessName(LandDO land) {
+        if (StrUtil.isBlank(land.getProcessInstanceId())) return;
+        // 与行政复议一致：已结束流程也同步历史标题，运行中流程同时同步业务变量。
+        taskSortMapper.updateRuntimeProcessInstanceName(land.getProcessInstanceId(), land.getProjectName());
+        taskSortMapper.updateHistoricProcessInstanceName(land.getProcessInstanceId(), land.getProjectName());
+        if (runtimeService.createProcessInstanceQuery().processInstanceId(land.getProcessInstanceId()).singleResult() != null) {
+            runtimeService.setVariables(land.getProcessInstanceId(), variables(land));
+        }
     }
 
     private void syncProcessName(LandDO land) {

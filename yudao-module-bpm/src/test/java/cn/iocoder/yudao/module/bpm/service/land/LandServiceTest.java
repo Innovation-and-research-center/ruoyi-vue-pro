@@ -13,11 +13,19 @@ import cn.iocoder.yudao.module.bpm.service.task.BpmRegisterTaskService;
 import cn.iocoder.yudao.module.infra.dal.dataobject.file.FileDO;
 import cn.iocoder.yudao.module.infra.dal.mysql.file.FileMapper;
 import cn.iocoder.yudao.module.system.api.dept.DeptApi;
+import cn.iocoder.yudao.module.system.api.permission.PermissionApi;
+import cn.iocoder.yudao.framework.common.pojo.PageResult;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
 import cn.iocoder.yudao.module.system.controller.admin.user.vo.user.UserSimpleRespVO;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.RuntimeService;
+import org.flowable.engine.runtime.ProcessInstanceQuery;
+import org.flowable.engine.runtime.ProcessInstance;
+import cn.iocoder.yudao.module.bpm.dal.mysql.task.BpmTaskSortMapper;
+import cn.iocoder.yudao.module.bpm.framework.helper.BpmInvalidateHelper;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmUpdateOperateLogService;
+import cn.iocoder.yudao.module.bpm.service.logger.BpmDeleteOperateLogService;
 import org.flowable.engine.TaskService;
 import org.flowable.task.api.Task;
 import org.flowable.task.api.TaskQuery;
@@ -49,11 +57,26 @@ class LandServiceTest {
     private final RuntimeService runtime = mock(RuntimeService.class);
     private final TaskQuery query = mock(TaskQuery.class, RETURNS_SELF);
     private final Task task = mock(Task.class);
+    private final BpmTaskSortMapper titles = mock(BpmTaskSortMapper.class);
+    private final BpmUpdateOperateLogService updateLogs = mock(BpmUpdateOperateLogService.class);
+    private final BpmDeleteOperateLogService deleteLogs = mock(BpmDeleteOperateLogService.class);
+    private final BpmInvalidateHelper invalidation = new BpmInvalidateHelper();
+    private final ProcessInstanceQuery processQuery = mock(ProcessInstanceQuery.class);
+    private final PermissionApi permissions = mock(PermissionApi.class);
     private final AdminUserApi users = mock(AdminUserApi.class);
 
     @BeforeEach
     void prepare() {
         ReflectionTestUtils.setField(service, "landMapper", lands);
+        ReflectionTestUtils.setField(service, "permissionApi", permissions);
+        ReflectionTestUtils.setField(service, "taskSortMapper", titles);
+        ReflectionTestUtils.setField(service, "updateLogService", updateLogs);
+        ReflectionTestUtils.setField(service, "deleteLogService", deleteLogs);
+        ReflectionTestUtils.setField(service, "invalidateHelper", invalidation);
+        ReflectionTestUtils.setField(invalidation, "processInstanceService", instances);
+        ReflectionTestUtils.setField(invalidation, "taskSortMapper", titles);
+        when(runtime.createProcessInstanceQuery()).thenReturn(processQuery);
+        when(processQuery.processInstanceId(anyString())).thenReturn(processQuery);
         ReflectionTestUtils.setField(service, "landAttachMapper", attachments);
         ReflectionTestUtils.setField(service, "fileMapper", files);
         ReflectionTestUtils.setField(service, "processInstanceApi", processes);
@@ -219,6 +242,109 @@ class LandServiceTest {
         assertEquals(LAND_NOT_EXISTS.getCode(), assertThrows(ServiceException.class,
                 () -> service.get(7L, 99L)).getCode());
         assertThrows(ServiceException.class, () -> service.update(7L, request().setId(null)));
+    }
+
+    @Test
+    void managementPageRequiresPermissionEvenForBusinessOwner() {
+        assertEquals(LAND_ACCESS_DENIED.getCode(), assertThrows(ServiceException.class,
+                () -> service.getPage(7L, new LandPageReqVO())).getCode());
+        assertEquals(LAND_ACCESS_DENIED.getCode(), assertThrows(ServiceException.class,
+                () -> service.getPage(null, new LandPageReqVO())).getCode());
+        verify(lands, never()).selectPage(any(LandPageReqVO.class));
+    }
+
+    @Test
+    void managementQueryReturnsPageAndAllowsDetailButDoesNotGrantEditing() {
+        when(permissions.hasAnyPermissions(8L, "bpm:land:query")).thenReturn(true);
+        LandPageReqVO request = new LandPageReqVO().setProjectName("测试").setStatus(1);
+        when(lands.selectPage(request)).thenReturn(new PageResult<>(Collections.singletonList(land()), 15L));
+        PageResult<LandPageRespVO> result = service.getPage(8L, request);
+        assertEquals(15L, result.getTotal());
+        assertEquals("原项目", result.getList().get(0).getProjectName());
+        assertEquals("process-10", result.getList().get(0).getProcessInstanceId());
+        HistoricTaskInstanceQuery historyQuery = mock(HistoricTaskInstanceQuery.class, RETURNS_SELF);
+        when(history.createHistoricTaskInstanceQuery()).thenReturn(historyQuery);
+        assertEquals(10L, service.get(8L, 10L).getId());
+        assertEquals(LAND_REGISTER_NOT_ACTIVE.getCode(), assertThrows(ServiceException.class,
+                () -> service.update(8L, request())).getCode());
+        verify(lands, never()).updateById(any(LandDO.class));
+    }
+
+    @Test
+    void queryPermissionDoesNotGrantManagementUpdateOrDelete() {
+        when(permissions.hasAnyPermissions(8L, "bpm:land:query")).thenReturn(true);
+        assertEquals(LAND_ACCESS_DENIED.getCode(), assertThrows(ServiceException.class,
+                () -> service.managementUpdate(8L, request())).getCode());
+        assertEquals(LAND_ACCESS_DENIED.getCode(), assertThrows(ServiceException.class,
+                () -> service.delete(8L, 10L, "测试删除")).getCode());
+        verify(lands, never()).selectForUpdate(any());
+        verifyNoInteractions(updateLogs, deleteLogs);
+    }
+
+    @Test
+    void managementUpdateWorksOutsideRegistrationAndPreservesIdentityAndState() {
+        when(permissions.hasAnyPermissions(8L, "bpm:land:update")).thenReturn(true);
+        LandDO old = land().setStatus(1).setDeptName("原科室");
+        when(lands.selectForUpdate(10L)).thenReturn(old);
+        when(processQuery.singleResult()).thenReturn(mock(ProcessInstance.class));
+        service.managementUpdate(8L, request().setProjectName("  管理改名  "));
+        verify(tasks, never()).createTaskQuery();
+        verify(titles).updateRuntimeProcessInstanceName("process-10", "管理改名");
+        verify(titles).updateHistoricProcessInstanceName("process-10", "管理改名");
+        verify(runtime).setVariables(eq("process-10"), argThat(values -> "管理改名".equals(values.get(PROCESS_CUSTOM_NAME))));
+        ArgumentCaptor<LandDO> before = ArgumentCaptor.forClass(LandDO.class);
+        ArgumentCaptor<LandDO> after = ArgumentCaptor.forClass(LandDO.class);
+        verify(updateLogs).recordUpdate(eq("土地用途认定"), eq(10L), before.capture(), after.capture(), any(), any());
+        assertEquals("原项目", before.getValue().getProjectName());
+        assertEquals("管理改名", after.getValue().getProjectName());
+        assertEquals(7L, after.getValue().getUserId());
+        assertEquals(1, after.getValue().getStatus());
+    }
+
+    @Test
+    void finishedProcessCanBeModifiedWithoutAccessingRuntimeVariables() {
+        when(permissions.hasAnyPermissions(8L, "bpm:land:update")).thenReturn(true);
+        when(lands.selectForUpdate(10L)).thenReturn(land().setStatus(2));
+        service.managementUpdate(8L, request());
+        verify(titles).updateHistoricProcessInstanceName("process-10", "测试项目");
+        verify(runtime, never()).setVariables(anyString(), anyMap());
+        verify(runtime, never()).setProcessInstanceName(anyString(), anyString());
+    }
+
+    @Test
+    void deletingRunningBusinessInvalidatesCancelsAndRecordsReasonWithoutRemovingFiles() {
+        when(permissions.hasAnyPermissions(8L, "bpm:land:delete")).thenReturn(true);
+        when(lands.selectForUpdate(10L)).thenReturn(land().setStatus(1));
+        service.delete(8L, 10L, "  测试删除  ");
+        verify(lands).updateById(argThat((LandDO value) -> value.getId() == 10L && value.getStatus() == 5));
+        verify(instances).cancelProcessInstanceByAdmin(eq(8L), argThat(request ->
+                "process-10".equals(request.getId()) && "测试删除".equals(request.getReason())));
+        verify(titles).updateHistoricProcessLongVariable("process-10", PROCESS_INSTANCE_VARIABLE_STATUS, 5);
+        verify(deleteLogs).recordDelete("土地用途认定", 10L, "测试删除");
+        verifyNoInteractions(attachments, files);
+    }
+
+    @Test
+    void finishedBusinessDeletionDoesNotCancelAndRepeatedDeletionIsRejected() {
+        when(permissions.hasAnyPermissions(8L, "bpm:land:delete")).thenReturn(true);
+        when(lands.selectForUpdate(10L)).thenReturn(land().setStatus(2));
+        service.delete(8L, 10L, "办结后删除");
+        verify(instances, never()).cancelProcessInstanceByAdmin(any(), any());
+        when(lands.selectForUpdate(10L)).thenReturn(land().setStatus(5));
+        assertEquals(LAND_CANNOT_DELETE.getCode(), assertThrows(ServiceException.class,
+                () -> service.delete(8L, 10L, "重复删除")).getCode());
+        assertEquals(LAND_DELETE_REASON_REQUIRED.getCode(), assertThrows(ServiceException.class,
+                () -> service.delete(8L, 10L, " ")).getCode());
+        verify(deleteLogs, times(1)).recordDelete(anyString(), anyLong(), anyString());
+    }
+
+    @Test
+    void failedCancellationDoesNotRecordDeletionSuccess() {
+        when(permissions.hasAnyPermissions(8L, "bpm:land:delete")).thenReturn(true);
+        when(lands.selectForUpdate(10L)).thenReturn(land().setStatus(1));
+        doThrow(new IllegalStateException("取消失败")).when(instances).cancelProcessInstanceByAdmin(any(), any());
+        assertThrows(IllegalStateException.class, () -> service.delete(8L, 10L, "删除原因"));
+        verifyNoInteractions(deleteLogs);
     }
 
     private void candidates(Long... ids) {

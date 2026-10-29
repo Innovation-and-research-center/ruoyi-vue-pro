@@ -21,6 +21,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.LocalDateTime;
+import java.util.Collections;
+import cn.iocoder.yudao.framework.common.pojo.PageResult;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -91,6 +93,48 @@ class LandControllerTest {
                         .content("{\"projectName\":\"项目\",\"location\":\"坐落\",\"fileList\":[{\"attachFileId\":-1}]}"))
                 .andExpect(status().isBadRequest());
         verifyNoInteractions(service);
+    }
+
+    @Test
+    void pageRouteBindsFiltersDatesAndPagination() throws Exception {
+        when(service.getPage(eq(7L), any())).thenReturn(new PageResult<>(Collections.singletonList(
+                new LandPageRespVO().setId(10L).setProjectName("测试项目").setStatus(1)), 21L));
+        mvc.perform(get("/bpm/land/page").param("pageNo", "2").param("pageSize", "10")
+                        .param("projectName", "测试").param("location", "测试坐落")
+                        .param("startUserName", "登记员").param("status", "1")
+                        .param("applyDate[0]", "2026-10-01 00:00:00")
+                        .param("applyDate[1]", "2026-10-29 23:59:59"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(21))
+                .andExpect(jsonPath("$.data.list[0].projectName").value("测试项目"));
+        ArgumentCaptor<LandPageReqVO> query = ArgumentCaptor.forClass(LandPageReqVO.class);
+        verify(service).getPage(eq(7L), query.capture());
+        assertEquals(2, query.getValue().getPageNo());
+        assertEquals(10, query.getValue().getPageSize());
+        assertEquals("测试坐落", query.getValue().getLocation());
+        assertEquals("登记员", query.getValue().getStartUserName());
+        assertEquals(LocalDateTime.of(2026, 10, 29, 23, 59, 59), query.getValue().getApplyDate()[1]);
+    }
+
+    @Test
+    void pageRouteRejectsInvalidPaginationAndDate() throws Exception {
+        mvc.perform(get("/bpm/land/page").param("pageNo", "0"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/bpm/land/page").param("pageSize", "101"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/bpm/land/page").param("applyDate[0]", "invalid-date"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void managementUpdateAndDeleteUseDedicatedServiceMethods() throws Exception {
+        mvc.perform(put("/bpm/land/management-update").contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data").value(true));
+        mvc.perform(delete("/bpm/land/delete").param("id", "10").param("reason", "测试删除"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data").value(true));
+        verify(service).managementUpdate(eq(7L), any());
+        verify(service).delete(7L, 10L, "测试删除");
+        verify(service, never()).update(any(), any());
     }
 
     @Test

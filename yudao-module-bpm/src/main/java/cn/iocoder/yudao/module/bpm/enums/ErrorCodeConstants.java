@@ -35,8 +35,10 @@ public interface ErrorCodeConstants {
 
     ErrorCode LAND_NOT_EXISTS = new ErrorCode(1_009_028_001, "土地用途认定办件不存在");
     ErrorCode LAND_REGISTER_NOT_ACTIVE = new ErrorCode(1_009_028_002, "当前办件不在本人登记环节，不能修改或重复发送");
-    ErrorCode LAND_ACCESS_DENIED = new ErrorCode(1_009_028_003, "无权查看该土地用途认定办件");
+    ErrorCode LAND_ACCESS_DENIED = new ErrorCode(1_009_028_003, "无权操作该土地用途认定办件");
     ErrorCode LAND_ASSIGNEES_INVALID = new ErrorCode(1_009_028_004, "请选择当前主办科室候选范围内的有效办理人");
+    ErrorCode LAND_DELETE_REASON_REQUIRED = new ErrorCode(1_009_028_006, "删除原因不能为空");
+    ErrorCode LAND_CANNOT_DELETE = new ErrorCode(1_009_028_007, "该办件已取消或作废，不能重复删除");
     ErrorCode LAND_ATTACHMENT_INVALID = new ErrorCode(1_009_028_005, "附件不存在或无权关联，请重新上传");
 
     // ========== 流程模型 1-009-002-000 ==========
