@@ -104,6 +104,40 @@ class LandMapperPageTest {
     }
 
     @Test
+    void sortingWorksAcrossPagesAndKeepsIdTieBreaker() {
+        try (SqlSession session = factory.openSession()) {
+            LandPageReqVO request = new LandPageReqVO().setOrderField("status").setOrderDirection("asc");
+            request.setPageSize(2);
+            LandMapper mapper = session.getMapper(LandMapper.class);
+            assertEquals(java.util.Arrays.asList(6L, 2L), mapper.selectPage(request).getList().stream()
+                    .map(LandDO::getId).collect(Collectors.toList()));
+            request.setPageNo(2);
+            assertEquals(java.util.Arrays.asList(1L, 3L), mapper.selectPage(request).getList().stream()
+                    .map(LandDO::getId).collect(Collectors.toList()));
+            request.setPageNo(1);
+            request.setOrderDirection("desc");
+            assertEquals(java.util.Arrays.asList(3L, 6L), mapper.selectPage(request).getList().stream()
+                    .map(LandDO::getId).collect(Collectors.toList()));
+            request.setOrderField("applyDate"); request.setOrderDirection("asc");
+            assertEquals(java.util.Arrays.asList(6L, 1L), mapper.selectPage(request).getList().stream()
+                    .map(LandDO::getId).collect(Collectors.toList()));
+        }
+    }
+
+    @Test
+    void unknownSortFieldOrDirectionFallsBackWithoutExecutingRequestSql() {
+        try (SqlSession session = factory.openSession()) {
+            LandMapper mapper = session.getMapper(LandMapper.class);
+            for (LandPageReqVO request : java.util.Arrays.asList(
+                    new LandPageReqVO().setOrderField("id; DROP TABLE bpm_land").setOrderDirection("asc"),
+                    new LandPageReqVO().setOrderField("status").setOrderDirection("asc; DROP TABLE bpm_land"))) {
+                assertEquals(java.util.Arrays.asList(6L, 3L, 2L, 1L), mapper.selectPage(request).getList().stream()
+                        .map(LandDO::getId).collect(Collectors.toList()));
+            }
+        }
+    }
+
+    @Test
     void resetFiltersReturnsOnlyCurrentTenantActiveRecordsInStableOrder() {
         try (SqlSession session = factory.openSession()) {
             PageResult<LandDO> page = session.getMapper(LandMapper.class).selectPage(new LandPageReqVO());

@@ -19,6 +19,8 @@ public class LandPageReqVO extends PageParam {
     private String location;
     private String startUserName;
     private Integer status;
+    private String orderField;
+    private String orderDirection;
 
     @Size(max = 2)
     @DateTimeFormat(pattern = FORMAT_YEAR_MONTH_DAY_HOUR_MINUTE_SECOND)
