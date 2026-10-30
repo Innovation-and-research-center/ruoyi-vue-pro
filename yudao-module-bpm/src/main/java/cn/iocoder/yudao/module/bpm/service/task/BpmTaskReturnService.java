@@ -34,6 +34,7 @@ public class BpmTaskReturnService {
     public static final String RETURNED = "bpm_dispatch_returned_count";
     private static final String PATH = "RETURNABLE_TASK_PATH";
     private static final String BATCH = "RETURN_BRANCH_CONTEXT";
+    private static final String REGISTER_SOURCE = "DIRECT_REGISTER_SOURCE";
     @Resource private RuntimeService runtimeService;
     @Resource private HistoryService historyService;
     @Resource private RepositoryService repositoryService;
@@ -108,18 +109,32 @@ public class BpmTaskReturnService {
     private Map<String, Object> context(Task task) {
         Map<String, Object> values = new HashMap<>();
         ExecutionEntity execution = CommandContextUtil.getExecutionEntityManager().findById(task.getExecutionId());
+        boolean inspectedDispatchSource = false;
         while (execution != null && !execution.isProcessInstanceType()) {
             for (String key : Arrays.asList(PATH, BATCH)) {
                 if (!values.containsKey(key) && execution.hasVariableLocal(key)) values.put(key, execution.getVariableLocal(key));
             }
             Object origins = execution.getVariableLocal(BpmDispatchSources.SOURCES);
             Object ids = origins instanceof Map ? ((Map<?, ?>) origins).get(task.getAssignee()) : null;
+            boolean directSource = !inspectedDispatchSource && ids instanceof Collection && !((Collection<?>) ids).isEmpty();
+            if (ids instanceof Collection && !((Collection<?>) ids).isEmpty()) inspectedDispatchSource = true;
             if (ids instanceof Collection && ((Collection<?>) ids).size() == 1) {
                 HistoricTaskInstance source = historyService.createHistoricTaskInstanceQuery()
                         .taskId(((Collection<?>) ids).iterator().next().toString()).includeTaskLocalVariables().singleResult();
                 if (source != null) for (String key : Arrays.asList(PATH, BATCH)) {
                     if (!values.containsKey(key) && source.getTaskLocalVariables().containsKey(key))
                         values.put(key, source.getTaskLocalVariables().get(key));
+                }
+                // 登记专用提交不经过普通 approveTask 的路径载体，仅从本任务可核验的直接来源恢复。
+                // 不按人员、时间或全流程历史猜测登记轮次；最近的派发来源不符时也不沿祖先扩大范围。
+                if (directSource && source != null && source.getEndTime() != null && source.getAssignee() != null
+                        && task.getProcessInstanceId().equals(source.getProcessInstanceId())
+                        && BpmTaskStatusEnum.APPROVE.getStatus().equals(source.getTaskLocalVariables().get(BpmnVariableConstants.TASK_VARIABLE_STATUS))
+                        && flowableTaskService.getVariableLocal(task.getId(), BpmInternalDispatch.SOURCE) == null
+                        && BpmRegisterTaskUtils.isRegisterTask(repositoryService.getBpmnModel(task.getProcessDefinitionId())
+                                .getFlowElement(source.getTaskDefinitionKey()))) {
+                    if (path(values).isEmpty()) values.put(PATH, Collections.singletonList(source.getTaskDefinitionKey()));
+                    values.put(REGISTER_SOURCE, Collections.singletonMap(source.getTaskDefinitionKey(), source.getId()));
                 }
             }
             execution = execution.getParent();
@@ -153,6 +168,7 @@ public class BpmTaskReturnService {
         Map<String, Object> context = context(task);
         List<String> path = path(context);
         Map<?, ?> batches = context.get(BATCH) instanceof Map ? (Map<?, ?>) context.get(BATCH) : Collections.emptyMap();
+        Map<?, ?> registerSources = context.get(REGISTER_SOURCE) instanceof Map ? (Map<?, ?>) context.get(REGISTER_SOURCE) : Collections.emptyMap();
         BpmnModel model = repositoryService.getBpmnModel(task.getProcessDefinitionId());
         Map<String, List<HistoricTaskInstance>> result = new LinkedHashMap<>();
         List<HistoricTaskInstance> ancestors = internalAncestors(task);
@@ -164,6 +180,7 @@ public class BpmTaskReturnService {
             if (!BpmnModelUtils.isSequentialReachable(model.getFlowElement(task.getTaskDefinitionKey()), model.getFlowElement(node), null)) continue;
             Object batch = batches.get(node);
             List<HistoricTaskInstance> matches = history.stream().filter(h -> node.equals(h.getTaskDefinitionKey())
+                    && (registerSources.get(node) == null || registerSources.get(node).equals(h.getId()))
                     && h.getAssignee() != null && BpmTaskStatusEnum.APPROVE.getStatus().equals(h.getTaskLocalVariables().get(BpmnVariableConstants.TASK_VARIABLE_STATUS))
                     && (batch == null || h.getTaskLocalVariables().get(BATCH) instanceof Map
                     && batch.equals(((Map<?, ?>) h.getTaskLocalVariables().get(BATCH)).get(node))))

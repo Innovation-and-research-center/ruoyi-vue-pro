@@ -219,6 +219,8 @@ public class BpmTaskWithdrawService {
             requireMemberMode(source);
             Map<String, HistoricTaskInstance> sources = withdrawalSources(source);
             Set<String> sourceIds = sources.keySet();
+            if (all && sourceIds.stream().noneMatch(id -> process.getVariableLocal(BpmDispatchSources.LEDGER_PREFIX + id) instanceof Map)
+                    && restoreWaitingMember(source, process)) return null;
             if (sourceIds.stream().noneMatch(id -> process.getVariableLocal(BpmDispatchSources.LEDGER_PREFIX + id) instanceof Map))
                 throw exception(TASK_WITHDRAW_INVALID, "新版派发记录尚未完整生成，请稍后重试，不能降级为原版撤回");
             boolean pending = runtimeService.createVariableInstanceQuery().processInstanceId(source.getProcessInstanceId())
@@ -278,6 +280,49 @@ public class BpmTaskWithdrawService {
             chosenBySource.forEach((id, rows) -> writeComment(sources.get(id), userId, request.getReason(), rows));
             return null;
         });
+    }
+
+    /** 尚未汇总转出的并行会签，撤回的是原成员的完成动作，不新增会签分支或人数。 */
+    private boolean restoreWaitingMember(HistoricTaskInstance source, ExecutionEntity process) {
+        ExecutionEntity child = CommandContextUtil.getExecutionEntityManager().findById(source.getExecutionId());
+        if (child == null || child.isActive() || child.isEnded() || child.isSuspended()
+                || !source.getTaskDefinitionKey().equals(child.getActivityId())
+                || !Objects.equals(Long.valueOf(source.getAssignee()), memberId(child, source.getTaskDefinitionKey()))) return false;
+        ExecutionEntity root = child.getParent();
+        if (root == null || !root.isMultiInstanceRoot() || root.isSuspended()
+                || !(root.getCurrentFlowElement() instanceof UserTask)) return false;
+        UserTask node = (UserTask) root.getCurrentFlowElement();
+        if (!(node.getBehavior() instanceof BpmParallelMultiInstanceBehavior)
+                || root.getVariableLocal(BpmInternalDispatch.HANDOFFS) != null) return false;
+        int total = number(root, "nrOfInstances"), completed = number(root, "nrOfCompletedInstances");
+        int active = number(root, "nrOfActiveInstances");
+        if (completed < 1 || active < 1 || total != completed + active || members(root).size() != total
+                || flowableTaskService.createTaskQuery().executionId(child.getId()).count() != 0) return false;
+        // 必须仍是原执行流最后一次已办，防止旧历史任务借用已再次完成的成员执行流。
+        List<HistoricTaskInstance> finished = historyService.createHistoricTaskInstanceQuery()
+                .executionId(child.getId()).finished().list();
+        if (finished.stream().anyMatch(task -> !task.getId().equals(source.getId())
+                && !task.getEndTime().before(source.getEndTime()))) return false;
+        root.forceUpdate();
+        BpmDispatchSources.withdrawPending(root.getParent(), source.getId(), node);
+        root.setVariableLocal("nrOfCompletedInstances", completed - 1);
+        root.setVariableLocal("nrOfActiveInstances", active + 1);
+        child.setVariableLocal(BpmRestoredOpinion.KEY, BpmRestoredOpinion.draft(source));
+        child.setActive(true);
+        child.setEnded(false);
+        // 保留本人的退回上下文；不覆盖仍在办理的其他成员。
+        for (String key : Arrays.asList("RETURN_BRANCH_CONTEXT", "RETURNABLE_TASK_PATH", BpmTaskReturnService.SCOPE,
+                BpmTaskReturnService.RETAINED_ROOTS, BpmTaskReturnService.RETAINED_SOURCES)) {
+            if (source.getTaskLocalVariables().containsKey(key)) child.setVariableLocal(key, source.getTaskLocalVariables().get(key));
+        }
+        process.setVariableLocal(RESTORED + source.getId(), child.getId());
+        BpmTaskSmsPolicy.prepare(runtimeService, child.getId(),
+                Collections.singletonMap(node.getId(), Collections.singletonList(Long.valueOf(source.getAssignee()))), false);
+        // 直接恢复原成员内部任务，不重新初始化整个会签集合。
+        CommandContextUtil.getActivityInstanceEntityManager().recordActivityStart(child);
+        ((MultiInstanceActivityBehavior) node.getBehavior()).getInnerActivityBehavior().execute(child);
+        writeWithdrawalComment(source, Long.valueOf(source.getAssignee()), "撤回本人的办理，恢复原会签待办");
+        return true;
     }
 
     @SuppressWarnings("unchecked")
@@ -448,6 +493,10 @@ public class BpmTaskWithdrawService {
         Map<Long, String> names = adminUserApi.getUserList(ids).stream().collect(Collectors.toMap(AdminUserRespDTO::getId, AdminUserRespDTO::getNickname));
         String description = "撤回派发：" + chosen.stream().map(row -> "【" + row.getNodeName() + "】" + names.getOrDefault(row.getUserId(), row.getUserId().toString()))
                 .collect(Collectors.joining("、")) + (reason == null || reason.trim().isEmpty() ? "" : "；原因：" + reason);
+        writeWithdrawalComment(source, userId, description);
+    }
+
+    private void writeWithdrawalComment(HistoricTaskInstance source, Long userId, String description) {
         org.flowable.engine.impl.persistence.entity.CommentEntityManager manager = CommandContextUtil.getProcessEngineConfiguration().getCommentEntityManager();
         org.flowable.engine.impl.persistence.entity.CommentEntity comment = manager.create();
         comment.setTaskId(source.getId()); comment.setProcessInstanceId(source.getProcessInstanceId()); comment.setUserId(userId.toString());

@@ -1142,7 +1142,9 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             boolean isStrictTrue = false;
 
             if (StringUtil.isNotEmpty(conditionExpression)) {
-                Boolean evalResult = evaluateExpression(conditionExpression, processVariables);
+                // 此处枚举可选流向，不执行上次的人工决策；业务条件仍按实际变量判断。
+                Boolean evalResult = BpmDispatchSources.isOptionalManualRoute(flow)
+                        ? null : evaluateExpression(conditionExpression, processVariables);
 
                 if (Boolean.FALSE.equals(evalResult)) {
                     // 只有明确算出 false 才拦截，跳过

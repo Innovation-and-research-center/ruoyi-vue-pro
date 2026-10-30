@@ -11,6 +11,7 @@ import cn.iocoder.yudao.module.bpm.framework.flowable.core.behavior.BpmActivityB
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.candidate.BpmTaskCandidateInvoker;
 import cn.iocoder.yudao.module.bpm.service.land.LandServiceImpl;
 import cn.iocoder.yudao.module.bpm.service.task.BpmRegisterTaskServiceImpl;
+import cn.iocoder.yudao.module.bpm.service.task.BpmTaskReturnService;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
 import org.flowable.engine.*;
@@ -30,11 +31,12 @@ import static org.mockito.Mockito.*;
 /** 真实引擎解析带 coll_userList 的登记 XML，不由调用方预置集合变量。 */
 class BpmRegisterMultiInstanceTest {
     private ProcessEngine engine;
+    private BpmTaskCandidateInvoker candidates;
     private BpmRegisterTaskServiceImpl registers;
 
     @BeforeEach
     void prepare() {
-        BpmTaskCandidateInvoker candidates = mock(BpmTaskCandidateInvoker.class);
+        candidates = mock(BpmTaskCandidateInvoker.class);
         when(candidates.calculateUsersByTask(any())).thenReturn(new LinkedHashSet<>(Arrays.asList(7L, 8L)));
         BpmActivityBehaviorFactory factory = new BpmActivityBehaviorFactory();
         factory.setTaskCandidateInvoker(candidates);
@@ -112,6 +114,235 @@ class BpmRegisterMultiInstanceTest {
         assertEquals("修改后项目", engine.getHistoryService().createHistoricProcessInstanceQuery()
                 .processInstanceId(result.getProcessInstanceId()).singleResult().getName());
         assertEquals("修改后项目", engine.getRuntimeService().getVariable(result.getProcessInstanceId(), "PROCESS_CUSTOM_NAME"));
+    }
+
+    @Test
+    void registrationReturnFindsExactSourceAndSupportsRepeatedResubmission() {
+        deploy(true, true);
+        when(candidates.calculateUsersByTask(any())).thenAnswer(call -> {
+            org.flowable.engine.delegate.DelegateExecution execution = call.getArgument(0);
+            return new LinkedHashSet<>(Collections.singletonList(REGISTER_NODE.equals(execution.getCurrentActivityId()) ? 7L : 8L));
+        });
+        String instance = engine.getRuntimeService().startProcessInstanceByKey(PROCESS_KEY,
+                Collections.singletonMap(BpmProcessOperationVersion.KEY, BpmProcessOperationVersion.CURRENT)).getId();
+        assertEquals(1, registers.claim(7L, instance));
+        BpmTaskReturnService returns = returnService();
+        for (int round = 0; round < 2; round++) {
+            assertEquals(1, registers.completeOnSubmit(7L, instance,
+                    Collections.singletonMap(PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES,
+                            Collections.singletonMap(MAIN_NODE, Collections.singletonList(8L))), false));
+            Task main = engine.getTaskService().createTaskQuery().processInstanceId(instance)
+                    .taskDefinitionKey(MAIN_NODE).singleResult();
+            java.util.List<cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskReturnTargetRespVO> targets = returns.targets(8L, main.getId());
+            assertEquals(1, targets.size(), "主办应能找到本轮真实来源登记，而不是没有可退回节点");
+            assertEquals(REGISTER_NODE, targets.get(0).getTaskDefinitionKey());
+            assertEquals(7L, targets.get(0).getAssignees().get(0).getId());
+            cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskReturnReqVO request =
+                    new cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskReturnReqVO();
+            request.setId(main.getId()); request.setTargetTaskDefinitionKey(REGISTER_NODE);
+            request.setExpectedMode("SINGLE"); request.setReturnAssignees(Collections.singletonList(7L)); request.setReason("测试退回登记");
+            returns.returnTask(8L, request);
+            Task register = engine.getTaskService().createTaskQuery().processInstanceId(instance).singleResult();
+            assertEquals(REGISTER_NODE, register.getTaskDefinitionKey());
+            assertEquals("7", register.getAssignee());
+        }
+        assertEquals(1, registers.completeOnSubmit(7L, instance,
+                Collections.singletonMap(PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES,
+                        Collections.singletonMap(MAIN_NODE, Collections.singletonList(8L))), false));
+        Task main = engine.getTaskService().createTaskQuery().processInstanceId(instance).singleResult();
+        engine.getTaskService().complete(main.getId());
+        assertEquals(0, engine.getTaskService().createTaskQuery().processInstanceId(instance).count());
+        assertEquals(0, engine.getRuntimeService().createProcessInstanceQuery().processInstanceId(instance).count());
+    }
+
+    @Test
+    void registrationReturnDoesNotGuessMissingForeignOrUnrelatedDispatchSources() {
+        deploy(true, true);
+        when(candidates.calculateUsersByTask(any())).thenAnswer(call -> {
+            org.flowable.engine.delegate.DelegateExecution execution = call.getArgument(0);
+            return new LinkedHashSet<>(Collections.singletonList(REGISTER_NODE.equals(execution.getCurrentActivityId()) ? 7L : 8L));
+        });
+        List<String> instances = new ArrayList<>();
+        List<String> registerIds = new ArrayList<>();
+        for (int round = 0; round < 2; round++) {
+            String instance = engine.getRuntimeService().startProcessInstanceByKey(PROCESS_KEY,
+                    Collections.singletonMap(BpmProcessOperationVersion.KEY, BpmProcessOperationVersion.CURRENT)).getId();
+            instances.add(instance);
+            assertEquals(1, registers.claim(7L, instance));
+            registerIds.add(engine.getTaskService().createTaskQuery().processInstanceId(instance).singleResult().getId());
+            registers.completeOnSubmit(7L, instance,
+                    Collections.singletonMap(PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES,
+                            Collections.singletonMap(MAIN_NODE, Collections.singletonList(8L))), false);
+        }
+        Task main = engine.getTaskService().createTaskQuery().processInstanceId(instances.get(0)).singleResult();
+        BpmTaskReturnService returns = returnService();
+        assertEquals(1, returns.targets(8L, main.getId()).size());
+        // 最近来源无效时，不能越过它借用父执行流里另一个来源。
+        engine.getRuntimeService().setVariableLocal(main.getExecutionId(), BpmDispatchSources.SOURCES,
+                Collections.singletonMap("8", Collections.singletonList("missing-source")));
+        assertTrue(returns.targets(8L, main.getId()).isEmpty());
+        // 其他流程中同名登记、同一个办理人，也不能作为当前流程的退回目标。
+        engine.getRuntimeService().setVariableLocal(main.getExecutionId(), BpmDispatchSources.SOURCES,
+                Collections.singletonMap("8", Collections.singletonList(registerIds.get(1))));
+        assertTrue(returns.targets(8L, main.getId()).isEmpty());
+        engine.getRuntimeService().removeVariableLocal(main.getExecutionId(), BpmDispatchSources.SOURCES);
+        String root = engine.getRuntimeService().createExecutionQuery().executionId(main.getExecutionId()).singleResult().getParentId();
+        engine.getRuntimeService().setVariableLocal(root, BpmDispatchSources.SOURCES, Collections.emptyMap());
+        assertTrue(returns.targets(8L, main.getId()).isEmpty(), "有登记历史但无派发来源时，不能按时间或人员猜测");
+        assertEquals(main.getId(), engine.getTaskService().createTaskQuery().processInstanceId(instances.get(0)).singleResult().getId());
+    }
+
+    private BpmTaskReturnService returnService() {
+        BpmTaskReturnService returns = new BpmTaskReturnService();
+        ReflectionTestUtils.setField(returns, "runtimeService", engine.getRuntimeService());
+        ReflectionTestUtils.setField(returns, "historyService", engine.getHistoryService());
+        ReflectionTestUtils.setField(returns, "repositoryService", engine.getRepositoryService());
+        ReflectionTestUtils.setField(returns, "managementService", engine.getManagementService());
+        ReflectionTestUtils.setField(returns, "flowableTaskService", engine.getTaskService());
+        AdminUserApi users = mock(AdminUserApi.class);
+        when(users.getUser(anyLong())).thenAnswer(call -> new AdminUserRespDTO().setId(call.getArgument(0))
+                .setStatus(0).setNickname("测试登记人"));
+        when(users.getUserList(anyCollection())).thenAnswer(call -> ((Collection<Long>) call.getArgument(0)).stream()
+                .map(id -> new AdminUserRespDTO().setId(id).setStatus(0).setNickname("测试登记人"))
+                .collect(java.util.stream.Collectors.toList()));
+        ReflectionTestUtils.setField(returns, "adminUserApi", users);
+        return returns;
+    }
+
+    @Test
+    void withdrawCompletedMainBeforePeerFinishesRestoresOriginalMeeting() {
+        verifyWaitingWithdrawal(false);
+    }
+
+    @Test
+    void withdrawWaitingMainPreservesOtherCompletedMembersSelections() {
+        verifyWaitingWithdrawal(true);
+    }
+
+    private void verifyWaitingWithdrawal(boolean anotherCompleted) {
+        String xml = "<definitions xmlns=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:flowable=\"http://flowable.org/bpmn\" targetNamespace=\"test\">"
+                + "<process id=\"waiting_withdraw\" isExecutable=\"true\"><startEvent id=\"start\"/>"
+                + "<sequenceFlow id=\"s\" sourceRef=\"start\" targetRef=\"" + MAIN_NODE + "\"/>"
+                + "<userTask id=\"" + MAIN_NODE + "\" name=\"主办科室\"><multiInstanceLoopCharacteristics flowable:collection=\"${users}\">"
+                + "<completionCondition>${nrOfCompletedInstances == nrOfInstances}</completionCondition>"
+                + "</multiInstanceLoopCharacteristics></userTask>"
+                + "<sequenceFlow id=\"next\" sourceRef=\"" + MAIN_NODE + "\" targetRef=\"staff\">"
+                + "<conditionExpression>${variables:get('next_node1') == 'staff'}</conditionExpression></sequenceFlow>"
+                + "<userTask id=\"staff\"><multiInstanceLoopCharacteristics flowable:collection=\"${users}\"/></userTask>"
+                + "<sequenceFlow id=\"e\" sourceRef=\"staff\" targetRef=\"end\"/><endEvent id=\"end\"/></process></definitions>";
+        engine.getRepositoryService().createDeployment().addString("waiting.bpmn20.xml", xml).deploy();
+        when(candidates.calculateUsersByTask(any())).thenAnswer(call -> {
+            org.flowable.engine.delegate.DelegateExecution execution = call.getArgument(0);
+            if (MAIN_NODE.equals(execution.getCurrentActivityId()))
+                return new LinkedHashSet<>(anotherCompleted ? Arrays.asList(7L, 8L, 9L) : Arrays.asList(7L, 8L));
+            Map<String, Collection<Long>> selections = (Map<String, Collection<Long>>) execution.getVariable(PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+            return new LinkedHashSet<>(selections.get("staff"));
+        });
+        String instance = engine.getRuntimeService().startProcessInstanceByKey("waiting_withdraw",
+                Collections.singletonMap(BpmProcessOperationVersion.KEY, BpmProcessOperationVersion.CURRENT)).getId();
+        Task first = waitingTask(instance, "7");
+        Task peer = waitingTask(instance, anotherCompleted ? "9" : "8");
+        String root = engine.getRuntimeService().createExecutionQuery().executionId(first.getExecutionId()).singleResult().getParentId();
+        completeWaitingMain(first, Arrays.asList(20L, 21L));
+        if (anotherCompleted) completeWaitingMain(waitingTask(instance, "8"), Arrays.asList(21L, 22L));
+        cn.iocoder.yudao.module.bpm.service.task.BpmTaskWithdrawService withdrawals = new cn.iocoder.yudao.module.bpm.service.task.BpmTaskWithdrawService();
+        ReflectionTestUtils.setField(withdrawals, "runtimeService", engine.getRuntimeService());
+        ReflectionTestUtils.setField(withdrawals, "historyService", engine.getHistoryService());
+        ReflectionTestUtils.setField(withdrawals, "repositoryService", engine.getRepositoryService());
+        ReflectionTestUtils.setField(withdrawals, "managementService", engine.getManagementService());
+        ReflectionTestUtils.setField(withdrawals, "flowableTaskService", engine.getTaskService());
+        cn.iocoder.yudao.module.bpm.service.definition.BpmProcessDefinitionService definitions = mock(cn.iocoder.yudao.module.bpm.service.definition.BpmProcessDefinitionService.class);
+        cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmProcessDefinitionInfoDO info = new cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmProcessDefinitionInfoDO();
+        info.setAllowWithdrawTask(true);
+        when(definitions.getProcessDefinitionInfo(anyString())).thenReturn(info);
+        ReflectionTestUtils.setField(withdrawals, "processDefinitionService", definitions);
+
+        assertThrows(RuntimeException.class, () -> withdrawals.withdrawAll(99L, first.getId()));
+        withdrawals.withdrawAll(7L, first.getId());
+        Task restored = waitingTask(instance, "7");
+        assertEquals(first.getExecutionId(), restored.getExecutionId());
+        assertEquals(peer.getId(), waitingTask(instance, peer.getAssignee()).getId());
+        assertEquals(anotherCompleted ? 3 : 2, engine.getRuntimeService().getVariableLocal(root, "nrOfInstances"));
+        assertEquals(anotherCompleted ? 1 : 0, engine.getRuntimeService().getVariableLocal(root, "nrOfCompletedInstances"));
+        assertEquals(2, engine.getRuntimeService().getVariableLocal(root, "nrOfActiveInstances"));
+        assertEquals("原意见", engine.getTaskService().getVariableLocal(restored.getId(), cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.TASK_VARIABLE_REASON));
+        assertEquals(Boolean.FALSE, engine.getTaskService().getVariableLocal(restored.getId(), BpmTaskSmsPolicy.TASK_SEND_SMS));
+        assertThrows(RuntimeException.class, () -> withdrawals.withdrawAll(7L, first.getId()));
+        Map<?, ?> selected = (Map<?, ?>) engine.getRuntimeService().getVariable(instance, PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+        assertEquals(anotherCompleted ? Arrays.asList(21L, 22L) : null, selected.get("staff"));
+        if (!anotherCompleted) assertNull(engine.getRuntimeService().getVariable(instance, "next_node1"));
+        // 发送窗口读取历史流程变量；显式 null 或旧选择都不能把人工流向隐藏。
+        for (Task current : Arrays.asList(restored, peer)) {
+            Map<String, Object> variables = engine.getHistoryService().createHistoricProcessInstanceQuery()
+                    .processInstanceId(instance).includeProcessVariables().singleResult().getProcessVariables();
+            assertTrue(sendOptions((org.flowable.bpmn.model.FlowNode) engine.getRepositoryService()
+                    .getBpmnModel(current.getProcessDefinitionId()).getFlowElement(MAIN_NODE), variables)
+                    .stream().anyMatch(option -> "staff".equals(option.getTaskDefKey())),
+                    "撤回后本人和其他主办都应仍能选择转出流向");
+        }
+        completeWaitingMain(restored, Collections.singletonList(23L));
+        assertEquals(0, engine.getTaskService().createTaskQuery().processInstanceId(instance).taskDefinitionKey("staff").count());
+        withdrawals.withdrawAll(7L, restored.getId());
+        assertEquals(peer.getId(), waitingTask(instance, peer.getAssignee()).getId());
+        completeWaitingMain(waitingTask(instance, "7"), Collections.singletonList(25L));
+        completeWaitingMain(peer, Collections.singletonList(24L));
+        Set<String> staff = engine.getTaskService().createTaskQuery().processInstanceId(instance).taskDefinitionKey("staff").list()
+                .stream().map(Task::getAssignee).collect(java.util.stream.Collectors.toSet());
+        assertEquals(new HashSet<>(anotherCompleted ? Arrays.asList("21", "22", "25", "24") : Arrays.asList("25", "24")), staff);
+        for (Task task : engine.getTaskService().createTaskQuery().processInstanceId(instance).list()) engine.getTaskService().complete(task.getId());
+        assertEquals(0, engine.getRuntimeService().createProcessInstanceQuery().processInstanceId(instance).count());
+    }
+
+    private Task waitingTask(String instance, String user) {
+        return engine.getTaskService().createTaskQuery().processInstanceId(instance).taskDefinitionKey(MAIN_NODE).taskAssignee(user).singleResult();
+    }
+
+    @Test
+    void manualSendOptionsIgnoreOldChoiceButKeepBusinessConditions() {
+        org.flowable.bpmn.model.UserTask source = new org.flowable.bpmn.model.UserTask();
+        source.setId("main");
+        String[] conditions = {"${variables:get('next_node1') == 'center'}",
+                "${select_node_2 == 'assist'}", "${amount > 100}", "${select_node_3 == 'appeal'}"};
+        String[] targets = {"center", "assist", "business", "appeal"};
+        for (int i = 0; i < conditions.length; i++) {
+            org.flowable.bpmn.model.UserTask target = new org.flowable.bpmn.model.UserTask();
+            target.setId(targets[i]); target.setName(targets[i]);
+            org.flowable.bpmn.model.SequenceFlow flow = new org.flowable.bpmn.model.SequenceFlow();
+            flow.setConditionExpression(conditions[i]); flow.setTargetFlowElement(target);
+            source.getOutgoingFlows().add(flow);
+        }
+        Map<String, Object> variables = new HashMap<>();
+        variables.put("next_node1", null); variables.put("select_node_2", "old");
+        variables.put("amount", 10); variables.put("select_node_3", null);
+        assertEquals(new HashSet<>(Arrays.asList("center", "assist")), sendOptions(source, variables).stream()
+                .map(cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmNextTaskRespVO::getTaskDefKey)
+                .collect(java.util.stream.Collectors.toSet()));
+    }
+
+    private List<cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmNextTaskRespVO> sendOptions(
+            org.flowable.bpmn.model.FlowNode source, Map<String, Object> variables) {
+        List<cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmNextTaskRespVO> options = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(new cn.iocoder.yudao.module.bpm.service.task.BpmProcessInstanceServiceImpl(),
+                "analyzeOutgoingFlows", source, options, null, variables);
+        return options;
+    }
+
+    private void completeWaitingMain(Task task, List<Long> recipients) {
+        RuntimeService runtime = engine.getRuntimeService();
+        String scope = runtime.createExecutionQuery().executionId(task.getExecutionId()).singleResult().getParentId();
+        scope = runtime.createExecutionQuery().executionId(scope).singleResult().getParentId();
+        Map<String, List<Long>> selections = new LinkedHashMap<>();
+        Object previous = runtime.getVariableLocal(scope, PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+        if (previous instanceof Map) selections.putAll((Map<String, List<Long>>) previous);
+        Set<Long> union = new LinkedHashSet<>(selections.getOrDefault("staff", Collections.emptyList()));
+        union.addAll(recipients); selections.put("staff", new ArrayList<>(union));
+        runtime.setVariableLocal(scope, PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, selections);
+        runtime.setVariableLocal(scope, "next_node1", "staff");
+        BpmDispatchSources.prepare(runtime, scope, task.getId(), Collections.singletonMap("staff", recipients));
+        BpmTaskSmsPolicy.prepare(runtime, scope, Collections.singletonMap("staff", recipients), true);
+        engine.getTaskService().setVariableLocal(task.getId(), cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.TASK_VARIABLE_STATUS, 2);
+        engine.getTaskService().setVariableLocal(task.getId(), cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants.TASK_VARIABLE_REASON, "原意见");
+        engine.getTaskService().complete(task.getId());
     }
 
     private void verifyRegistration(boolean sequential, boolean cardinality) {

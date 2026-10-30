@@ -58,6 +58,62 @@ public final class BpmDispatchSources {
     private static String key(String node, Object user) {
         return PREFIX + node.length() + "_" + node + "_" + user;
     }
+
+    /** 仅撤销尚未消费的精确来源，保留其他会签成员对相同目标/人员的选择。 */
+    public static void withdrawPending(org.flowable.engine.impl.persistence.entity.ExecutionEntity scope,
+                                       String sourceTaskId, UserTask sourceNode) {
+        Map<String, Set<String>> removed = new LinkedHashMap<>();
+        Map<String, Set<String>> retained = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : new LinkedHashMap<>(scope.getVariablesLocal()).entrySet()) {
+            String name = entry.getKey();
+            if (!name.startsWith(PREFIX) || !(entry.getValue() instanceof Collection)) continue;
+            int separator = name.indexOf('_', PREFIX.length());
+            if (separator < 0) continue;
+            int length = Integer.parseInt(name.substring(PREFIX.length(), separator));
+            String node = name.substring(separator + 1, separator + 1 + length);
+            String user = name.substring(separator + 2 + length);
+            Set<String> sources = new LinkedHashSet<>();
+            ((Collection<?>) entry.getValue()).forEach(id -> sources.add(id.toString()));
+            if (sources.remove(sourceTaskId)) {
+                if (sources.isEmpty()) {
+                    scope.removeVariableLocal(name);
+                    scope.removeVariableLocal("bpm_task_sms_pending_" + length + "_" + node + "_" + user);
+                    removed.computeIfAbsent(node, ignored -> new LinkedHashSet<>()).add(user);
+                } else scope.setVariableLocal(name, sources);
+            }
+            if (!sources.isEmpty()) retained.computeIfAbsent(node, ignored -> new LinkedHashSet<>()).add(user);
+        }
+        String selectionsKey = cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants
+                .PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES;
+        Object value = scope.getVariableLocal(selectionsKey);
+        if (value instanceof Map) {
+            Map<String, Object> selections = new LinkedHashMap<>();
+            ((Map<?, ?>) value).forEach((node, users) -> selections.put(node.toString(), users));
+            removed.forEach((node, users) -> {
+                Object selected = selections.get(node);
+                if (!(selected instanceof Collection)) return;
+                List<Object> remaining = new ArrayList<>((Collection<?>) selected);
+                remaining.removeIf(user -> users.contains(user.toString())
+                        || users.contains("*") && !retained.getOrDefault(node, Collections.emptySet()).contains(user.toString()));
+                if (remaining.isEmpty()) selections.remove(node); else selections.put(node, remaining);
+            });
+            scope.setVariableLocal(selectionsKey, selections);
+        }
+        // 只重置当前节点的人工出线，业务条件及其他分支变量保持原值。
+        Map<String, Set<String>> routeTargets = new LinkedHashMap<>();
+        for (SequenceFlow flow : sourceNode.getOutgoingFlows()) {
+            if (flow.getConditionExpression() == null) continue;
+            java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("\\b(?:select_node_\\d+|next_node\\d+)\\b")
+                    .matcher(flow.getConditionExpression());
+            Set<String> targets = new LinkedHashSet<>();
+            collectUnconditionalTargets(flow.getTargetFlowElement(), targets, new HashSet<>());
+            while (matcher.find()) routeTargets.computeIfAbsent(matcher.group(), ignored -> new LinkedHashSet<>()).addAll(targets);
+        }
+        routeTargets.forEach((route, targets) -> {
+            if (!Collections.disjoint(targets, removed.keySet()) && Collections.disjoint(targets, retained.keySet()))
+                scope.setVariableLocal(route, null);
+        });
+    }
     public static void prepare(RuntimeService runtime, String executionId, String sourceTaskId,
                                Map<String, ? extends Collection<Long>> recipients) {
         if (recipients == null) return;
@@ -105,7 +161,8 @@ public final class BpmDispatchSources {
         }
     }
 
-    private static boolean isOptionalManualRoute(SequenceFlow flow) {
+    /** 人工可重新选择的简单流向；发送选项不应被上次选择或撤回留下的空值过滤。 */
+    public static boolean isOptionalManualRoute(SequenceFlow flow) {
         if (flow.getConditionExpression() == null) return false;
         java.util.regex.Matcher matcher = MANUAL_ROUTE.matcher(flow.getConditionExpression().trim());
         // 上诉属于新的业务阶段，不能通过追加绕过原结果选择。

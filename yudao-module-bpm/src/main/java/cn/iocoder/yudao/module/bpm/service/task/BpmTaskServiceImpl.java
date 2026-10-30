@@ -4191,9 +4191,11 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                             }
                             if (cn.iocoder.yudao.framework.common.util.object.ObjectUtils.equalsAny(assignStartUserHandlerType,
                                     BpmUserTaskAssignStartUserHandlerTypeEnum.TRANSFER_DEPT_LEADER.getType())) {
-                                AdminUserRespDTO startUser = adminUserApi.getUser(Long.valueOf(processInstance.getStartUserId()));
+                                AdminUserRespDTO startUser = DataPermissionUtils.executeIgnore(
+                                        () -> adminUserApi.getUser(Long.valueOf(processInstance.getStartUserId())));
                                 cn.hutool.core.lang.Assert.notNull(startUser, "提交人({})信息为空", processInstance.getStartUserId());
-                                DeptRespDTO dept = startUser.getDeptId() != null ? deptApi.getDept(startUser.getDeptId()) : null;
+                                DeptRespDTO dept = startUser.getDeptId() != null ? DataPermissionUtils.executeIgnore(
+                                        () -> deptApi.getDept(startUser.getDeptId())) : null;
                                 cn.hutool.core.lang.Assert.notNull(dept, "提交人({})部门({})信息为空", processInstance.getStartUserId(), startUser.getDeptId());
 
                                 if (dept.getLeaderUserId() == null) {
@@ -4218,7 +4220,14 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                     }
 
                     // 3. 【极速异步发短信】：剥离组装数据逻辑，只把网络请求扔到异步线程池！
-                    AdminUserRespDTO startUser = adminUserApi.getUser(Long.valueOf(processInstance.getStartUserId()));
+                    // 方法上的数据权限注解在事务回调执行时已退出，需对通知资料查询单独忽略数据范围。
+                    // TenantUtils 上下文仍有效，不跳过租户隔离。
+                    AdminUserRespDTO startUser = DataPermissionUtils.executeIgnore(
+                            () -> adminUserApi.getUser(Long.valueOf(processInstance.getStartUserId())));
+                    if (startUser == null) {
+                        log.warn("[processTaskAssigned][taskId({}) 找不到流程发起人，跳过分配通知]", taskId);
+                        return;
+                    }
                     BpmMessageSendWhenTaskCreatedReqDTO messageDTO = BpmTaskConvert.INSTANCE.convert(processInstance, startUser, task);
                     messageDTO.setSendSms(sendSms);
 
