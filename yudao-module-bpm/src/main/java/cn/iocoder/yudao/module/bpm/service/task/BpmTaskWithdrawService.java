@@ -14,6 +14,7 @@ import org.flowable.engine.impl.bpmn.behavior.MultiInstanceActivityBehavior;
 import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
 import org.flowable.engine.impl.util.CommandContextUtil;
 import org.flowable.task.api.Task;
+import org.flowable.variable.api.persistence.entity.VariableInstance;
 import org.flowable.task.api.history.HistoricTaskInstance;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -223,11 +224,13 @@ public class BpmTaskWithdrawService {
                     && restoreWaitingMember(source, process)) return null;
             if (sourceIds.stream().noneMatch(id -> process.getVariableLocal(BpmDispatchSources.LEDGER_PREFIX + id) instanceof Map))
                 throw exception(TASK_WITHDRAW_INVALID, "新版派发记录尚未完整生成，请稍后重试，不能降级为原版撤回");
-            boolean pending = runtimeService.createVariableInstanceQuery().processInstanceId(source.getProcessInstanceId())
+            List<VariableInstance> pending = runtimeService.createVariableInstanceQuery().processInstanceId(source.getProcessInstanceId())
                     .excludeTaskVariables().variableNameLike("bpm_dispatch_pending_%").list().stream()
-                    .anyMatch(variable -> variable.getValue() instanceof Collection
-                            && !Collections.disjoint((Collection<?>) variable.getValue(), sourceIds));
-            if (pending) throw exception(TASK_WITHDRAW_INVALID, "本次派发尚有异步任务生成中，请稍后重试");
+                    .filter(variable -> variable.getValue() instanceof Collection
+                            && !Collections.disjoint((Collection<?>) variable.getValue(), sourceIds)).collect(Collectors.toList());
+            // 汇总网关等待其他分支时，目标尚未创建是正常状态；只允许撤销可核验的直接待汇总派发。
+            if (pending.stream().anyMatch(variable -> !isWaitingJoinDispatch(source, variable)))
+                throw exception(TASK_WITHDRAW_INVALID, "本次派发尚有异步任务生成中，请稍后重试");
             List<BpmTaskWithdrawTargetRespVO> allowed = inspect(source, sourceIds);
             if (all) {
                 // 非主任节点只能完整拉回本次派发，不能把“全撤”变成仅撤剩余可撤人员。
@@ -265,8 +268,20 @@ public class BpmTaskWithdrawService {
             }
             // 全批校验后再修改；一个无效成员使整个撤回回滚。
             // 主任每次成功撤回都回到拟办；先恢复，避免最后一个目标结束时提前结束流程。
-            if (!director || sources.values().stream().noneMatch(related -> hasRestoredSourceTask(related, process)))
-                restoreSource(source, process);
+            if (!director || sources.values().stream().noneMatch(related -> hasRestoredSourceTask(related, process))) {
+                Set<String> waitingScopes = pending.stream().map(VariableInstance::getExecutionId).collect(Collectors.toSet());
+                if (waitingScopes.size() > 1) throw exception(TASK_WITHDRAW_INVALID, "待汇总派发分属不同执行范围，暂不能撤回");
+                restoreSource(source, process, waitingScopes.isEmpty() ? null
+                        : CommandContextUtil.getExecutionEntityManager().findById(waitingScopes.iterator().next()));
+            }
+            for (String scopeId : pending.stream().map(VariableInstance::getExecutionId).collect(Collectors.toSet())) {
+                ExecutionEntity scope = CommandContextUtil.getExecutionEntityManager().findById(scopeId);
+                for (HistoricTaskInstance related : sources.values()) {
+                    UserTask sourceNode = (UserTask) repositoryService.getBpmnModel(related.getProcessDefinitionId())
+                            .getFlowElement(related.getTaskDefinitionKey());
+                    BpmDispatchSources.withdrawPending(scope, related.getId(), sourceNode);
+                }
+            }
             List<ExecutionEntity> emptyRoots = new ArrayList<>();
             for (Map.Entry<String, Set<Long>> entry : selected.entrySet()) {
                 ExecutionEntity root = CommandContextUtil.getExecutionEntityManager().findById(entry.getKey());
@@ -280,6 +295,31 @@ public class BpmTaskWithdrawService {
             chosenBySource.forEach((id, rows) -> writeComment(sources.get(id), userId, request.getReason(), rows));
             return null;
         });
+    }
+
+    private boolean isWaitingJoinDispatch(HistoricTaskInstance source, VariableInstance variable) {
+        FlowElement sourceNode = repositoryService.getBpmnModel(source.getProcessDefinitionId()).getFlowElement(source.getTaskDefinitionKey());
+        if (!(sourceNode instanceof UserTask)) return false;
+        for (SequenceFlow incoming : ((UserTask) sourceNode).getOutgoingFlows()) {
+            if (!BpmDispatchSources.isOptionalManualRoute(incoming)
+                    || !(incoming.getTargetFlowElement() instanceof InclusiveGateway)) continue;
+            InclusiveGateway gateway = (InclusiveGateway) incoming.getTargetFlowElement();
+            boolean targetMatches = gateway.getOutgoingFlows().stream().anyMatch(flow -> {
+                FlowElement target = flow.getTargetFlowElement();
+                return target instanceof UserTask && (flow.getConditionExpression() == null || flow.getConditionExpression().trim().isEmpty())
+                        && variable.getName().startsWith("bpm_dispatch_pending_" + target.getId().length() + "_" + target.getId() + "_");
+            });
+            if (!targetMatches) continue;
+            for (ExecutionEntity execution : CommandContextUtil.getExecutionEntityManager()
+                    .findChildExecutionsByProcessInstanceId(source.getProcessInstanceId())) {
+                if (!gateway.getId().equals(execution.getActivityId()) || execution.isActive() || execution.isSuspended()
+                        || managementService.createJobQuery().executionId(execution.getId()).count() != 0) continue;
+                for (ExecutionEntity scope = execution; scope != null; scope = scope.getParent()) {
+                    if (scope.getId().equals(variable.getExecutionId())) return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** 尚未汇总转出的并行会签，撤回的是原成员的完成动作，不新增会签分支或人数。 */
@@ -408,15 +448,16 @@ public class BpmTaskWithdrawService {
         return false;
     }
 
-    private void restoreSource(HistoricTaskInstance source, ExecutionEntity process) {
+    private void restoreSource(HistoricTaskInstance source, ExecutionEntity process, ExecutionEntity waitingScope) {
         BpmnModel model = repositoryService.getBpmnModel(source.getProcessDefinitionId());
         FlowElement element = model.getFlowElement(source.getTaskDefinitionKey());
         if (!(element instanceof UserTask) || ((UserTask) element).getSubProcess() != null)
             throw exception(TASK_WITHDRAW_INVALID, "当前来源不能恢复独立待办");
         UserTask node = (UserTask) element;
-        ExecutionEntity branch = CommandContextUtil.getExecutionEntityManager().createChildExecution(process);
+        // 待汇总派发必须恢复到原汇总范围，否则新分支会绕过仍在办理的协办、提前进入中心。
+        ExecutionEntity branch = CommandContextUtil.getExecutionEntityManager().createChildExecution(waitingScope == null ? process : waitingScope);
         branch.setActive(false); branch.setScope(false); branch.setCurrentFlowElement(BpmnModelUtils.getEndEvent(model));
-        branch.setVariableLocal(BpmDispatchSources.BRANCH, true);
+        if (waitingScope == null) branch.setVariableLocal(BpmDispatchSources.BRANCH, true);
         branch.setVariableLocal(BpmRestoredOpinion.KEY, BpmRestoredOpinion.draft(source));
         if (source.getTaskLocalVariables().get(BpmInternalDispatch.SOURCE) != null) {
             BpmInternalDispatch.prepareContext(branch, node.getId(), Long.valueOf(source.getAssignee()),
@@ -461,22 +502,36 @@ public class BpmTaskWithdrawService {
             retained.remove(Long.valueOf(source.getAssignee()));
             process.setVariableLocal(BpmTaskReturnService.RETAINED_PREFIX + original.getId(), retained);
         }
-        branch.setVariableLocal(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, new LinkedHashMap<>());
-        branch.setVariableLocal(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_UPDATE_TIME, new LinkedHashMap<>());
+        if (waitingScope == null) {
+            branch.setVariableLocal(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, new LinkedHashMap<>());
+            branch.setVariableLocal(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_UPDATE_TIME, new LinkedHashMap<>());
+        }
         java.util.regex.Pattern route = java.util.regex.Pattern.compile("\\b(?:select_node_\\d+|next_node\\d+)\\b");
-        for (SequenceFlow flow : model.getMainProcess().findFlowElementsOfType(SequenceFlow.class, true)) {
+        Collection<SequenceFlow> resetFlows = waitingScope == null
+                ? model.getMainProcess().findFlowElementsOfType(SequenceFlow.class, true) : node.getOutgoingFlows();
+        for (SequenceFlow flow : resetFlows) {
             if (flow.getConditionExpression() == null) continue;
             java.util.regex.Matcher matcher = route.matcher(flow.getConditionExpression());
-            while (matcher.find()) branch.setVariableLocal(matcher.group(), null);
+            while (matcher.find()) (waitingScope == null ? branch : waitingScope).setVariableLocal(matcher.group(), null);
         }
         if (!BpmRegisterTaskUtils.isRegisterTask(node)) branch.setVariableLocal(BpmDispatchSources.NEW_MEMBERS,
                 Collections.singletonMap(node.getId(), new LinkedHashSet<>(Collections.singleton(Long.valueOf(source.getAssignee())))));
         // 来源恢复不主动发送短信；本次撤回没有提供新的短信发送选择。
         BpmTaskSmsPolicy.prepareDefault(runtimeService, branch.getId(), node.getId(), false);
-        ExecutionEntity entry = CommandContextUtil.getExecutionEntityManager().createChildExecution(branch);
-        entry.setCurrentFlowElement(node);
         process.setVariableLocal(RESTORED + source.getId(), branch.getId());
-        CommandContextUtil.getAgenda().planContinueProcessOperation(entry);
+        if (waitingScope != null) {
+            if (!(node.getBehavior() instanceof MultiInstanceActivityBehavior))
+                throw exception(TASK_WITHDRAW_INVALID, "当前来源不支持恢复到原汇总范围");
+            // 原生 agenda 会替换入口执行流并丢弃其局部上下文；直接初始化已准备好的会签根。
+            branch.setCurrentFlowElement(node);
+            branch.setMultiInstanceRoot(true);
+            CommandContextUtil.getActivityInstanceEntityManager().recordActivityStart(branch);
+            ((MultiInstanceActivityBehavior) node.getBehavior()).execute(branch);
+        } else {
+            ExecutionEntity entry = CommandContextUtil.getExecutionEntityManager().createChildExecution(branch);
+            entry.setCurrentFlowElement(node);
+            CommandContextUtil.getAgenda().planContinueProcessOperation(entry);
+        }
     }
 
     private void cancelRoot(ExecutionEntity root) {
