@@ -10,6 +10,8 @@ import cn.iocoder.yudao.module.bpm.convert.task.BpmProcessInstanceConvert;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmProcessDefinitionInfoDO;
 import cn.iocoder.yudao.module.bpm.framework.print.BpmProcessPrintDataFactory;
 import cn.iocoder.yudao.module.bpm.framework.print.BpmProcessPrintDataHandler;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmTaskStatusEnum;
+import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmProcessDefinitionService;
 import cn.iocoder.yudao.module.bpm.service.task.BpmProcessInstanceService;
 import cn.iocoder.yudao.module.bpm.service.task.BpmTaskService;
@@ -23,6 +25,8 @@ import com.aspose.words.CellVerticalAlignment;
 import com.aspose.words.Document;
 import com.aspose.words.DocumentBuilder;
 import com.aspose.words.NodeType;
+import com.aspose.words.Node;
+import com.aspose.words.Run;
 import com.aspose.words.Paragraph;
 import com.aspose.words.ParagraphAlignment;
 import com.aspose.words.Row;
@@ -209,6 +213,11 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
         DeptRespDTO dept = startUser.getDeptId() != null ? deptApi.getDept(startUser.getDeptId()) : null;
         if (dept == null) dept = new DeptRespDTO();
         List<HistoricTaskInstance> tasks = taskService.getFinishedTaskListByProcessInstanceIdWithoutCancel(processInstanceId);
+        if ("receice_doc_v2_copy_copy".equals(historicProcessInstance.getProcessDefinitionKey())) {
+            tasks = tasks.stream()
+                    .filter(task -> isPrintableReceiveTask(task, historicProcessInstance.getProcessVariables()))
+                    .collect(Collectors.toList());
+        }
         Set<Long> assigneeIds = tasks.stream()
                 .map(HistoricTaskInstance::getAssignee)
                 .filter(StrUtil::isNotBlank)
@@ -453,7 +462,7 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
         writeSingleFromList(builder, "zgld_detail", "zgld_user", "zgld_date", mainLeaderComments);
 
         // ====== 同行动态表格书签（意见/人名/日期在同一行，可多行克隆） ======
-        fillDynamicTableRows(builder, doc, "分管领导意见", "分管领导", "分管领日期", viceLeaderComments);
+        fillDynamicTableRows(builder, doc, "分管领导意见", "分管领导", "分管领导日期", viceLeaderComments);
         fillDynamicTableRows(builder, doc, "ldzyj", "ldyj", "ldrq", leaderOpinionComments);
         fillDynamicTableRows(builder, doc, "ybzyj", "ybz", "ybzrq", readerComments);
         fillDynamicTableRows(builder, doc, "审批意见", "审批人", "审批日期", readerComments);
@@ -472,6 +481,17 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
     }
 
     // ==================== Aspose.Words 辅助 ====================
+
+    static boolean isPrintableReceiveTask(HistoricTaskInstance task, Map<String, Object> processVariables) {
+        Map<String, Object> variables = task.getTaskLocalVariables();
+        if (variables == null || !BpmTaskStatusEnum.APPROVE.getStatus()
+                .equals(variables.get(BpmnVariableConstants.TASK_VARIABLE_STATUS))) {
+            return false;
+        }
+        // 新版撤回保留原任务 APPROVE 状态，通过流程级恢复标记识别失效的原办理意见。
+        // 标记由 BpmTaskWithdrawService 在恢复原会签成员/来源任务时写入，按任务 ID 隔离。
+        return processVariables == null || processVariables.get("bpm_dispatch_restored_" + task.getId()) == null;
+    }
 
     private String formatValue(Object value) {
         if (value instanceof LocalDateTime) {
@@ -534,12 +554,32 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
     private void replaceBookmarkText(DocumentBuilder builder, String bookmarkName, String text) throws Exception {
         Bookmark bookmark = builder.getDocument().getRange().getBookmarks().get(bookmarkName);
         if (bookmark == null) return;
+        // 在清空占位文字前保存字符格式，包括主题字体、东亚字体和字号。
+        Run formatRun = null;
+        Node node = bookmark.getBookmarkStart().nextPreOrder(builder.getDocument());
+        while (node != null && node != bookmark.getBookmarkEnd()) {
+            if (node.getNodeType() == NodeType.RUN) {
+                formatRun = (Run) node.deepClone(true);
+                break;
+            }
+            node = node.nextPreOrder(builder.getDocument());
+        }
         bookmark.setText(""); // 先清空原书签占位文字
         if (builder.moveToBookmark(bookmarkName)) {
-            builder.getFont().clearFormatting();
-            builder.getFont().setName("宋体");
-            builder.getFont().setSize(12.0);
-            builder.write(text == null ? "" : text);
+            writeWithTemplateFormat(builder, formatRun, text);
+        }
+    }
+
+    private void writeWithTemplateFormat(DocumentBuilder builder, Run formatRun, String text) {
+        if (formatRun != null) {
+            // 用临时字符节点恢复模板格式，仍由 write 处理换行等控制字符。
+            formatRun.setText("");
+            builder.insertNode(formatRun);
+            builder.moveTo(formatRun);
+        }
+        builder.write(text == null ? "" : text);
+        if (formatRun != null) {
+            formatRun.remove();
         }
     }
 
@@ -627,6 +667,8 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
             Cell cell = row.getCells().get(cellIndex);
             // 保留段落样式，只清空文本内容
             Paragraph p = cell.getFirstParagraph();
+            Run formatRun = p != null && p.getRuns().getCount() > 0
+                    ? (Run) p.getRuns().get(0).deepClone(true) : null;
             if (p != null) {
                 p.getRuns().clear();
             } else {
@@ -640,10 +682,7 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
                 cell.getCellFormat().setVerticalAlignment(CellVerticalAlignment.CENTER);
             }
             builder.moveTo(cell.getFirstParagraph());
-            builder.getFont().clearFormatting();
-            builder.getFont().setName("宋体");
-            builder.getFont().setSize(12.0);
-            builder.write(StrUtil.blankToDefault(text, ""));
+            writeWithTemplateFormat(builder, formatRun, text);
         }
     }
 }

@@ -133,10 +133,11 @@ import static org.flowable.bpmn.constants.BpmnXMLConstants.*;
 @Slf4j
 public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService {
 
-    /** 流程标识:节点 ID。未配置参数时，默认只对这三个负责人节点筛选。 */
+    /** 流程标识:节点 ID。未配置参数时，对默认列表中的负责人节点筛选同部门候选人。 */
     private static final String SAME_DEPT_CANDIDATE_NODES_CONFIG = "bpm.same-dept-candidate.nodes";
     private static final String DEFAULT_SAME_DEPT_CANDIDATE_NODES =
-            "conference_report:Activity_1h0l7v8,oa_leave:Activity_1s93b00,oa_out:Activity_0578ggz";
+            "conference_report:Activity_1h0l7v8,oa_leave:Activity_1s93b00,oa_out:Activity_0578ggz,"
+                    + "lang_use:Activity_0b2tn42,lang_use:Activity_0fg3i6w";
 
     private static final String SEND_USER_GROUP_PREFIX = "bpm.send-user-group.";
 

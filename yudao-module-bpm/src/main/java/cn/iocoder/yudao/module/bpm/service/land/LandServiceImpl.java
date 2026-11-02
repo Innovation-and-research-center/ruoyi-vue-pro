@@ -10,6 +10,7 @@ import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.controller.admin.land.vo.*;
+import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.ConditionResult;
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmApprovalDetailReqVO;
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmNextTaskRespVO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.land.LandAttachDO;
@@ -153,9 +154,11 @@ public class LandServiceImpl implements LandService {
         // 同一办件串行校验登记任务，防止重复点击/并发提交重复派发。
         LandDO land = requireLand(request.getId(), true);
         Task registration = requireRegistration(userId, land);
-        Map<String, List<Long>> assignees = validateMainAssignees(userId, land, registration, request);
+        Map<String, Object> routeVariables = new HashMap<>();
+        Map<String, List<Long>> assignees = validateRegistrationAssignees(userId, land, registration, request, routeVariables);
         updateData(userId, land, request);
         Map<String, Object> variables = variables(land);
+        variables.putAll(routeVariables);
         variables.put(PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES, assignees);
         if (registerTaskService.completeOnSubmit(userId, land.getProcessInstanceId(), variables,
                 request.getSendSms()) != 1) throw exception(LAND_REGISTER_NOT_ACTIVE);
@@ -243,23 +246,52 @@ public class LandServiceImpl implements LandService {
         return variables;
     }
 
-    private Map<String, List<Long>> validateMainAssignees(Long userId, LandDO land, Task registration, LandSaveReqVO request) {
+    private Map<String, List<Long>> validateRegistrationAssignees(Long userId, LandDO land, Task registration,
+                                                               LandSaveReqVO request, Map<String, Object> routeVariables) {
         Map<String, List<Long>> requested = request.getNextNodeAssignees();
-        if (requested == null || requested.size() != 1 || CollUtil.isEmpty(requested.get(MAIN_NODE))) {
+        if (requested == null || requested.isEmpty()) {
             throw exception(LAND_ASSIGNEES_INVALID);
         }
-        Set<Long> selected = new LinkedHashSet<>(requested.get(MAIN_NODE));
-        Set<Long> allowed = new HashSet<>();
         List<BpmNextTaskRespVO> nodes = processInstanceService.getNextSelectNodes(userId,
                 new BpmApprovalDetailReqVO().setProcessInstanceId(land.getProcessInstanceId()).setTaskId(registration.getId()));
+        Map<String, BpmNextTaskRespVO> options = new HashMap<>();
         for (BpmNextTaskRespVO node : nodes) {
-            if (!MAIN_NODE.equals(node.getTaskDefKey()) || node.getCandidateUsers() == null) continue;
+            options.put(node.getTaskDefKey(), node);
+            ConditionResult condition = node.getConditionExpression();
+            // 仅接受模型声明的人工路由字段；先清空未选分支，兼容退回后重新登记。
+            if (condition != null && condition.key != null && condition.key.matches("(?:select_node_\\d+|next_node\\d+)")) {
+                routeVariables.put(condition.key, null);
+            }
+        }
+        Map<String, List<Long>> assignees = new LinkedHashMap<>();
+        for (Map.Entry<String, List<Long>> entry : requested.entrySet()) {
+            BpmNextTaskRespVO node = options.get(entry.getKey());
+            if (node == null || node.getCandidateUsers() == null || CollUtil.isEmpty(entry.getValue())) {
+                throw exception(LAND_ASSIGNEES_INVALID);
+            }
+            Set<Long> selected = new LinkedHashSet<>(entry.getValue());
+            Set<Long> allowed = new HashSet<>();
             node.getCandidateUsers().forEach(group -> {
                 if (group.getChildren() != null) group.getChildren().forEach(user -> allowed.add(user.getId()));
             });
+            if (selected.contains(null) || !allowed.containsAll(selected)
+                    || (node.getExtensionProperties() != null
+                    && "0".equals(node.getExtensionProperties().get("multiple_flag")) && selected.size() != 1)) {
+                throw exception(LAND_ASSIGNEES_INVALID);
+            }
+            ConditionResult condition = node.getConditionExpression();
+            if (condition != null) {
+                if (!routeVariables.containsKey(condition.key) || condition.value == null
+                        || (routeVariables.get(condition.key) != null
+                        && !Objects.equals(routeVariables.get(condition.key), condition.value))) {
+                    throw exception(LAND_ASSIGNEES_INVALID);
+                }
+                // 根据已校验的节点选择从服务端生成，不透传客户端流程内部变量。
+                routeVariables.put(condition.key, condition.value);
+            }
+            assignees.put(entry.getKey(), new ArrayList<>(selected));
         }
-        if (selected.contains(null) || !allowed.containsAll(selected)) throw exception(LAND_ASSIGNEES_INVALID);
-        return Collections.singletonMap(MAIN_NODE, new ArrayList<>(selected));
+        return assignees;
     }
 
     private void updateData(Long userId, LandDO land, LandSaveReqVO request) {

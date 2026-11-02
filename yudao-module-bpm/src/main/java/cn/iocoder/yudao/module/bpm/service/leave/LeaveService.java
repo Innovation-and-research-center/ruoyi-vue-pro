@@ -72,6 +72,8 @@ public interface LeaveService {
 
     PageResult<LeaveHistoryRespVO> getLeaveHistoryPage(LeavePageReqVO pageReqVO);
 
+    PageResult<LeaveRespVO> getApplicantHistoryPage(Long userId, Long leaveId, LeaveApplicantHistoryReqVO pageParam);
+
     List<LeaveTypeStatRespVO> getCurrentUserYearlyLeaveStat();
 
     List<LeaveAttachRespVO> getLeaveAttachListByLeaveId(Long leaveId);

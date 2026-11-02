@@ -1,6 +1,10 @@
 package cn.iocoder.yudao.module.bpm.service.leave;
 
 
+import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
+import cn.iocoder.yudao.framework.common.exception.enums.GlobalErrorCodeConstants;
+import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmProcessInstanceUnifiedReqVO;
+import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmProcessInstanceUnifiedRespVO;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
@@ -429,6 +433,59 @@ public class LeaveServiceImpl implements LeaveService {
         fillBpmInfoBatch(list);
 
         return new PageResult<>(list, pageResult.getTotal());
+    }
+
+    @Override
+    @DataPermission(enable = false)
+    public PageResult<LeaveRespVO> getApplicantHistoryPage(Long userId, Long leaveId,
+            LeaveApplicantHistoryReqVO pageParam) {
+        LeaveDO leave = validateLeaveExists(leaveId);
+        Long applicantId = leave.getUserid() == null ? null : leave.getUserid().longValue();
+        if (userId == null || (!Objects.equals(userId, applicantId)
+                && !permissionService.hasAnyPermissions(userId, "bpm:leave:query")
+                && !canViewLeaveProcess(userId, leave))) {
+            throw exception(GlobalErrorCodeConstants.FORBIDDEN);
+        }
+        // 缺失申请人时不能省略用户过滤，以免返回所有人的记录。
+        if (applicantId == null) {
+            return PageResult.empty();
+        }
+        LeavePageReqVO query = new LeavePageReqVO();
+        query.setPageNo(pageParam.getPageNo());
+        query.setPageSize(pageParam.getPageSize());
+        query.setUserId(applicantId);
+        query.setQxjType(pageParam.getQxjType());
+        query.setLeaveTime(pageParam.getLeaveTimeStart() != null || pageParam.getLeaveTimeEnd() != null
+                ? new LocalDateTime[]{pageParam.getLeaveTimeStart(), pageParam.getLeaveTimeEnd()}
+                : pageParam.getLeaveTime());
+        query.setOrderField("qxjStartDate");
+        query.setOrderDirection("desc");
+        return BeanUtils.toBean(leaveMapper.selectPage(query, true), LeaveRespVO.class);
+    }
+
+    private boolean canViewLeaveProcess(Long userId, LeaveDO leave) {
+        String instanceId = StrUtil.blankToDefault(leave.getProjectId(), leave.getProcessInstanceId());
+        if (StrUtil.isBlank(instanceId)) {
+            return false;
+        }
+        // 复用办件查询的可见范围，覆盖新流程参与人、历史办理人及角色授权。
+        BpmProcessInstanceUnifiedReqVO query =
+                new BpmProcessInstanceUnifiedReqVO();
+        query.setProcessInstanceId(instanceId);
+        query.setPageSize(100);
+        query.setPageNo(1);
+        while (true) {
+            PageResult<BpmProcessInstanceUnifiedRespVO> page =
+                    processInstanceService.getUnifiedProcessInstancePage(userId, query);
+            if (page.getList().stream().anyMatch(row -> instanceId.equals(row.getId())
+                    || instanceId.equals(row.getProjectId()))) {
+                return true;
+            }
+            if ((long) query.getPageNo() * query.getPageSize() >= page.getTotal() || page.getList().isEmpty()) {
+                return false;
+            }
+            query.setPageNo(query.getPageNo() + 1);
+        }
     }
 
     private void cancelBpmProcessInstance(String processInstanceId, String reason) {

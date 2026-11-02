@@ -4,6 +4,7 @@ import cn.iocoder.yudao.framework.common.exception.ServiceException;
 import cn.iocoder.yudao.module.bpm.api.task.BpmProcessInstanceApi;
 import cn.iocoder.yudao.module.bpm.api.task.dto.BpmProcessInstanceCreateReqDTO;
 import cn.iocoder.yudao.module.bpm.controller.admin.land.vo.*;
+import cn.iocoder.yudao.module.bpm.controller.admin.receivedoc.vo.ConditionResult;
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmNextTaskRespVO;
 import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmUserGroupRespVO;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.land.*;
@@ -180,6 +181,47 @@ class LandServiceTest {
     }
 
     @Test
+    void registrationUsesModelRecipientsAndDerivesRoutesInsteadOfTrustingClientVariables() {
+        BpmNextTaskRespVO director = recipientNode("Activity_0fg3i6w", 21L);
+        director.setConditionExpression(new ConditionResult("select_node_13", "director"));
+        director.setExtensionProperties(Collections.singletonMap("multiple_flag", "0"));
+        BpmNextTaskRespVO deputy = recipientNode("Activity_0b2tn42", 22L);
+        deputy.setConditionExpression(new ConditionResult("select_node_14", "deputy"));
+        when(instances.getNextSelectNodes(eq(7L), any())).thenReturn(Arrays.asList(director, deputy));
+        when(registration.completeOnSubmit(eq(7L), eq("process-10"), anyMap(), isNull())).thenReturn(1);
+        for (BpmNextTaskRespVO node : Arrays.asList(director, deputy)) {
+            Long recipient = node == director ? 21L : 22L;
+            service.submit(7L, request().setNextNodeAssignees(Collections.singletonMap(
+                    node.getTaskDefKey(), Arrays.asList(recipient, recipient)))
+                    .setProcessVariablesStr("{\"select_node_13\":\"forged\",\"select_node_14\":\"forged\",\"nrOfInstances\":0}"));
+        }
+        ArgumentCaptor<Map<String, Object>> variables = ArgumentCaptor.forClass(Map.class);
+        verify(registration, times(2)).completeOnSubmit(eq(7L), eq("process-10"), variables.capture(), isNull());
+        assertEquals("director", variables.getAllValues().get(0).get("select_node_13"));
+        assertTrue(variables.getAllValues().get(0).containsKey("select_node_14"));
+        assertNull(variables.getAllValues().get(0).get("select_node_14"));
+        assertEquals("deputy", variables.getAllValues().get(1).get("select_node_14"));
+        assertNull(variables.getAllValues().get(1).get("select_node_13"));
+        assertEquals(Collections.singletonMap(deputy.getTaskDefKey(), Collections.singletonList(22L)),
+                variables.getAllValues().get(1).get(PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES));
+        assertFalse(variables.getAllValues().get(0).containsKey("nrOfInstances"));
+    }
+
+    @Test
+    void registrationRejectsUnlistedRecipientsAndMultipleUsersForSingleSelection() {
+        BpmNextTaskRespVO director = recipientNode("Activity_0fg3i6w", 21L, 23L);
+        director.setExtensionProperties(Collections.singletonMap("multiple_flag", "0"));
+        when(instances.getNextSelectNodes(eq(7L), any())).thenReturn(Collections.singletonList(director));
+        for (List<Long> recipients : Arrays.asList(Collections.singletonList(99L), Arrays.asList(21L, 23L),
+                Collections.<Long>emptyList(), Arrays.asList(21L, null))) {
+            assertEquals(LAND_ASSIGNEES_INVALID.getCode(), assertThrows(ServiceException.class,
+                    () -> service.submit(7L, request().setNextNodeAssignees(
+                            Collections.singletonMap(director.getTaskDefKey(), recipients)))).getCode());
+        }
+        verifyNoInteractions(registration, attachments, files);
+    }
+
+    @Test
     void secondSubmissionCannotSendAfterRegistrationHasCompleted() {
         candidates(11L);
         when(registration.completeOnSubmit(eq(7L), eq("process-10"), anyMap(), isNull())).thenReturn(1);
@@ -348,12 +390,16 @@ class LandServiceTest {
     }
 
     private void candidates(Long... ids) {
+        when(instances.getNextSelectNodes(eq(7L), any())).thenReturn(Collections.singletonList(recipientNode(MAIN_NODE, ids)));
+    }
+
+    private BpmNextTaskRespVO recipientNode(String nodeId, Long... ids) {
         List<UserSimpleRespVO> users = new ArrayList<>();
         for (Long id : ids) users.add(new UserSimpleRespVO().setId(id));
         BpmUserGroupRespVO group = new BpmUserGroupRespVO(); group.setChildren(users);
-        BpmNextTaskRespVO node = new BpmNextTaskRespVO(); node.setTaskDefKey(MAIN_NODE);
+        BpmNextTaskRespVO node = new BpmNextTaskRespVO(); node.setTaskDefKey(nodeId);
         node.setCandidateUsers(Collections.singletonList(group));
-        when(instances.getNextSelectNodes(eq(7L), any())).thenReturn(Collections.singletonList(node));
+        return node;
     }
 
     private LandDO land() {

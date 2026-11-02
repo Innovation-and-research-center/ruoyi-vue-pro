@@ -252,6 +252,15 @@ public class LeaveController {
         return success(pageResult);
     }
 
+    @GetMapping("/applicant-history")
+    @Operation(summary = "获得当前请假单申请人的请假记录")
+    public CommonResult<PageResult<LeaveRespVO>> getApplicantHistory(
+            @RequestParam("leaveId") Long leaveId, @Valid LeaveApplicantHistoryReqVO pageParam) {
+        PageResult<LeaveRespVO> result = leaveService.getApplicantHistoryPage(getLoginUserId(), leaveId, pageParam);
+        normalizeHistoryStatus(result.getList());
+        return success(result);
+    }
+
     @GetMapping("/get-yearly-stat")
     @Operation(summary = "获得当前用户本年度的请假类型统计")
     public CommonResult<List<LeaveTypeStatRespVO>> getCurrentUserYearlyLeaveStat() {

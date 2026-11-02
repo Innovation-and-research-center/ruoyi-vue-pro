@@ -48,6 +48,10 @@ public interface LeaveMapper extends BaseMapperX<LeaveDO> {
     List<LeaveDO> selectDetailList(LeaveSummaryReqVO reqVO);
 
     default PageResult<LeaveDO> selectPage(LeavePageReqVO reqVO) {
+        return selectPage(reqVO, false);
+    }
+
+    default PageResult<LeaveDO> selectPage(LeavePageReqVO reqVO, boolean effectiveOnly) {
         MPJLambdaWrapperX<LeaveDO> wrapper = new MPJLambdaWrapperX<LeaveDO>()
                 .selectAll(LeaveDO.class)
                 .leftJoin(AdminUserDO.class, AdminUserDO::getId, LeaveDO::getUserid)
@@ -63,6 +67,11 @@ public interface LeaveMapper extends BaseMapperX<LeaveDO> {
                 .eqIfPresent(LeaveDO::getUserid, reqVO.getUserId())
                 .likeIfPresent(AdminUserDO::getNickname, reqVO.getNickName())
                 .neIfPresent(LeaveDO::getSpzt, BpmProcessInstanceStatusEnum.INVALID.getStatus().shortValue());
+        if (effectiveOnly) {
+            wrapper.in(LeaveDO::getSpzt,
+                    BpmProcessInstanceStatusEnum.RUNNING.getStatus().shortValue(),
+                    BpmProcessInstanceStatusEnum.APPROVE.getStatus().shortValue());
+        }
         applyEffectiveStatusFilter(wrapper, reqVO.getSpzt());
         orderBy(reqVO, wrapper);
         return selectJoinPage(reqVO, LeaveDO.class, wrapper);

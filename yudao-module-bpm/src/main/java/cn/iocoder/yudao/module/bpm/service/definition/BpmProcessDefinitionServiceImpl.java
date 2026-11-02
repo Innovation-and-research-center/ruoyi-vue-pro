@@ -206,7 +206,7 @@ public class BpmProcessDefinitionServiceImpl implements BpmProcessDefinitionServ
     }
 
     @Override
-    @Cacheable(value = RedisKeyConstants.PROCESS_DEFINITION_INFO, key = "#id", unless = "#result == null")
+    @Cacheable(value = RedisKeyConstants.PROCESS_DEFINITION_INFO, key = "#p0", unless = "#result == null")
     public BpmProcessDefinitionInfoDO getProcessDefinitionInfo(String id) {
         return processDefinitionMapper.selectByProcessDefinitionId(id);
     }
