@@ -330,11 +330,19 @@ public class BpmProcessInstanceController {
     @TenantIgnore
     @DataPermission(enable = false)
     public CommonResult<String> getProcessInstancePrintWordFile(@RequestParam("processInstanceId") String processInstanceId) throws Exception {
+        long startedAt = System.nanoTime();
         byte[] wordBytes = processWordService.generateWord(processInstanceId);
+        long generatedAt = System.nanoTime();
         String url = fileApi.createFile(wordBytes,
                 "阅办单_" + processInstanceId + ".docx",
                 "bpm/process-instance",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        long uploadedAt = System.nanoTime();
+        org.slf4j.LoggerFactory.getLogger(BpmProcessInstanceController.class).info(
+                "[getProcessInstancePrintWordFile] generateMs={}, uploadMs={}, totalMs={}",
+                (generatedAt - startedAt) / 1_000_000,
+                (uploadedAt - generatedAt) / 1_000_000,
+                (uploadedAt - startedAt) / 1_000_000);
         return success(url);
     }
 
