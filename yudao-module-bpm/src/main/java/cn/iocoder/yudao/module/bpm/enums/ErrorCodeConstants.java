@@ -18,6 +18,9 @@ public interface ErrorCodeConstants {
     ErrorCode OA_LEAVE_NOT_EXISTS = new ErrorCode(1_009_001_001, "请假申请不存在");
     ErrorCode LEAVE_NOT_EXISTS = new ErrorCode(1_009_020_001, "假期申请审批不存在");
     ErrorCode LEAVE_TIME_OVERLAP = new ErrorCode(1_009_020_002, "请假时间与已有请假记录重叠，请重新选择");
+    ErrorCode LEAVE_RECUPERATION_COUNT_EXCEEDED = new ErrorCode(1_009_020_003, "疗养假每年最多申请3次，本年度次数已用完");
+    ErrorCode LEAVE_RECUPERATION_DAYS_EXCEEDED = new ErrorCode(1_009_020_004, "疗养假每年合计不超过5天，本年度剩余{}天，本次申请{}天");
+    ErrorCode LEAVE_RECUPERATION_DAYS_INVALID = new ErrorCode(1_009_020_005, "疗养假申请天数必须大于0，且以半天为单位");
     ErrorCode RECEIVE_DOC_NOT_EXISTS = new ErrorCode(1_009_021_001,"收文不存在");
     ErrorCode RECEIVE_DOC_EXISTS = new ErrorCode(1_009_021_002,"收文编号重复");
     ErrorCode RECEIVE_DOC_ERROR= new ErrorCode(1_009_021_003,"收文编号格式不正确");

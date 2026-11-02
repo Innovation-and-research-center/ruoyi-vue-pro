@@ -132,6 +132,16 @@ public class BpmModelServiceImpl implements BpmModelService {
         // 1. 校验流程模型存在
         Model model = validateModelManager(updateReqVO.getId(), userId);
 
+        // 仅修改名称时也同步已保存的 BPMN，避免发布时模型名称与流程定义名称不一致。
+        if (!Objects.equals(model.getName(), updateReqVO.getName())
+                && ObjUtil.equals(BpmModelTypeEnum.BPMN.getType(), updateReqVO.getType())
+                && StrUtil.isEmpty(updateReqVO.getBpmnXml())) {
+            byte[] bpmnBytes = getModelBpmnXML(model.getId());
+            if (ArrayUtil.isNotEmpty(bpmnBytes)) {
+                updateReqVO.setBpmnXml(StrUtil.utf8Str(bpmnBytes));
+            }
+        }
+
         // 2. 填充 Model 信息
         BpmModelConvert.INSTANCE.copyToModel(model, updateReqVO);
 
@@ -152,7 +162,14 @@ public class BpmModelServiceImpl implements BpmModelService {
         // 2. 保存流程图
         if (ObjUtil.equals(BpmModelTypeEnum.BPMN.getType(), saveReqVO.getType())
                 && StrUtil.isNotEmpty(saveReqVO.getBpmnXml())) {
-            updateModelBpmnXml(model.getId(), saveReqVO.getBpmnXml());
+            String bpmnXml = saveReqVO.getBpmnXml();
+            BpmnModel bpmnModel = BpmnModelUtils.getBpmnModel(StrUtil.utf8Bytes(bpmnXml));
+            if (bpmnModel != null && bpmnModel.getMainProcess() != null
+                    && !Objects.equals(bpmnModel.getMainProcess().getName(), model.getName())) {
+                bpmnModel.getMainProcess().setName(model.getName());
+                bpmnXml = BpmnModelUtils.getBpmnXml(bpmnModel);
+            }
+            updateModelBpmnXml(model.getId(), bpmnXml);
         } else if (ObjUtil.equals(BpmModelTypeEnum.SIMPLE.getType(), saveReqVO.getType())
                 && saveReqVO.getSimpleModel() != null) {
             // JSON 转换成 bpmnModel

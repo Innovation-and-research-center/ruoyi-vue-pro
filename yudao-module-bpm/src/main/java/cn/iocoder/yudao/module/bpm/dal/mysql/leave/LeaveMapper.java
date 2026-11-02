@@ -43,6 +43,18 @@ public interface LeaveMapper extends BaseMapperX<LeaveDO> {
                         BpmProcessInstanceStatusEnum.APPROVE.getStatus().shortValue())) > 0;
     }
 
+    // 锁定申请人行，串行化同一人的年度额度检查和写入（包括尚无请假记录的情况）。
+    @Select("SELECT id FROM system_users WHERE id = #{userId} AND deleted = 0 FOR UPDATE")
+    Long lockApplicantForQuota(@Param("userId") Long userId);
+
+    @Select("<script>SELECT COUNT(*) AS leaveCount, COALESCE(SUM(total_ts), 0) AS totalDays "
+            + "FROM bpm_leave WHERE userid = #{userId} AND qxj_type = 10 AND spzt IN (1, 2) "
+            + "AND deleted = 0 AND qxj_start_date &gt;= #{beginTime} AND qxj_start_date &lt; #{endTime} "
+            + "<if test='excludeId != null'>AND id != #{excludeId}</if></script>")
+    LeaveTypeStatRespVO selectRecuperationQuota(@Param("userId") Long userId,
+            @Param("beginTime") LocalDateTime beginTime, @Param("endTime") LocalDateTime endTime,
+            @Param("excludeId") Long excludeId);
+
     List<LeaveSummaryRespVO> selectLeaveSummaryList(LeaveSummaryReqVO reqVO);
 
     List<LeaveDO> selectDetailList(LeaveSummaryReqVO reqVO);

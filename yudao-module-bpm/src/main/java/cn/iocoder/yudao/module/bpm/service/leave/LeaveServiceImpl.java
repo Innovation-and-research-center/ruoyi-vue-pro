@@ -73,6 +73,9 @@ public class LeaveServiceImpl implements LeaveService {
     private LeaveMapper leaveMapper;
 
     @Resource
+    private LeaveRecuperationQuotaService recuperationQuotaService;
+
+    @Resource
     private LeaveAttachMapper leaveAttachMapper;
 
     @Resource
@@ -137,6 +140,9 @@ public class LeaveServiceImpl implements LeaveService {
 
     private LeaveDO createLeaveAndProcess(Long userId, LeaveSaveReqVO createReqVO) {
         normalizePeriodTime(createReqVO);
+        if (Objects.equals(createReqVO.getQxjType(), 10)) {
+            recuperationQuotaService.lockAndValidate(userId, createReqVO, null, true);
+        }
         validateLeaveTimeOverlap(userId.intValue(), createReqVO.getQxjStartDate(),
                 createReqVO.getQxjEndDate(), createReqVO.getQxjType(), null);
         LeaveDO leave = BeanUtils.toBean(createReqVO, LeaveDO.class)
@@ -234,10 +240,17 @@ public class LeaveServiceImpl implements LeaveService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void updateLeave(LeaveSaveReqVO updateReqVO) {
         // 校验存在
         LeaveDO leave = validateLeaveExists(updateReqVO.getId());
         normalizePeriodTime(updateReqVO);
+        if (Objects.equals(leave.getQxjType(), 10) || Objects.equals(updateReqVO.getQxjType(), 10)) {
+            boolean countsTowardsQuota = Objects.equals(leave.getSpzt(), (short) 1)
+                    || Objects.equals(leave.getSpzt(), (short) 2);
+            recuperationQuotaService.lockAndValidate(leave.getUserid() == null ? null : leave.getUserid().longValue(),
+                    updateReqVO, leave.getId(), countsTowardsQuota);
+        }
         validateLeaveTimeOverlap(leave.getUserid(), updateReqVO.getQxjStartDate(),
                 updateReqVO.getQxjEndDate(), updateReqVO.getQxjType(), updateReqVO.getId());
         // 更新

@@ -213,11 +213,9 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
         DeptRespDTO dept = startUser.getDeptId() != null ? deptApi.getDept(startUser.getDeptId()) : null;
         if (dept == null) dept = new DeptRespDTO();
         List<HistoricTaskInstance> tasks = taskService.getFinishedTaskListByProcessInstanceIdWithoutCancel(processInstanceId);
-        if ("receice_doc_v2_copy_copy".equals(historicProcessInstance.getProcessDefinitionKey())) {
-            tasks = tasks.stream()
-                    .filter(task -> isPrintableReceiveTask(task, historicProcessInstance.getProcessVariables()))
-                    .collect(Collectors.toList());
-        }
+        tasks = tasks.stream()
+                .filter(task -> isPrintableTask(task, historicProcessInstance.getProcessVariables()))
+                .collect(Collectors.toList());
         Set<Long> assigneeIds = tasks.stream()
                 .map(HistoricTaskInstance::getAssignee)
                 .filter(StrUtil::isNotBlank)
@@ -271,8 +269,50 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
         }
         fillBusinessData(builder, businessData, processDefinitionKey);
         fillApprovalComments(builder, doc, printData, processDefinitionKey);
+        if ("receice_doc_v2_copy_copy".equals(processDefinitionKey)) {
+            formatReceiveHeader(doc);
+        }
 
+        useSongFont(doc);
         return doc;
+    }
+
+    /** 明确指定字体，避免 OnlyOffice 重写主题后触发不同的字体回退。 */
+    static void useSongFont(Document doc) throws Exception {
+        doc.getStyles().getDefaultFont().setName("宋体");
+        for (com.aspose.words.Style style : doc.getStyles()) {
+            if (style.getFont() != null) {
+                style.getFont().setName("宋体");
+            }
+        }
+        for (Paragraph paragraph : (Iterable<Paragraph>) doc.getChildNodes(NodeType.PARAGRAPH, true)) {
+            paragraph.getParagraphBreakFont().setName("宋体");
+        }
+        for (Run run : (Iterable<Run>) doc.getChildNodes(NodeType.RUN, true)) {
+            run.getFont().setName("宋体");
+        }
+    }
+
+    /** 收文日期和紧急程度为短字段，避免主题字体变化及默认边距导致标签折行。 */
+    static void formatReceiveHeader(Document doc) throws Exception {
+        Bookmark bookmark = doc.getRange().getBookmarks().get("cd");
+        if (bookmark == null) return;
+        Cell urgencyCell = (Cell) bookmark.getBookmarkStart().getAncestor(NodeType.CELL);
+        if (urgencyCell == null) return;
+        Row row = urgencyCell.getParentRow();
+        if (row.getCells().getCount() != 6) return;
+        for (int i = 2; i < 6; i++) {
+            Cell cell = row.getCells().get(i);
+            cell.getCellFormat().setLeftPadding(3);
+            cell.getCellFormat().setRightPadding(3);
+            cell.getCellFormat().setWrapText(false);
+            for (Paragraph paragraph : cell.getParagraphs()) {
+                paragraph.getParagraphBreakFont().setName("宋体");
+                for (Run run : paragraph.getRuns()) {
+                    run.getFont().setName("宋体");
+                }
+            }
+        }
     }
 
     // ==================== 字典处理 ====================
@@ -286,6 +326,13 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
             String label = DictFrameworkUtils.parseDictDataLabel("emergency_degree", String.valueOf(urgency));
             if (StrUtil.isNotBlank(label)) {
                 businessData.put("urgencyDegree", label);
+            }
+        }
+        Object leaveType = businessData.get("qxjType");
+        if (leaveType != null) {
+            String label = DictFrameworkUtils.parseDictDataLabel("leave_type", String.valueOf(leaveType));
+            if (StrUtil.isNotBlank(label)) {
+                businessData.put("qxjType", label);
             }
         }
         // 请假/外出 开始时段 & 结束时段（kssd / jssd）
@@ -354,7 +401,8 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
                 String bookmarkName = entry.getKey();
                 String fieldName = entry.getValue();
                 Object value = businessData.get(fieldName);
-                String text = value != null ? formatValue(value) : "";
+                String text = "conference_report".equals(processDefinitionKey) && "startDate".equals(fieldName)
+                        ? formatMeetingTime(value) : (value != null ? formatValue(value) : "");
                 replaceBookmarkText(builder, bookmarkName, text);
             }
         }
@@ -472,17 +520,39 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
         }
     }
 
-    /** 填充独立书签（不在同一行），取列表第一条 */
+    /** 同行书签逐条扩展；独立签名区有多条意见时，每条意见附带对应签名和日期。 */
     private void writeSingleFromList(DocumentBuilder builder,
                                       String detailBm, String userBm, String dateBm,
                                       List<PdfCommentInfo> comments) throws Exception {
-        PdfCommentInfo first = CollUtil.isEmpty(comments) ? null : comments.get(0);
-        writeSingleComment(builder, detailBm, userBm, dateBm, first);
+        Document doc = builder.getDocument();
+        Bookmark detail = doc.getRange().getBookmarks().get(detailBm);
+        if (detail == null) return;
+        Bookmark user = doc.getRange().getBookmarks().get(userBm);
+        Bookmark date = doc.getRange().getBookmarks().get(dateBm);
+        Node row = detail.getBookmarkStart().getAncestor(NodeType.ROW);
+        if (row != null && user != null && date != null
+                && row == user.getBookmarkStart().getAncestor(NodeType.ROW)
+                && row == date.getBookmarkStart().getAncestor(NodeType.ROW)) {
+            fillDynamicTableRows(builder, doc, detailBm, userBm, dateBm, comments);
+        } else if (CollUtil.isEmpty(comments) || comments.size() == 1) {
+            writeSingleComment(builder, detailBm, userBm, dateBm,
+                    CollUtil.isEmpty(comments) ? null : comments.get(0));
+        } else {
+            String text = comments.stream().map(comment ->
+                    StrUtil.blankToDefault(comment.getCommentDetail(), "已阅") + "\n"
+                            + StrUtil.blankToDefault(comment.getUserName(), "") + "  "
+                            + (comment.getCommentDate() == null ? "" :
+                            cn.hutool.core.date.DateUtil.format(comment.getCommentDate(), DATE_FORMAT)))
+                    .collect(Collectors.joining("\n\n"));
+            replaceBookmarkText(builder, detailBm, text);
+            replaceBookmarkText(builder, userBm, "");
+            replaceBookmarkText(builder, dateBm, "");
+        }
     }
 
     // ==================== Aspose.Words 辅助 ====================
 
-    static boolean isPrintableReceiveTask(HistoricTaskInstance task, Map<String, Object> processVariables) {
+    static boolean isPrintableTask(HistoricTaskInstance task, Map<String, Object> processVariables) {
         Map<String, Object> variables = task.getTaskLocalVariables();
         if (variables == null || !BpmTaskStatusEnum.APPROVE.getStatus()
                 .equals(variables.get(BpmnVariableConstants.TASK_VARIABLE_STATUS))) {
@@ -491,6 +561,37 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
         // 新版撤回保留原任务 APPROVE 状态，通过流程级恢复标记识别失效的原办理意见。
         // 标记由 BpmTaskWithdrawService 在恢复原会签成员/来源任务时写入，按任务 ID 隔离。
         return processVariables == null || processVariables.get("bpm_dispatch_restored_" + task.getId()) == null;
+    }
+
+    private String formatMeetingTime(Object value) {
+        if (value == null) return "";
+        String pattern = "yyyy年MM月dd日 HH:mm";
+        if (value instanceof LocalDateTime) {
+            return cn.hutool.core.date.DateUtil.format((LocalDateTime) value, pattern);
+        }
+        if (value instanceof Date) {
+            return cn.hutool.core.date.DateUtil.format((Date) value, pattern);
+        }
+        if (value instanceof List) {
+            List<?> parts = (List<?>) value;
+            if (parts.size() >= 3) {
+                LocalDateTime time = LocalDateTime.of(((Number) parts.get(0)).intValue(),
+                        ((Number) parts.get(1)).intValue(), ((Number) parts.get(2)).intValue(),
+                        parts.size() > 3 ? ((Number) parts.get(3)).intValue() : 0,
+                        parts.size() > 4 ? ((Number) parts.get(4)).intValue() : 0);
+                return cn.hutool.core.date.DateUtil.format(time, pattern);
+            }
+        }
+        String text = String.valueOf(value);
+        if (text.matches("\\d{10}|\\d{13}")) {
+            long timestamp = Long.parseLong(text);
+            return cn.hutool.core.date.DateUtil.format(new Date(text.length() == 10 ? timestamp * 1000 : timestamp), pattern);
+        }
+        try {
+            return cn.hutool.core.date.DateUtil.format(cn.hutool.core.date.DateUtil.parse(text), pattern);
+        } catch (Exception ignored) {
+            return text;
+        }
     }
 
     private String formatValue(Object value) {
