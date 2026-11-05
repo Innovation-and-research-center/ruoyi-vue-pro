@@ -449,6 +449,9 @@ public class BpmProcessWordServiceImpl implements BpmProcessWordService {
             }
             String userName = StrUtil.blankToDefault(task.getApproveName(), "");
             String commentText = StrUtil.blankToDefault(task.getContent(), "已阅");
+            if ("批量办结".equals(commentText.trim())) {
+                commentText = "已阅。";
+            }
             Date commentDate = parseDate(task.getApproveDate());
             PdfCommentInfo info = new PdfCommentInfo(commentText, userName, commentDate);
 

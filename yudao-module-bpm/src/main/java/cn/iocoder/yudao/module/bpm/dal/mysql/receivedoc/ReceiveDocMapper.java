@@ -1,5 +1,7 @@
 package cn.iocoder.yudao.module.bpm.dal.mysql.receivedoc;
 
+import com.baomidou.mybatisplus.core.enums.SqlKeyword;
+
 import java.util.*;
 
 import cn.hutool.core.util.StrUtil;
@@ -160,7 +162,7 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
 
     default void orderBy(ReceiveDocPageReqVO reqVO, MPJLambdaWrapperX<ReceiveDocDO> wrapper) {
         if (StrUtil.isBlank(reqVO.getOrderField()) || StrUtil.isBlank(reqVO.getOrderDirection())) {
-            wrapper.orderByDesc(ReceiveDocDO::getId);
+            wrapper.getExpression().add(SqlKeyword.ORDER_BY, () -> "t.receive_time DESC NULLS LAST, t.id DESC");
             return;
         }
         boolean asc = "asc".equalsIgnoreCase(reqVO.getOrderDirection());
@@ -202,7 +204,7 @@ public interface ReceiveDocMapper extends BaseMapperX<ReceiveDocDO> {
                 else wrapper.orderByDesc(ReceiveDocDO::getReceiveTime);
                 break;
             default:
-                wrapper.orderByDesc(ReceiveDocDO::getId);
+                wrapper.getExpression().add(SqlKeyword.ORDER_BY, () -> "t.receive_time DESC NULLS LAST, t.id DESC");
         }
     }
 

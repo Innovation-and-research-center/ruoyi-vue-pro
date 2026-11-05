@@ -1,5 +1,7 @@
 package cn.iocoder.yudao.module.bpm.dal.mysql.xzss;
 
+import com.baomidou.mybatisplus.core.enums.SqlKeyword;
+
 import java.util.*;
 
 import cn.hutool.core.util.StrUtil;
@@ -83,7 +85,7 @@ public interface XzssMapper extends BaseMapperX<XzssDO> {
 
     default void orderBy(XzssPageReqVO reqVO, LambdaQueryWrapperX<XzssDO> wrapper) {
         if (StrUtil.isBlank(reqVO.getOrderField()) || StrUtil.isBlank(reqVO.getOrderDirection())) {
-            wrapper.orderByDesc(XzssDO::getId);
+            wrapper.getExpression().add(SqlKeyword.ORDER_BY, () -> "sw_rq DESC NULLS LAST, id DESC");
             return;
         }
         boolean asc = "asc".equalsIgnoreCase(reqVO.getOrderDirection());
@@ -137,7 +139,7 @@ public interface XzssMapper extends BaseMapperX<XzssDO> {
                 else wrapper.orderByDesc(XzssDO::getLb5);
                 break;
             default:
-                wrapper.orderByDesc(XzssDO::getId);
+                wrapper.getExpression().add(SqlKeyword.ORDER_BY, () -> "sw_rq DESC NULLS LAST, id DESC");
         }
     }
 

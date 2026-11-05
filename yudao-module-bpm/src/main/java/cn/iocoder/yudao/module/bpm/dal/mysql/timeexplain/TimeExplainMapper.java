@@ -1,5 +1,7 @@
 package cn.iocoder.yudao.module.bpm.dal.mysql.timeexplain;
 
+import com.baomidou.mybatisplus.core.enums.SqlKeyword;
+
 import java.util.*;
 
 import cn.hutool.core.util.StrUtil;
@@ -77,7 +79,7 @@ public interface TimeExplainMapper extends BaseMapperX<TimeExplainDO> {
 
     default void orderBy(TimeExplainPageReqVO reqVO, MPJLambdaWrapperX<TimeExplainDO> wrapper) {
         if (StrUtil.isBlank(reqVO.getOrderField()) || StrUtil.isBlank(reqVO.getOrderDirection())) {
-            wrapper.orderByDesc(TimeExplainDO::getId);
+            wrapper.getExpression().add(SqlKeyword.ORDER_BY, () -> "t.check_date DESC NULLS LAST, t.id DESC");
             return;
         }
         boolean asc = "asc".equalsIgnoreCase(reqVO.getOrderDirection());
@@ -119,7 +121,7 @@ public interface TimeExplainMapper extends BaseMapperX<TimeExplainDO> {
                 else wrapper.orderByDesc(TimeExplainDO::getCheckDate);
                 break;
             default:
-                wrapper.orderByDesc(TimeExplainDO::getId);
+                wrapper.getExpression().add(SqlKeyword.ORDER_BY, () -> "t.check_date DESC NULLS LAST, t.id DESC");
         }
     }
 

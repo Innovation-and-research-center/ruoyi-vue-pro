@@ -1,5 +1,7 @@
 package cn.iocoder.yudao.module.bpm.dal.mysql.leave;
 
+import com.baomidou.mybatisplus.core.enums.SqlKeyword;
+
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -122,7 +124,7 @@ public interface LeaveMapper extends BaseMapperX<LeaveDO> {
 
     default void orderBy(LeavePageReqVO reqVO, MPJLambdaWrapperX<LeaveDO> wrapper) {
         if (StrUtil.isBlank(reqVO.getOrderField()) || StrUtil.isBlank(reqVO.getOrderDirection())) {
-            wrapper.orderByDesc(LeaveDO::getId);
+            wrapper.getExpression().add(SqlKeyword.ORDER_BY, () -> "t.apply_date DESC NULLS LAST, t.id DESC");
             return;
         }
         boolean asc = "asc".equalsIgnoreCase(reqVO.getOrderDirection());
@@ -160,7 +162,7 @@ public interface LeaveMapper extends BaseMapperX<LeaveDO> {
                 else wrapper.orderByDesc(LeaveDO::getApplyDate);
                 break;
             default:
-                wrapper.orderByDesc(LeaveDO::getId);
+                wrapper.getExpression().add(SqlKeyword.ORDER_BY, () -> "t.apply_date DESC NULLS LAST, t.id DESC");
         }
     }
 
