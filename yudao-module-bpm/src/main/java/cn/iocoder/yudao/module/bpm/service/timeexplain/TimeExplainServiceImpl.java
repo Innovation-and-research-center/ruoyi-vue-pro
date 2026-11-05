@@ -97,7 +97,8 @@ public class TimeExplainServiceImpl implements TimeExplainService {
     public Long createTimeExplain(TimeExplainSaveReqVO createReqVO) {
         normalizePeriodTime(createReqVO);
         // 插入
-        TimeExplainDO timeExplain = BeanUtils.toBean(createReqVO, TimeExplainDO.class);
+        TimeExplainDO timeExplain = BeanUtils.toBean(createReqVO, TimeExplainDO.class)
+                .setCheckDate(LocalDateTime.now());
         timeExplainMapper.insert(timeExplain);
 
         // 返回
@@ -133,6 +134,7 @@ public class TimeExplainServiceImpl implements TimeExplainService {
         normalizePeriodTime(createReqVO);
         AdminUserDO user = userService.getUser(userId);
         TimeExplainDO out = BeanUtils.toBean(createReqVO, TimeExplainDO.class)
+                .setCheckDate(LocalDateTime.now())
                 .setUserId( userId).setStatus(Long.valueOf(BpmTaskStatusEnum.RUNNING.getStatus()))
                 .setUserName(user.getNickname())
                 .setFirstType("外出").setSecondType("因公外出");
@@ -237,10 +239,11 @@ public class TimeExplainServiceImpl implements TimeExplainService {
     @Override
     public void updateTimeExplain(TimeExplainSaveReqVO updateReqVO) {
         // 校验存在
-        validateTimeExplainExists(updateReqVO.getId());
+        TimeExplainDO existing = validateTimeExplainExists(updateReqVO.getId());
         normalizePeriodTime(updateReqVO);
         // 更新
-        TimeExplainDO updateObj = BeanUtils.toBean(updateReqVO, TimeExplainDO.class);
+        TimeExplainDO updateObj = BeanUtils.toBean(updateReqVO, TimeExplainDO.class)
+                .setCheckDate(existing.getCheckDate());
         timeExplainMapper.updateById(updateObj);
 
         // 更新附件子表
@@ -282,10 +285,12 @@ public class TimeExplainServiceImpl implements TimeExplainService {
     }
 
 
-    private void validateTimeExplainExists(Long id) {
-        if (timeExplainMapper.selectById(id) == null) {
+    private TimeExplainDO validateTimeExplainExists(Long id) {
+        TimeExplainDO existing = timeExplainMapper.selectById(id);
+        if (existing == null) {
             throw exception(TIME_EXPLAIN_NOT_EXISTS);
         }
+        return existing;
     }
 
     @Override

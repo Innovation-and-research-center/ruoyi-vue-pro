@@ -16,7 +16,7 @@ public class TimeExplainSaveReqVO {
     @Schema(description = "主键", requiredMode = Schema.RequiredMode.REQUIRED, example = "15124")
     private Long id;
 
-    @Schema(description = "登记时间")
+    @Schema(description = "登记时间由服务端生成，新增和修改均忽略传入值")
     private LocalDateTime checkDate;
 
     @Schema(description = "开始时间")

@@ -2,6 +2,10 @@ package cn.iocoder.yudao.module.bpm.service.timeexplain;
 
 import cn.iocoder.yudao.framework.common.exception.ServiceException;
 import cn.iocoder.yudao.module.bpm.controller.admin.timeexplain.vo.TimeExplainSaveReqVO;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.timeexplain.TimeExplainDO;
+import cn.iocoder.yudao.module.bpm.dal.mysql.timeexplain.TimeExplainMapper;
+import cn.iocoder.yudao.module.bpm.dal.mysql.timeexplain.TimeExplainAttachMapper;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import cn.iocoder.yudao.module.system.service.holiday.HolidayService;
@@ -141,5 +145,32 @@ class TimeExplainTimeTest {
         when(holidays.getAllHolidaySummary()).thenThrow(new IllegalStateException("calendar unavailable"));
         assertThrows(IllegalStateException.class,
                 () -> ReflectionTestUtils.invokeMethod(service, "normalizePeriodTime", request));
+    }
+
+    @Test
+    void creationUsesServerRegistrationDateInsteadOfClientValue() {
+        TimeExplainMapper mapper = mock(TimeExplainMapper.class);
+        ReflectionTestUtils.setField(service, "timeExplainMapper", mapper);
+        LocalDateTime before = LocalDateTime.now();
+        service.createTimeExplain(request().setCheckDate(LocalDateTime.of(2000, 1, 1, 0, 0)));
+        ArgumentCaptor<TimeExplainDO> inserted = ArgumentCaptor.forClass(TimeExplainDO.class);
+        verify(mapper).insert(inserted.capture());
+        assertFalse(inserted.getValue().getCheckDate().isBefore(before));
+        assertFalse(inserted.getValue().getCheckDate().isAfter(LocalDateTime.now()));
+    }
+
+    @Test
+    void editingPreservesOriginalRegistrationDate() {
+        TimeExplainMapper mapper = mock(TimeExplainMapper.class);
+        TimeExplainAttachMapper attachments = mock(TimeExplainAttachMapper.class);
+        ReflectionTestUtils.setField(service, "timeExplainMapper", mapper);
+        ReflectionTestUtils.setField(service, "timeExplainAttachMapper", attachments);
+        LocalDateTime original = LocalDateTime.of(2026, 10, 1, 9, 0);
+        when(mapper.selectById(10L)).thenReturn(new TimeExplainDO().setId(10L).setCheckDate(original));
+        when(attachments.selectListByTimeExplainId(10L)).thenReturn(Collections.emptyList());
+        service.updateTimeExplain(request().setId(10L).setCheckDate(LocalDateTime.of(2000, 1, 1, 0, 0)));
+        ArgumentCaptor<TimeExplainDO> updated = ArgumentCaptor.forClass(TimeExplainDO.class);
+        verify(mapper).updateById(updated.capture());
+        assertEquals(original, updated.getValue().getCheckDate());
     }
 }
