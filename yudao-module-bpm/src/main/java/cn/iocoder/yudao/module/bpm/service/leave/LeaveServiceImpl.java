@@ -152,7 +152,7 @@ public class LeaveServiceImpl implements LeaveService {
                 createReqVO.getQxjEndDate(), createReqVO.getQxjType(), null);
         LeaveDO leave = BeanUtils.toBean(createReqVO, LeaveDO.class)
                 .setUserid(userId.intValue()).setSpzt(BpmTaskStatusEnum.RUNNING.getStatus().shortValue());
-        // 仅在首次保存时记录部门，后续调岗、部门更名和修改单据均不覆盖。
+        // 仅在首次保存时记录主部门，后续调岗、部门更名和修改单据均不覆盖。
         AdminUserRespDTO applicant = adminUserApi.getUser(userId);
         DeptRespDTO department = applicant != null && applicant.getDeptId() != null
                 ? deptApi.getDept(applicant.getDeptId()) : null;

@@ -30,6 +30,7 @@ public interface ErrorCodeConstants {
     ErrorCode CONFFLOW_ALREADY_SUBMITTED = new ErrorCode(1_009_022_003, "会议报告单已发起流程，不能重复提交");
     ErrorCode CONFFLOW_REGISTER_TASK_NOT_ACTIVE = new ErrorCode(1_009_022_004, "当前流程不在科室登记环节，不能发送");
     ErrorCode TIME_EXPLAIN_NOT_EXISTS = new ErrorCode(1_009_023_001, "外出请假补假不存在");
+    ErrorCode TIME_EXPLAIN_TIME_INVALID = new ErrorCode(1_009_023_002, "公出开始、结束时间不能为空，且结束时间不能早于开始时间");
     ErrorCode XZFY_NOT_EXISTS = new ErrorCode(1_009_024_001, "行政复议不存在");
     ErrorCode XZSS_NOT_EXISTS = new ErrorCode(1_009_025_001, "行政诉讼不存在");
     ErrorCode SEND_DOC_NOT_EXISTS = new ErrorCode(1_009_026_001, "发文不存在");

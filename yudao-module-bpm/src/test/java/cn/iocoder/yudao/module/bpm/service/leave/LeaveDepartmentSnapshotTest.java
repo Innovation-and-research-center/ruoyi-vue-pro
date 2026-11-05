@@ -26,6 +26,8 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Arrays;
+import java.util.HashSet;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -33,7 +35,7 @@ import static org.mockito.Mockito.*;
 
 class LeaveDepartmentSnapshotTest {
     @Test
-    void firstSaveCapturesApplicantsDepartment() {
+    void firstSaveCapturesOnlyPrimaryDepartmentEvenWithMultipleMemberships() {
         LeaveServiceImpl service = new LeaveServiceImpl();
         LeaveMapper mapper = mock(LeaveMapper.class);
         AdminUserApi users = mock(AdminUserApi.class);
@@ -50,7 +52,8 @@ class LeaveDepartmentSnapshotTest {
         ReflectionTestUtils.setField(service, "processInstanceApi", mock(BpmProcessInstanceApi.class));
         ReflectionTestUtils.setField(service, "bpmRegisterTaskService", mock(BpmRegisterTaskService.class));
         when(users.getUser(20L)).thenReturn(new AdminUserRespDTO().setDeptId(30L));
-        when(departments.getDept(30L)).thenReturn(new DeptRespDTO().setName("申请时科室"));
+        when(userService.getUserDeptIds(20L)).thenReturn(new HashSet<>(Arrays.asList(40L, 50L)));
+        when(departments.getDept(30L)).thenReturn(new DeptRespDTO().setId(30L).setName("主部门"));
         when(userService.getUser(20L)).thenReturn(new AdminUserDO().setNickname("测试申请人"));
         when(permissions.getUserRoleIdListByUserId(20L)).thenReturn(Collections.emptySet());
         when(roles.getRoleList(any())).thenReturn(new ArrayList<>());
@@ -59,7 +62,9 @@ class LeaveDepartmentSnapshotTest {
         }
         ArgumentCaptor<LeaveDO> inserted = ArgumentCaptor.forClass(LeaveDO.class);
         verify(mapper).insert(inserted.capture());
-        assertEquals("申请时科室", inserted.getValue().getApplyDeptName());
+        assertEquals("主部门", inserted.getValue().getApplyDeptName());
+        verify(userService, never()).getUserDeptIds(anyLong());
+        verify(departments, never()).getDeptList(any());
         assertEquals(20, inserted.getValue().getUserid());
     }
 

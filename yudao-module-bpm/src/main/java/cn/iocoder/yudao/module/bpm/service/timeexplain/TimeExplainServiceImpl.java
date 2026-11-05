@@ -21,6 +21,7 @@ import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.service.permission.PermissionService;
 import cn.iocoder.yudao.module.system.service.permission.RoleService;
 import cn.iocoder.yudao.module.system.service.user.AdminUserService;
+import cn.iocoder.yudao.module.system.service.holiday.HolidayService;
 import cn.iocoder.yudao.module.infra.dal.dataobject.file.FileDO;
 import cn.iocoder.yudao.module.infra.dal.mysql.file.FileMapper;
 import org.springframework.stereotype.Service;
@@ -30,6 +31,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.LocalDate;
+import java.time.DayOfWeek;
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
 import cn.iocoder.yudao.module.bpm.controller.admin.timeexplain.vo.*;
@@ -86,8 +90,12 @@ public class TimeExplainServiceImpl implements TimeExplainService {
     @Resource
     private BpmRegisterTaskService bpmRegisterTaskService;
 
+    @Resource
+    private HolidayService holidayService;
+
     @Override
     public Long createTimeExplain(TimeExplainSaveReqVO createReqVO) {
+        normalizePeriodTime(createReqVO);
         // 插入
         TimeExplainDO timeExplain = BeanUtils.toBean(createReqVO, TimeExplainDO.class);
         timeExplainMapper.insert(timeExplain);
@@ -117,7 +125,6 @@ public class TimeExplainServiceImpl implements TimeExplainService {
     public void createFlowOut(Long userId, TimeExplainSaveReqVO updateReqVO) {
         TimeExplainDO out = timeExplainMapper.selectById(updateReqVO.getId());
         if (out == null) throw exception(TIME_EXPLAIN_NOT_EXISTS);
-        normalizePeriodTime(updateReqVO);
         updateTimeExplain(updateReqVO);
         bpmRegisterTaskService.completeOnSubmit(userId, out.getProcessInstanceId(), buildProcessVariables(userId, updateReqVO), updateReqVO.getSendSms());
     }
@@ -181,16 +188,57 @@ public class TimeExplainServiceImpl implements TimeExplainService {
     }
 
     private void normalizePeriodTime(TimeExplainSaveReqVO reqVO) {
-        reqVO.setCheckBegin(reqVO.getCheckBegin().toLocalDate()
+        if (reqVO.getCheckBegin() == null || reqVO.getCheckEnd() == null) {
+            throw exception(TIME_EXPLAIN_TIME_INVALID);
+        }
+        // 兼容旧客户端；新客户端不传时段，直接保留自选时分。
+        if (StrUtil.isNotBlank(reqVO.getStartPeriod())) {
+            reqVO.setCheckBegin(reqVO.getCheckBegin().toLocalDate()
                 .atTime("1".equals(reqVO.getStartPeriod()) ? LocalTime.of(8, 30) : LocalTime.of(13, 30)));
-        reqVO.setCheckEnd(reqVO.getCheckEnd().toLocalDate()
+        }
+        if (StrUtil.isNotBlank(reqVO.getEndPeriod())) {
+            reqVO.setCheckEnd(reqVO.getCheckEnd().toLocalDate()
                 .atTime("1".equals(reqVO.getEndPeriod()) ? LocalTime.of(8, 30) : LocalTime.of(13, 30)));
+        }
+        if (reqVO.getCheckEnd().isBefore(reqVO.getCheckBegin())) {
+            throw exception(TIME_EXPLAIN_TIME_INVALID);
+        }
+        // 每日与上午或下午工作时段存在实际重叠，各计半天；仅触及边界不计。
+        LocalDateTime begin = reqVO.getCheckBegin();
+        LocalDateTime end = reqVO.getCheckEnd();
+        Set<String> workDays = new HashSet<>();
+        Set<String> restDays = new HashSet<>();
+        // 与请假页共用节假日汇总，补班配置优先，其次休息日，最后按周末判断。
+        for (Map<String, String> summary : holidayService.getAllHolidaySummary()) {
+            for (String date : summary.getOrDefault("workDay", "").split(",")) {
+                if (StrUtil.isNotBlank(date)) workDays.add(date.trim());
+            }
+            for (String date : summary.getOrDefault("restDay", "").split(",")) {
+                if (StrUtil.isNotBlank(date)) restDays.add(date.trim());
+            }
+        }
+        long halfDays = 0;
+        for (LocalDate date = begin.toLocalDate(); begin.isBefore(end) && !date.isAfter(end.toLocalDate());
+             date = date.plusDays(1)) {
+            if (!workDays.contains(date.toString()) && (restDays.contains(date.toString())
+                    || date.getDayOfWeek() == DayOfWeek.SATURDAY || date.getDayOfWeek() == DayOfWeek.SUNDAY)) {
+                continue;
+            }
+            if (begin.isBefore(date.atTime(11, 30)) && end.isAfter(date.atTime(8, 30))) {
+                halfDays++;
+            }
+            if (begin.isBefore(date.atTime(17, 30)) && end.isAfter(date.atTime(13, 30))) {
+                halfDays++;
+            }
+        }
+        reqVO.setDays(BigDecimal.valueOf(halfDays).divide(BigDecimal.valueOf(2)).setScale(2));
     }
 
     @Override
     public void updateTimeExplain(TimeExplainSaveReqVO updateReqVO) {
         // 校验存在
         validateTimeExplainExists(updateReqVO.getId());
+        normalizePeriodTime(updateReqVO);
         // 更新
         TimeExplainDO updateObj = BeanUtils.toBean(updateReqVO, TimeExplainDO.class);
         timeExplainMapper.updateById(updateObj);

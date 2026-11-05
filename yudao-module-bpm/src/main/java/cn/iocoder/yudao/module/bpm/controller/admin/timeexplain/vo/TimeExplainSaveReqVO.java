@@ -20,17 +20,17 @@ public class TimeExplainSaveReqVO {
     private LocalDateTime checkDate;
 
     @Schema(description = "开始时间")
+    @NotNull(message = "开始时间不能为空")
     private LocalDateTime checkBegin;
 
-    @Schema(description = "开始时段",requiredMode = Schema.RequiredMode.REQUIRED)
-    @NotNull(message = "开始时段不能为空")
+    @Schema(description = "旧客户端开始时段：1上午、2下午；自选时分不传")
     private String startPeriod;
 
     @Schema(description = "结束时间")
+    @NotNull(message = "结束时间不能为空")
     private LocalDateTime checkEnd;
 
-    @Schema(description = "结束时段",requiredMode = Schema.RequiredMode.REQUIRED)
-    @NotNull(message = "结束时段不能为空")
+    @Schema(description = "旧客户端结束时段：1上午、2下午；自选时分不传")
     private String endPeriod;
 
     @Schema(description = "原因说明", example = "不好")
