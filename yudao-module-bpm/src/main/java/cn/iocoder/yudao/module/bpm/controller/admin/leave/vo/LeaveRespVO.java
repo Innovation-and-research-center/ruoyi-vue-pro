@@ -19,6 +19,10 @@ public class LeaveRespVO {
     @Schema(description = "历史迁移旧工作流项目号")
     private String projectId;
 
+    @Schema(description = "请假时部门名称，历史数据缺失时为空")
+    @ExcelProperty("请假时部门")
+    private String applyDeptName;
+
     @Schema(description = "申请时间")
     @ExcelProperty("申请时间")
     private LocalDateTime applyDate;

@@ -41,6 +41,10 @@ public class LeaveDO extends BaseDO {
      */
     private String projectId;
     /**
+     * 请假时部门名称快照，历史数据缺失时为空
+     */
+    private String applyDeptName;
+    /**
      * 申请时间
      */
     private LocalDateTime applyDate;

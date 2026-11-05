@@ -106,4 +106,9 @@ yudao-module-bpm/src/main/resources/templates/
 # Read-only BPM task index diagnostics
 !/sql/kingbase/bpm-task-index-check.sql
 
+# Leave department snapshot migration and regression test
+!/sql/kingbase/20261105_leave_apply_department.sql
+!/sql/kingbase/20261105_leave_apply_department_backfill.sql
+!/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/service/leave/LeaveDepartmentSnapshotTest.java
+
 !/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/service/task/BpmTaskAssignedNotificationTest.java

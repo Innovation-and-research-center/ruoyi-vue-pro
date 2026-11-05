@@ -3,8 +3,6 @@ package cn.iocoder.yudao.module.bpm.controller.admin.leave;
 import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
 import cn.iocoder.yudao.framework.datapermission.core.annotation.DataPermission;
-import cn.iocoder.yudao.module.system.api.dept.DeptApi;
-import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
 import io.swagger.v3.oas.annotations.Parameters;
@@ -63,9 +61,6 @@ public class LeaveController {
 
     @Resource
     private AdminUserApi adminUserApi;
-
-    @Resource
-    private DeptApi deptApi;
 
     @Resource
     private HistoryWorkflowMapper historyWorkflowMapper;
@@ -157,13 +152,13 @@ public class LeaveController {
     @DataPermission(enable = false)
     public CommonResult<LeaveDetailRespVO> getLeave(@RequestParam("id") Long id) {
         LeaveDetailRespVO detail = leaveService.getLeaveDetail(id);
+        // 兼容现有表单使用的 deptName，不能用当前部门冒充请假时部门。
+        detail.setDeptName(StrUtil.blankToDefault(detail.getApplyDeptName(), ""));
         Long applyUserId = detail.getUserid() != null
                 ? detail.getUserid().longValue()
                 : parseCreatorUserId(detail.getCreator());
         if (applyUserId != null) {
             AdminUserRespDTO startUser = adminUserApi.getUser(applyUserId);
-            DeptRespDTO dept = startUser != null && startUser.getDeptId() != null ? deptApi.getDept(startUser.getDeptId()) : null;
-            detail.setDeptName(dept != null ? dept.getName() : "");
             detail.setNickName(startUser != null ? startUser.getNickname() : "");
         }
         normalizeHistoryStatus(Collections.singletonList(detail));

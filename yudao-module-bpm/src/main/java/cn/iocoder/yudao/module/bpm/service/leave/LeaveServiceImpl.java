@@ -22,6 +22,8 @@ import cn.iocoder.yudao.module.bpm.service.task.BpmProcessInstanceService;
 import cn.iocoder.yudao.module.bpm.service.task.BpmRegisterTaskService;
 import cn.iocoder.yudao.module.bpm.service.task.BpmTaskService;
 import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
+import cn.iocoder.yudao.module.system.api.dept.DeptApi;
+import cn.iocoder.yudao.module.system.api.dept.dto.DeptRespDTO;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
 import cn.iocoder.yudao.module.system.dal.dataobject.permission.RoleDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
@@ -100,6 +102,9 @@ public class LeaveServiceImpl implements LeaveService {
     private AdminUserApi adminUserApi;
 
     @Resource
+    private DeptApi deptApi;
+
+    @Resource
     private BpmProcessInstanceService processInstanceService;
 
     @Resource
@@ -147,6 +152,11 @@ public class LeaveServiceImpl implements LeaveService {
                 createReqVO.getQxjEndDate(), createReqVO.getQxjType(), null);
         LeaveDO leave = BeanUtils.toBean(createReqVO, LeaveDO.class)
                 .setUserid(userId.intValue()).setSpzt(BpmTaskStatusEnum.RUNNING.getStatus().shortValue());
+        // 仅在首次保存时记录部门，后续调岗、部门更名和修改单据均不覆盖。
+        AdminUserRespDTO applicant = adminUserApi.getUser(userId);
+        DeptRespDTO department = applicant != null && applicant.getDeptId() != null
+                ? deptApi.getDept(applicant.getDeptId()) : null;
+        leave.setApplyDeptName(department != null ? department.getName() : null);
         leaveMapper.insert(leave);
         createLeaveAttachList(leave.getId(), createReqVO.getFileList());
         Map<String, Object> processInstanceVariables = buildProcessVariables(userId, createReqVO);
