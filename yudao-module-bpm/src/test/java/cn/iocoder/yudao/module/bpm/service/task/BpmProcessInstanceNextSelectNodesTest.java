@@ -135,6 +135,52 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
     }
 
     @Test
+    void roleMemberSeesAllOwnDepartmentsAndSubmissionMatchesDisplay() {
+        prepare(10L, false, "role");
+        prepareMultipleDepartments(10L);
+        ConfigRespDTO config = new ConfigRespDTO();
+        config.setId(1L);
+        config.setName("发送分组");
+        config.setValue("50,40");
+        when(configApi.getConfigsByKeyPrefix(anyString())).thenReturn(Collections.singletonList(config));
+
+        BpmNextTaskRespVO loop = find(getNodes(10L), "current_internal_loop");
+
+        assertEquals(new HashSet<>(Arrays.asList(10L, 20L, 40L, 50L)), candidateIds(loop));
+        assertEquals(Arrays.asList(1L, 3L), loop.getCandidateUsers().subList(0, 2).stream()
+                .map(group -> group.getId()).collect(Collectors.toList()));
+        assertEquals(Collections.singletonList(50L), loop.getCandidateUsers().get(1).getChildren().stream()
+                .map(user -> user.getId()).collect(Collectors.toList()));
+        assertEquals(4, loop.getCandidateUsers().stream().mapToInt(group -> group.getChildren().size()).sum());
+        assertEquals(candidateIds(loop),
+                service.getInternalLoopCandidateUserIds(10L, "definition", "current", false));
+    }
+
+    @Test
+    void restrictedRecipientSeesAllOwnDepartmentsButNotUnrelatedRoleMembers() {
+        prepare(20L, true);
+        prepareMultipleDepartments(20L);
+
+        BpmNextTaskRespVO loop = find(getNodes(20L), "current_internal_loop");
+
+        assertEquals(new HashSet<>(Arrays.asList(10L, 20L, 50L)), candidateIds(loop));
+        assertEquals(candidateIds(loop),
+                service.getInternalLoopCandidateUserIds(20L, "definition", "current", true));
+        assertFalse(candidateIds(loop).contains(40L));
+    }
+
+    private void prepareMultipleDepartments(Long operatorId) {
+        when(userService.getUserDeptIds(operatorId)).thenReturn(new LinkedHashSet<>(Arrays.asList(3L, 1L)));
+        // 50 的主部门在别处，但实际兼任共同科室 3；20 同时在两个部门，只展示一次。
+        when(userService.getUserListByDeptIds(Collections.singleton(3L))).thenReturn(Arrays.asList(
+                user(20L, 1L, 0), user(50L, 9L, 0), user(60L, 3L, 1)));
+        when(deptService.getDeptList(anyCollection())).thenReturn(Arrays.asList(
+                new DeptDO().setId(1L).setName("本部门").setSort(100),
+                new DeptDO().setId(2L).setName("其他部门").setSort(1),
+                new DeptDO().setId(3L).setName("兼任科室").setSort(2)));
+    }
+
+    @Test
     void configuredGroupKeepsRoutesCandidateSetAndOriginalDefaultOrder() {
         prepare(20L, false);
         List<BpmNextTaskRespVO> original = getNodes(20L);
@@ -322,12 +368,16 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
     }
 
     private void prepare(Long loginUserId, boolean internalLoop) {
+        prepare(loginUserId, internalLoop, "group");
+    }
+
+    private void prepare(Long loginUserId, boolean internalLoop, String rule) {
         UserTask current = new UserTask();
         current.setId("current");
         property(current, "select_manually", "1");
         property(current, "loop_flag", "1");
         property(current, "specified_flag", "1");
-        property(current, "choose_rule", "group");
+        property(current, "choose_rule", rule);
         property(current, "rule_value", "7");
         UserTask next = new UserTask();
         next.setId("next");
@@ -361,9 +411,14 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
         when(historicTasks.list()).thenReturn(Collections.emptyList());
         Set<Long> groupIds = Collections.singleton(7L);
         Set<Long> memberIds = new HashSet<>(Arrays.asList(10L, 40L));
-        when(userGroupService.getUserGroupList(groupIds)).thenReturn(Collections.singletonList(
-                new BpmUserGroupDO().setId(7L).setUserIds(memberIds)));
-        when(userService.getUserList(memberIds)).thenReturn(Arrays.asList(user(10L, 1L, 0), user(40L, 2L, 0)));
+        if ("role".equals(rule)) {
+            when(userService.getUserListByRoleIds(groupIds))
+                    .thenReturn(Arrays.asList(user(10L, 1L, 0), user(40L, 2L, 0)));
+        } else {
+            when(userGroupService.getUserGroupList(groupIds)).thenReturn(Collections.singletonList(
+                    new BpmUserGroupDO().setId(7L).setUserIds(memberIds)));
+            when(userService.getUserList(memberIds)).thenReturn(Arrays.asList(user(10L, 1L, 0), user(40L, 2L, 0)));
+        }
         when(userService.getUser(loginUserId)).thenReturn(user(loginUserId, 1L, 0));
         when(userService.getUserListByDeptIds(Collections.singleton(1L))).thenReturn(Arrays.asList(
                 user(10L, 1L, 0), user(20L, 1L, 0), user(30L, 1L, 1)));

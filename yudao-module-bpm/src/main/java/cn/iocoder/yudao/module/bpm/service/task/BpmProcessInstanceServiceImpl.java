@@ -670,35 +670,23 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             });
         }
 
-        // 普通办理人：环节规则候选人 + 本部门人员；非用户组的内循环办理人：仅本部门人员。
-        // 当前部门人员来自实际部门关系表；相同人员只保留一次，并按当前部门及部门内顺序展示。
-        AdminUserDO loginUser = userService.getUser(loginUserId);
-        Long currentDeptId = loginUser != null ? loginUser.getDeptId() : null;
-        if (restrictedInternalLoop) {
-            result.stream().filter(node -> node.getTaskDefKey().endsWith("_internal_loop"))
-                    .forEach(node -> nodeCandidateMap.put(node.getTaskDefKey(), new ArrayList<>()));
-        }
-        if (currentDeptId != null) {
-            List<AdminUserDO> currentDeptUsers = userService.getUserListByDeptIds(Collections.singleton(currentDeptId))
-                    .stream()
-                    .filter(user -> CommonStatusEnum.ENABLE.getStatus().equals(user.getStatus()))
-                    .map(user -> BeanUtils.toBean(user, AdminUserDO.class)
-                            .setDeptId(currentDeptId))
-                    .collect(Collectors.toList());
-            for (BpmNextTaskRespVO node : result) {
-                if (!node.getTaskDefKey().endsWith("_internal_loop")) {
-                    continue;
-                }
-                Map<Long, AdminUserDO> mergedUsers = new LinkedHashMap<>();
-                List<AdminUserDO> ruleUsers = nodeCandidateMap.get(node.getTaskDefKey());
-                if (!restrictedInternalLoop && CollUtil.isNotEmpty(ruleUsers)) {
-                    ruleUsers.forEach(user -> mergedUsers.put(user.getId(), user));
-                }
-                currentDeptUsers.forEach(user -> mergedUsers.put(user.getId(), user));
-                nodeCandidateMap.put(node.getTaskDefKey(), new ArrayList<>(mergedUsers.values()));
+        // 内循环合并办理人主部门及兼任部门成员；受限办理人不合并节点规则候选人。
+        List<AdminUserDO> ownDeptUsers = getInternalLoopDepartmentUsers(loginUserId);
+        Set<Long> ownDeptIds = ownDeptUsers.stream().map(AdminUserDO::getDeptId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        for (BpmNextTaskRespVO node : result) {
+            if (!node.getTaskDefKey().endsWith("_internal_loop")) {
+                continue;
             }
-            deptIdsToQuery.add(currentDeptId);
+            Map<Long, AdminUserDO> mergedUsers = new LinkedHashMap<>();
+            List<AdminUserDO> ruleUsers = nodeCandidateMap.get(node.getTaskDefKey());
+            if (!restrictedInternalLoop && CollUtil.isNotEmpty(ruleUsers)) {
+                ruleUsers.forEach(user -> mergedUsers.put(user.getId(), user));
+            }
+            ownDeptUsers.forEach(user -> mergedUsers.put(user.getId(), user));
+            nodeCandidateMap.put(node.getTaskDefKey(), new ArrayList<>(mergedUsers.values()));
         }
+        deptIdsToQuery.addAll(ownDeptIds);
 
         // 统一查询所有的部门信息
         Map<Long, DeptDO> deptMap = new HashMap<>();
@@ -741,12 +729,14 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                     treeList.add(group);
                 }
 
-                BpmUserGroupRespVO currentDeptGroup = node.getTaskDefKey().endsWith("_internal_loop")
-                        ? treeList.stream().filter(group -> Objects.equals(group.getId(), currentDeptId))
-                                .findFirst().orElse(null) : null;
-                if (currentDeptGroup != null) {
-                    treeList.remove(currentDeptGroup);
-                    treeList.add(0, currentDeptGroup);
+                List<BpmUserGroupRespVO> ownDeptGroups = new ArrayList<>();
+                if (node.getTaskDefKey().endsWith("_internal_loop")) {
+                    for (Long deptId : ownDeptIds) {
+                        treeList.stream().filter(group -> Objects.equals(group.getId(), deptId))
+                                .findFirst().ifPresent(ownDeptGroups::add);
+                    }
+                    treeList.removeAll(ownDeptGroups);
+                    treeList.addAll(0, ownDeptGroups);
                 }
                 node.setCandidateUserOrderIds(treeList.stream()
                         .flatMap(group -> group.getChildren().stream())
@@ -755,11 +745,11 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                 if (BpmDeptMemberCandidateService.RULE.equals(node.getExtensionProperties().get("choose_rule"))) {
                     // 部门人员按共同科室展示，不再套用其他流程的发送用户组展示配置。
                     node.setCandidateUsers(treeList);
-                } else if (currentDeptGroup != null) {
-                    // 内循环优先展示本部门，其他部门人员再按发送分组配置展示。
+                } else if (!ownDeptGroups.isEmpty()) {
+                    // 主部门及兼任部门保留实际科室展示，其他候选人按发送分组配置展示。
                     List<BpmUserGroupRespVO> candidateGroups = new ArrayList<>();
-                    candidateGroups.add(currentDeptGroup);
-                    candidateGroups.addAll(groupConfiguredCandidates(treeList.subList(1, treeList.size()), sendUserGroups));
+                    candidateGroups.addAll(ownDeptGroups);
+                    candidateGroups.addAll(groupConfiguredCandidates(treeList.subList(ownDeptGroups.size(), treeList.size()), sendUserGroups));
                     node.setCandidateUsers(candidateGroups);
                 } else {
                     node.setCandidateUsers(groupConfiguredCandidates(treeList, sendUserGroups));
@@ -2102,13 +2092,35 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             CandidateRule rule = parseCandidateRule(properties);
             getCandidateUsers(rule.getType(), rule.getValue()).forEach(user -> result.add(user.getId()));
         }
-        AdminUserDO operator = userService.getUser(userId);
-        if (operator != null && operator.getDeptId() != null) {
-            userService.getUserListByDeptIds(Collections.singleton(operator.getDeptId())).stream()
-                    .filter(user -> CommonStatusEnum.ENABLE.getStatus().equals(user.getStatus()))
-                    .forEach(user -> result.add(user.getId()));
-        }
+        getInternalLoopDepartmentUsers(userId).forEach(user -> result.add(user.getId()));
         return result;
+    }
+
+    /** 展示和提交共用部门范围，兼任成员按共同科室归组，主部门优先且人员去重。 */
+    private List<AdminUserDO> getInternalLoopDepartmentUsers(Long userId) {
+        AdminUserDO operator = userService.getUser(userId);
+        if (operator == null) {
+            return Collections.emptyList();
+        }
+        Set<Long> deptIds = new LinkedHashSet<>();
+        if (operator.getDeptId() != null) {
+            deptIds.add(operator.getDeptId());
+        }
+        Set<Long> memberDeptIds = userService.getUserDeptIds(userId);
+        if (memberDeptIds != null) {
+            deptIds.addAll(memberDeptIds);
+        }
+        deptIds.remove(null);
+        Map<Long, AdminUserDO> members = new LinkedHashMap<>();
+        for (Long deptId : deptIds) {
+            for (AdminUserDO member : userService.getUserListByDeptIds(Collections.singleton(deptId))) {
+                if (CommonStatusEnum.ENABLE.getStatus().equals(member.getStatus())) {
+                    members.putIfAbsent(member.getId(),
+                            BeanUtils.toBean(member, AdminUserDO.class).setDeptId(deptId));
+                }
+            }
+        }
+        return new ArrayList<>(members.values());
     }
 
     @Override
