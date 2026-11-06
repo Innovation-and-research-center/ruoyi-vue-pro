@@ -25,6 +25,8 @@ import org.flowable.task.api.history.HistoricTaskInstanceQuery;
 import org.flowable.task.api.history.HistoricTaskInstance;
 import org.flowable.identitylink.api.history.HistoricIdentityLink;
 import org.junit.jupiter.api.Test;
+import cn.iocoder.yudao.module.system.dal.dataobject.userdeptmember.UserDeptMemberDO;
+import cn.iocoder.yudao.module.system.dal.mysql.userdeptmember.UserDeptMemberMapper;
 import org.mockito.Answers;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -51,11 +53,44 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
     @Mock
     private DeptService deptService;
     @Mock
+    private UserDeptMemberMapper userDeptMemberMapper;
+    @Mock
     private ConfigApi configApi;
     @Mock(answer = Answers.RETURNS_DEEP_STUBS)
     private RuntimeService runtimeService;
     @Mock
     private HistoryService historyService;
+
+    @Test
+    void sameDepartmentFilterKeepsRepeatedMembersWithoutExposingOtherDepartments() {
+        prepare(10L, false);
+        prepareMultipleDepartments(10L);
+        when(configApi.getConfigValueByKey("bpm.same-dept-candidate.nodes"))
+                .thenReturn("process:current_specified");
+        when(userService.getUserListByDeptIds(Collections.singleton(3L)))
+                .thenReturn(Arrays.asList(user(10L, 1L, 0), user(40L, 2L, 0)));
+
+        BpmNextTaskRespVO specified = find(getNodes(10L), "current_specified");
+
+        assertEquals(Arrays.asList(1L, 3L), specified.getCandidateUsers().stream()
+                .map(group -> group.getId()).collect(Collectors.toList()));
+        assertTrue(specified.getCandidateUsers().stream().allMatch(group -> group.getChildren().stream()
+                .anyMatch(user -> user.getId().equals(10L))));
+        assertEquals(2, specified.getCandidateUserOrderIds().size());
+    }
+
+    @Test
+    void roleCandidateAppearsInEveryDepartmentWithUniqueSubmissionOrder() {
+        prepare(10L, false, "role");
+        when(userDeptMemberMapper.selectListByUserIds(anyCollection())).thenReturn(Arrays.asList(
+                UserDeptMemberDO.builder().userId(40L).deptId(1L).sort(1L).build(),
+                UserDeptMemberDO.builder().userId(40L).deptId(2L).sort(2L).build()));
+        BpmNextTaskRespVO specified = find(getNodes(10L), "current_specified");
+        assertEquals(2, specified.getCandidateUsers().stream()
+                .filter(group -> group.getChildren().stream().anyMatch(user -> user.getId().equals(40L))).count());
+        assertEquals(2, specified.getCandidateUserOrderIds().size());
+        verify(userDeptMemberMapper, times(1)).selectListByUserIds(anyCollection());
+    }
 
     @Test
     void groupMemberKeepsAllRoutesEvenWhenTaskWasDispatchedByInternalLoop() {
@@ -149,9 +184,9 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
         assertEquals(new HashSet<>(Arrays.asList(10L, 20L, 40L, 50L)), candidateIds(loop));
         assertEquals(Arrays.asList(1L, 3L), loop.getCandidateUsers().subList(0, 2).stream()
                 .map(group -> group.getId()).collect(Collectors.toList()));
-        assertEquals(Collections.singletonList(50L), loop.getCandidateUsers().get(1).getChildren().stream()
+        assertEquals(Arrays.asList(20L, 50L), loop.getCandidateUsers().get(1).getChildren().stream()
                 .map(user -> user.getId()).collect(Collectors.toList()));
-        assertEquals(4, loop.getCandidateUsers().stream().mapToInt(group -> group.getChildren().size()).sum());
+        assertEquals(5, loop.getCandidateUsers().stream().mapToInt(group -> group.getChildren().size()).sum());
         assertEquals(candidateIds(loop),
                 service.getInternalLoopCandidateUserIds(10L, "definition", "current", false));
     }
@@ -171,7 +206,7 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
 
     private void prepareMultipleDepartments(Long operatorId) {
         when(userService.getUserDeptIds(operatorId)).thenReturn(new LinkedHashSet<>(Arrays.asList(3L, 1L)));
-        // 50 的主部门在别处，但实际兼任共同科室 3；20 同时在两个部门，只展示一次。
+        // 50 的主部门在别处，但实际兼任共同科室 3；20 同时在两个部门，各展示一次，提交仍去重。
         when(userService.getUserListByDeptIds(Collections.singleton(3L))).thenReturn(Arrays.asList(
                 user(20L, 1L, 0), user(50L, 9L, 0), user(60L, 3L, 1)));
         when(deptService.getDeptList(anyCollection())).thenReturn(Arrays.asList(

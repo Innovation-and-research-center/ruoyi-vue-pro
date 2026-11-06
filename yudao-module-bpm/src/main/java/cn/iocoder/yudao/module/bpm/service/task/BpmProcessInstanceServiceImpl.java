@@ -66,6 +66,8 @@ import cn.iocoder.yudao.module.system.dal.dataobject.dept.DeptDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.permission.RoleDO;
 import cn.iocoder.yudao.module.system.dal.dataobject.user.AdminUserDO;
 import cn.iocoder.yudao.module.system.enums.permission.RoleCodeEnum;
+import cn.iocoder.yudao.module.system.dal.dataobject.userdeptmember.UserDeptMemberDO;
+import cn.iocoder.yudao.module.system.dal.mysql.userdeptmember.UserDeptMemberMapper;
 import cn.iocoder.yudao.module.system.service.dept.DeptService;
 import cn.iocoder.yudao.module.system.service.user.AdminUserService;
 import com.baomidou.mybatisplus.core.metadata.IPage;
@@ -184,6 +186,9 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
     @Resource
     private DeptService deptService;
+
+    @Resource
+    private UserDeptMemberMapper userDeptMemberMapper;
 
     @Resource
     private BpmProcessInstanceUnifiedMapper unifiedMapper;
@@ -608,7 +613,8 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                 CandidateRule rule = parseCandidateRule(node.getExtensionProperties());
                 if (rule != null) {
                     List<AdminUserDO> users = BpmDeptMemberCandidateService.RULE.equals(rule.getType())
-                            ? deptMemberCandidateService.getCandidates(loginUserId)
+                            ? getInternalLoopDepartmentUsers(loginUserId).stream()
+                                    .filter(user -> !Objects.equals(loginUserId, user.getId())).collect(Collectors.toList())
                             : getCandidateUsers(rule.getType(), rule.getValue());
                     if (sameDeptCandidateNodes.contains(processDefinition.getKey() + ":" + node.getTaskDefKey())) {
                         if (submitterDeptIds == null) {
@@ -670,6 +676,37 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             });
         }
 
+        // 普通角色/用户组候选人按实际所属部门展开；部门范围规则保持已经筛选过的共同科室。
+        Set<String> expandNodes = result.stream()
+                .filter(node -> nodeCandidateMap.containsKey(node.getTaskDefKey()))
+                .filter(node -> !sameDeptCandidateMap.containsKey(node.getTaskDefKey()))
+                .filter(node -> !BpmDeptMemberCandidateService.RULE.equals(node.getExtensionProperties().get("choose_rule")))
+                .map(BpmNextTaskRespVO::getTaskDefKey).collect(Collectors.toSet());
+        Set<Long> expandUserIds = nodeCandidateMap.entrySet().stream()
+                .filter(entry -> expandNodes.contains(entry.getKey()))
+                .flatMap(entry -> entry.getValue().stream()).map(AdminUserDO::getId).collect(Collectors.toSet());
+        if (!expandUserIds.isEmpty()) {
+            Map<Long, List<UserDeptMemberDO>> memberships = userDeptMemberMapper.selectListByUserIds(expandUserIds)
+                    .stream().collect(Collectors.groupingBy(UserDeptMemberDO::getUserId));
+            nodeCandidateMap.replaceAll((key, users) -> {
+                if (!expandNodes.contains(key)) return users;
+                Map<String, AdminUserDO> expanded = new LinkedHashMap<>();
+                for (AdminUserDO user : users) {
+                    // 历史账号没有成员关系时仍保留主部门。
+                    if (user.getDeptId() != null || !memberships.containsKey(user.getId())) {
+                        expanded.put(user.getDeptId() + ":" + user.getId(), user);
+                    }
+                    for (UserDeptMemberDO member : memberships.getOrDefault(user.getId(), Collections.emptyList())) {
+                        if (member.getDeptId() == null) continue;
+                        expanded.put(member.getDeptId() + ":" + user.getId(),
+                                BeanUtils.toBean(user, AdminUserDO.class).setDeptId(member.getDeptId()).setSort(member.getSort()));
+                        deptIdsToQuery.add(member.getDeptId());
+                    }
+                }
+                return new ArrayList<>(expanded.values());
+            });
+        }
+
         // 内循环合并办理人主部门及兼任部门成员；受限办理人不合并节点规则候选人。
         List<AdminUserDO> ownDeptUsers = getInternalLoopDepartmentUsers(loginUserId);
         Set<Long> ownDeptIds = ownDeptUsers.stream().map(AdminUserDO::getDeptId)
@@ -678,12 +715,12 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             if (!node.getTaskDefKey().endsWith("_internal_loop")) {
                 continue;
             }
-            Map<Long, AdminUserDO> mergedUsers = new LinkedHashMap<>();
+            Map<String, AdminUserDO> mergedUsers = new LinkedHashMap<>();
             List<AdminUserDO> ruleUsers = nodeCandidateMap.get(node.getTaskDefKey());
             if (!restrictedInternalLoop && CollUtil.isNotEmpty(ruleUsers)) {
-                ruleUsers.forEach(user -> mergedUsers.put(user.getId(), user));
+                ruleUsers.forEach(user -> mergedUsers.put(user.getDeptId() + ":" + user.getId(), user));
             }
-            ownDeptUsers.forEach(user -> mergedUsers.put(user.getId(), user));
+            ownDeptUsers.forEach(user -> mergedUsers.put(user.getDeptId() + ":" + user.getId(), user));
             nodeCandidateMap.put(node.getTaskDefKey(), new ArrayList<>(mergedUsers.values()));
         }
         deptIdsToQuery.addAll(ownDeptIds);
@@ -869,12 +906,9 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             return result;
         }
         Map<Long, AdminUserDO> candidateById = CollectionUtils.convertMap(candidates, AdminUserDO::getId);
-        Set<Long> shownUserIds = new HashSet<>();
         for (Long deptId : submitterDeptIds) {
             List<AdminUserDO> matched = userService.getUserListByDeptIds(Collections.singleton(deptId)).stream()
                     .filter(member -> candidateById.containsKey(member.getId()))
-                    // el-tree 的 node-key 使用人员 ID，同一候选人只在第一个共同科室展示一次。
-                    .filter(member -> shownUserIds.add(member.getId()))
                     .map(member -> BeanUtils.toBean(candidateById.get(member.getId()), AdminUserDO.class)
                             .setDeptId(deptId).setSort(member.getSort()))
                     .filter(Objects::nonNull)
@@ -2096,7 +2130,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         return result;
     }
 
-    /** 展示和提交共用部门范围，兼任成员按共同科室归组，主部门优先且人员去重。 */
+    /** 展示和提交共用部门范围，兼任成员在每个共同科室展示，主部门优先，提交时按人员 ID 去重。 */
     private List<AdminUserDO> getInternalLoopDepartmentUsers(Long userId) {
         AdminUserDO operator = userService.getUser(userId);
         if (operator == null) {
@@ -2111,11 +2145,11 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             deptIds.addAll(memberDeptIds);
         }
         deptIds.remove(null);
-        Map<Long, AdminUserDO> members = new LinkedHashMap<>();
+        Map<String, AdminUserDO> members = new LinkedHashMap<>();
         for (Long deptId : deptIds) {
             for (AdminUserDO member : userService.getUserListByDeptIds(Collections.singleton(deptId))) {
                 if (CommonStatusEnum.ENABLE.getStatus().equals(member.getStatus())) {
-                    members.putIfAbsent(member.getId(),
+                    members.putIfAbsent(deptId + ":" + member.getId(),
                             BeanUtils.toBean(member, AdminUserDO.class).setDeptId(deptId));
                 }
             }

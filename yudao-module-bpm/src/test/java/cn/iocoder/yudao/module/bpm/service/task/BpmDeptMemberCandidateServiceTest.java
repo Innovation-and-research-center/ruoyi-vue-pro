@@ -142,6 +142,9 @@ class BpmDeptMemberCandidateServiceTest {
         when(users.getUser(1L)).thenReturn(user(1L, 10L, 0));
         when(users.getUserListByDeptIds(Collections.singleton(10L)))
                 .thenReturn(Collections.singletonList(user(11L, 99L, 0)));
+        when(users.getUserDeptIds(1L)).thenReturn(Collections.singleton(20L));
+        when(users.getUserListByDeptIds(Collections.singleton(20L)))
+                .thenReturn(Collections.singletonList(user(11L, 99L, 0)));
         BpmProcessInstanceServiceImpl instances = new BpmProcessInstanceServiceImpl();
         BpmProcessDefinitionService definitions = mock(BpmProcessDefinitionService.class);
         DeptService departments = mock(DeptService.class);
@@ -169,7 +172,7 @@ class BpmDeptMemberCandidateServiceTest {
         source.setOutgoingFlows(Collections.singletonList(flow));
         when(definitions.getProcessDefinitionBpmnModel("definition")).thenReturn(model);
         DeptDO dept = new DeptDO(); dept.setId(10L); dept.setName("共同科室");
-        when(departments.getDeptList(anyCollection())).thenReturn(Collections.singletonList(dept));
+        when(departments.getDeptList(anyCollection())).thenReturn(Arrays.asList(dept, new DeptDO().setId(20L).setName("兼任科室")));
 
         List<BpmNextTaskRespVO> result = instances.getNextSelectNodes(1L,
                 new BpmApprovalDetailReqVO().setProcessDefinitionId("definition").setActivityId("source"));
@@ -177,6 +180,9 @@ class BpmDeptMemberCandidateServiceTest {
         assertEquals("dept_members", result.get(0).getExtensionProperties().get("choose_rule"));
         assertEquals(10L, result.get(0).getCandidateUsers().get(0).getId());
         assertEquals(11L, result.get(0).getCandidateUsers().get(0).getChildren().get(0).getId());
+        assertEquals(2, result.get(0).getCandidateUsers().size());
+        assertEquals(11L, result.get(0).getCandidateUsers().get(1).getChildren().get(0).getId());
+        assertEquals(Collections.singletonList(11L), result.get(0).getCandidateUserOrderIds());
     }
 
     @Test
