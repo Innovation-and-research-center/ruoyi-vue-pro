@@ -175,7 +175,9 @@ public class BpmTaskReturnService {
         if (!ancestors.isEmpty()) result.put(task.getTaskDefinitionKey(), ancestors);
         List<HistoricTaskInstance> history = historyService.createHistoricTaskInstanceQuery()
                 .processInstanceId(task.getProcessInstanceId()).finished().includeTaskLocalVariables().list();
+        UserTask registration = initialRegistration(model);
         for (String node : path) {
+            if (registration != null && registration.getId().equals(node)) continue;
             if (node.equals(task.getTaskDefinitionKey()) || !(model.getFlowElement(node) instanceof UserTask)) continue;
             if (!BpmnModelUtils.isSequentialReachable(model.getFlowElement(task.getTaskDefinitionKey()), model.getFlowElement(node), null)) continue;
             Object batch = batches.get(node);
@@ -188,7 +190,27 @@ public class BpmTaskReturnService {
             // 无批次的历史只允许实际路径内唯一一次办理，不用时间窗口猜测轮次。
             if (!matches.isEmpty() && (batch != null || matches.size() == 1)) result.put(node, matches);
         }
+        // 登记是重新办理入口，只确定固定登记人，不按历史轮次恢复某次登记。
+        if (registration != null && !registration.getId().equals(task.getTaskDefinitionKey())
+                && BpmnModelUtils.isSequentialReachable(model.getFlowElement(task.getTaskDefinitionKey()), registration, null)
+                && flowableTaskService.createTaskQuery().processInstanceId(task.getProcessInstanceId())
+                .taskDefinitionKey(registration.getId()).active().count() == 0) {
+            List<HistoricTaskInstance> registrations = history.stream()
+                    .filter(h -> registration.getId().equals(h.getTaskDefinitionKey()) && h.getAssignee() != null
+                            && BpmTaskStatusEnum.APPROVE.getStatus().equals(h.getTaskLocalVariables().get(BpmnVariableConstants.TASK_VARIABLE_STATUS)))
+                    .collect(Collectors.toList());
+            if (registrations.stream().map(HistoricTaskInstance::getAssignee).distinct().count() == 1)
+                result.put(registration.getId(), registrations);
+        }
         return result;
+    }
+
+    /** 按模型识别初始登记，不能把“登记中心”或上诉阶段的同名节点当作入口。 */
+    private UserTask initialRegistration(BpmnModel model) {
+        List<StartEvent> starts = model.getMainProcess().findFlowElementsOfType(StartEvent.class);
+        if (starts.size() != 1 || starts.get(0).getOutgoingFlows().size() != 1) return null;
+        FlowElement entry = starts.get(0).getOutgoingFlows().get(0).getTargetFlowElement();
+        return entry instanceof UserTask && BpmRegisterTaskUtils.isRegisterTask(entry) ? (UserTask) entry : null;
     }
 
     public List<BpmTaskReturnTargetRespVO> targets(Long userId, String taskId) {
@@ -238,6 +260,12 @@ public class BpmTaskReturnService {
             ExecutionEntity process = CommandContextUtil.getExecutionEntityManager().findById(task.getProcessInstanceId());
             if (process == null || process.isSuspended() || process.isEnded()) throw exception(TASK_RETURN_INVALID, "流程已结束或挂起");
             process.forceUpdate();
+            BpmnModel model = repositoryService.getBpmnModel(task.getProcessDefinitionId());
+            UserTask registration = initialRegistration(model);
+            boolean registrationReturn = registration != null && registration.getId().equals(request.getTargetTaskDefinitionKey());
+            if (registrationReturn && flowableTaskService.createTaskQuery().processInstanceId(task.getProcessInstanceId())
+                    .taskDefinitionKey(registration.getId()).active().count() > 0)
+                throw exception(TASK_RETURN_INVALID, "已有登记待办，请完成登记后再退回，不能重复生成登记任务");
             List<HistoricTaskInstance> histories = histories(task).get(request.getTargetTaskDefinitionKey());
             if (histories == null) throw exception(TASK_RETURN_INVALID, "目标不在当前任务可核验的历史路径和轮次中");
             if (request.getTargetTaskId() != null) histories = histories.stream().filter(h -> request.getTargetTaskId().equals(h.getId())).collect(Collectors.toList());
@@ -251,7 +279,6 @@ public class BpmTaskReturnService {
             if (selected.size() != 1 || !eligible.contains(selected.get(0))) throw exception(TASK_RETURN_INVALID, "只能选择本次历史节点的一名办理人");
             Long assignee = selected.get(0);
             adminUserApi.validateUser(assignee);
-            BpmnModel model = repositoryService.getBpmnModel(task.getProcessDefinitionId());
             UserTask target = (UserTask) model.getFlowElement(request.getTargetTaskDefinitionKey());
             ExecutionEntity child = CommandContextUtil.getExecutionEntityManager().findById(task.getExecutionId());
             ExecutionEntity root = child.getParent();
@@ -262,8 +289,9 @@ public class BpmTaskReturnService {
                     && (((UserTask) root.getCurrentFlowElement()).getBehavior() instanceof BpmParallelMultiInstanceBehavior
                     || ((UserTask) root.getCurrentFlowElement()).getBehavior() instanceof BpmSequentialMultiInstanceBehavior)))
                 throw exception(TASK_RETURN_INVALID, "不支持当前会签执行类型");
-            Map<String, Object> context = context(task);
-            List<String> path = path(context);
+            Map<String, Object> context = registrationReturn ? new HashMap<>() : context(task);
+            List<String> path = registrationReturn
+                    ? new ArrayList<>(Arrays.asList(target.getId(), task.getTaskDefinitionKey())) : path(context);
             boolean internalReturn = target.getId().equals(task.getTaskDefinitionKey());
             HistoricTaskInstance internalTarget = null;
             if (internalReturn) {
@@ -289,16 +317,16 @@ public class BpmTaskReturnService {
             branch.setVariableLocal(BpmDispatchSources.BRANCH, true);
             List<HistoricTaskInstance> opinionSources = histories.stream()
                     .filter(h -> assignee.toString().equals(h.getAssignee())).collect(Collectors.toList());
-            if (opinionSources.size() == 1)
+            if (!registrationReturn && opinionSources.size() == 1)
                 branch.setVariableLocal(BpmRestoredOpinion.KEY, BpmRestoredOpinion.draft(opinionSources.get(0)));
             branch.setVariableLocal(SCOPE, scope);
             Map<String, Set<String>> retainedSources = new LinkedHashMap<>();
-            Object inheritedSources = child.getVariable(RETAINED_SOURCES);
+            Object inheritedSources = registrationReturn ? null : child.getVariable(RETAINED_SOURCES);
             if (inheritedSources instanceof Map) ((Map<?, ?>) inheritedSources).forEach((key, value) -> {
                 if (value instanceof Collection) retainedSources.put(key.toString(), ((Collection<?>) value).stream()
                         .map(Object::toString).collect(Collectors.toCollection(LinkedHashSet::new)));
             });
-            histories(task).forEach((key, records) -> retainedSources.computeIfAbsent(key, ignored -> new LinkedHashSet<>())
+            if (!registrationReturn) histories(task).forEach((key, records) -> retainedSources.computeIfAbsent(key, ignored -> new LinkedHashSet<>())
                     .addAll(records.stream().map(HistoricTaskInstance::getId).collect(Collectors.toSet())));
             branch.setVariableLocal(RETAINED_SOURCES, retainedSources);
             branch.setVariableLocal(TARGET, target.getId());

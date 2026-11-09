@@ -9,6 +9,17 @@ import cn.iocoder.yudao.module.system.api.user.AdminUserApi;
 import cn.iocoder.yudao.module.system.service.dept.DeptService;
 import cn.iocoder.yudao.module.system.dal.dataobject.dept.DeptDO;
 import cn.iocoder.yudao.module.system.api.user.dto.AdminUserRespDTO;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.runtime.ProcessInstanceQuery;
+import org.flowable.task.api.history.HistoricTaskInstance;
+import org.flowable.task.api.history.HistoricTaskInstanceQuery;
+import org.springframework.test.util.ReflectionTestUtils;
+import cn.iocoder.yudao.module.bpm.service.definition.BpmProcessDefinitionService;
+import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmProcessDefinitionInfoDO;
+import cn.iocoder.yudao.module.bpm.controller.admin.task.vo.instance.BpmProcessInstanceCancelReqVO;
+import cn.iocoder.yudao.module.bpm.enums.task.BpmProcessInstanceStatusEnum;
+import cn.iocoder.yudao.framework.common.exception.ServiceException;
+import static cn.iocoder.yudao.module.bpm.enums.ErrorCodeConstants.*;
 import org.flowable.bpmn.model.*;
 import org.flowable.engine.*;
 import org.flowable.engine.delegate.DelegateExecution;
@@ -842,5 +853,101 @@ class BpmTaskReturnTest {
         }
         engine.getRepositoryService().createDeployment().addBpmnModel("sms.bpmn20.xml", model).deploy();
         return engine.getRuntimeService().startProcessInstanceByKey(processKey, Collections.singletonMap(BpmProcessOperationVersion.KEY, BpmProcessOperationVersion.CURRENT)).getId();
+    }
+    @Test
+    void returnedRegistrationAllowsCancellingWholeProcessIncludingOtherPendingTasks() {
+        CancelFixture fixture = new CancelFixture();
+        fixture.pending(true, SOURCE, "target");
+        fixture.service.cancelProcessInstanceByStartUser(20L, fixture.request);
+        verify(fixture.tasks).moveTaskToEnd(eq("process"), anyString());
+        verify(fixture.runtime).setVariable("process", BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_STATUS,
+                BpmProcessInstanceStatusEnum.CANCEL.getStatus());
+    }
+
+    @Test
+    void registrationWithoutReturnFlagAndOrdinaryReturnedNodeStillBlockCancel() {
+        CancelFixture initial = new CancelFixture();
+        initial.pending(false, SOURCE);
+        assertEquals(PROCESS_INSTANCE_CANCEL_FAIL_NEXT_NODE_APPROVED.getCode(), assertThrows(ServiceException.class,
+                () -> initial.service.cancelProcessInstanceByStartUser(20L, initial.request)).getCode());
+        verify(initial.tasks, never()).moveTaskToEnd(anyString(), anyString());
+
+        CancelFixture ordinary = new CancelFixture();
+        ordinary.pending(true, "target");
+        assertEquals(PROCESS_INSTANCE_CANCEL_FAIL_NEXT_NODE_APPROVED.getCode(), assertThrows(ServiceException.class,
+                () -> ordinary.service.cancelProcessInstanceByStartUser(20L, ordinary.request)).getCode());
+        verify(ordinary.tasks, never()).moveTaskToEnd(anyString(), anyString());
+    }
+
+    @Test
+    void completedRegistrationHistoryAloneDoesNotAllowCancellation() {
+        CancelFixture fixture = new CancelFixture();
+        fixture.pending(false, "target");
+        assertThrows(ServiceException.class, () -> fixture.service.cancelProcessInstanceByStartUser(20L, fixture.request));
+        verify(fixture.tasks, never()).moveTaskToEnd(anyString(), anyString());
+    }
+
+    @Test
+    void returnedRegistrationStillRequiresStarterAndCancellationPermission() {
+        CancelFixture fixture = new CancelFixture();
+        fixture.pending(true, SOURCE);
+        assertEquals(PROCESS_INSTANCE_CANCEL_FAIL_NOT_SELF.getCode(), assertThrows(ServiceException.class,
+                () -> fixture.service.cancelProcessInstanceByStartUser(30L, fixture.request)).getCode());
+        fixture.definition.setAllowCancelRunningProcess(false);
+        assertEquals(PROCESS_INSTANCE_CANCEL_FAIL_NOT_ALLOW.getCode(), assertThrows(ServiceException.class,
+                () -> fixture.service.cancelProcessInstanceByStartUser(20L, fixture.request)).getCode());
+        verify(fixture.tasks, never()).moveTaskToEnd(anyString(), anyString());
+    }
+
+    private class CancelFixture {
+        final BpmProcessInstanceServiceImpl service = spy(new BpmProcessInstanceServiceImpl());
+        final RuntimeService runtime = mock(RuntimeService.class, RETURNS_DEEP_STUBS);
+        final BpmTaskService tasks = mock(BpmTaskService.class);
+        final BpmProcessDefinitionInfoDO definition = new BpmProcessDefinitionInfoDO();
+        final BpmProcessInstanceCancelReqVO request = new BpmProcessInstanceCancelReqVO();
+
+        CancelFixture() {
+            String example = start(false, false, true);
+            BpmnModel model = engine.getRepositoryService().getBpmnModel(engine.getRuntimeService()
+                    .createProcessInstanceQuery().processInstanceId(example).singleResult().getProcessDefinitionId());
+            ProcessInstance instance = mock(ProcessInstance.class);
+            when(instance.getId()).thenReturn("process");
+            when(instance.getStartUserId()).thenReturn("20");
+            when(instance.getProcessDefinitionId()).thenReturn("definition");
+            doReturn(instance).when(service).getProcessInstance("process");
+            BpmProcessDefinitionService definitions = mock(BpmProcessDefinitionService.class);
+            definition.setAllowCancelRunningProcess(true);
+            when(definitions.getProcessDefinitionInfo("definition")).thenReturn(definition);
+            when(definitions.getProcessDefinitionBpmnModel("definition")).thenReturn(model);
+            HistoryService history = mock(HistoryService.class);
+            HistoricTaskInstanceQuery query = mock(HistoricTaskInstanceQuery.class, RETURNS_SELF);
+            when(history.createHistoricTaskInstanceQuery()).thenReturn(query);
+            HistoricTaskInstance approved = mock(HistoricTaskInstance.class);
+            when(approved.getTaskDefinitionKey()).thenReturn("target");
+            when(approved.getAssignee()).thenReturn("30");
+            when(approved.getTaskLocalVariables()).thenReturn(Collections.singletonMap(BpmnVariableConstants.TASK_VARIABLE_STATUS, 2));
+            when(query.list()).thenReturn(Collections.singletonList(approved));
+            ProcessInstanceQuery children = mock(ProcessInstanceQuery.class, RETURNS_SELF);
+            when(runtime.createProcessInstanceQuery()).thenReturn(children);
+            when(children.list()).thenReturn(Collections.emptyList());
+            ReflectionTestUtils.setField(service, "runtimeService", runtime);
+            ReflectionTestUtils.setField(service, "historyService", history);
+            ReflectionTestUtils.setField(service, "processDefinitionService", definitions);
+            ReflectionTestUtils.setField(service, "taskService", tasks);
+            request.setId("process"); request.setReason("退回后取消申请");
+        }
+
+        void pending(boolean returned, String... nodes) {
+            List<Task> pending = new ArrayList<>();
+            for (String node : nodes) {
+                Task task = mock(Task.class);
+                when(task.getTaskDefinitionKey()).thenReturn(node);
+                when(task.getExecutionId()).thenReturn("execution-" + node);
+                when(runtime.getVariable("execution-" + node,
+                        String.format(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_RETURN_FLAG, node))).thenReturn(returned);
+                pending.add(task);
+            }
+            when(tasks.getRunningTaskListByProcessInstanceId("process", null, null)).thenReturn(pending);
+        }
     }
 }

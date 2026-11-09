@@ -117,7 +117,7 @@ class BpmRegisterMultiInstanceTest {
     }
 
     @Test
-    void registrationReturnFindsExactSourceAndSupportsRepeatedResubmission() {
+    void registrationReturnUsesFixedRegistrantAcrossRoundsWithoutProvenance() {
         deploy(true, true);
         when(candidates.calculateUsersByTask(any())).thenAnswer(call -> {
             org.flowable.engine.delegate.DelegateExecution execution = call.getArgument(0);
@@ -127,14 +127,16 @@ class BpmRegisterMultiInstanceTest {
                 Collections.singletonMap(BpmProcessOperationVersion.KEY, BpmProcessOperationVersion.CURRENT)).getId();
         assertEquals(1, registers.claim(7L, instance));
         BpmTaskReturnService returns = returnService();
-        for (int round = 0; round < 2; round++) {
+        for (int round = 0; round < 3; round++) {
             assertEquals(1, registers.completeOnSubmit(7L, instance,
                     Collections.singletonMap(PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES,
                             Collections.singletonMap(MAIN_NODE, Collections.singletonList(8L))), false));
             Task main = engine.getTaskService().createTaskQuery().processInstanceId(instance)
                     .taskDefinitionKey(MAIN_NODE).singleResult();
+            String root = engine.getRuntimeService().createExecutionQuery().executionId(main.getExecutionId()).singleResult().getParentId();
+            engine.getRuntimeService().removeVariableLocal(root, BpmDispatchSources.SOURCES);
             java.util.List<cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskReturnTargetRespVO> targets = returns.targets(8L, main.getId());
-            assertEquals(1, targets.size(), "主办应能找到本轮真实来源登记，而不是没有可退回节点");
+            assertEquals(1, targets.size(), "登记不依赖来源及轮次，三次重新登记后仍应可退回");
             assertEquals(REGISTER_NODE, targets.get(0).getTaskDefinitionKey());
             assertEquals(7L, targets.get(0).getAssignees().get(0).getId());
             cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskReturnReqVO request =
@@ -145,6 +147,7 @@ class BpmRegisterMultiInstanceTest {
             Task register = engine.getTaskService().createTaskQuery().processInstanceId(instance).singleResult();
             assertEquals(REGISTER_NODE, register.getTaskDefinitionKey());
             assertEquals("7", register.getAssignee());
+            assertNull(engine.getRuntimeService().getVariable(register.getExecutionId(), BpmRestoredOpinion.KEY), "登记不恢复某一轮旧意见");
         }
         assertEquals(1, registers.completeOnSubmit(7L, instance,
                 Collections.singletonMap(PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES,
@@ -156,7 +159,7 @@ class BpmRegisterMultiInstanceTest {
     }
 
     @Test
-    void registrationReturnDoesNotGuessMissingForeignOrUnrelatedDispatchSources() {
+    void registrationReturnIgnoresDispatchSourcesButUsesOwnInstanceRegistrant() {
         deploy(true, true);
         when(candidates.calculateUsersByTask(any())).thenAnswer(call -> {
             org.flowable.engine.delegate.DelegateExecution execution = call.getArgument(0);
@@ -168,28 +171,89 @@ class BpmRegisterMultiInstanceTest {
             String instance = engine.getRuntimeService().startProcessInstanceByKey(PROCESS_KEY,
                     Collections.singletonMap(BpmProcessOperationVersion.KEY, BpmProcessOperationVersion.CURRENT)).getId();
             instances.add(instance);
-            assertEquals(1, registers.claim(7L, instance));
+            assertEquals(1, registers.claim(7L + round * 2, instance));
             registerIds.add(engine.getTaskService().createTaskQuery().processInstanceId(instance).singleResult().getId());
-            registers.completeOnSubmit(7L, instance,
+            registers.completeOnSubmit(7L + round * 2, instance,
                     Collections.singletonMap(PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES,
                             Collections.singletonMap(MAIN_NODE, Collections.singletonList(8L))), false);
         }
         Task main = engine.getTaskService().createTaskQuery().processInstanceId(instances.get(0)).singleResult();
         BpmTaskReturnService returns = returnService();
         assertEquals(1, returns.targets(8L, main.getId()).size());
-        // 最近来源无效时，不能越过它借用父执行流里另一个来源。
+        // 登记专用退回不依赖派发来源。
         engine.getRuntimeService().setVariableLocal(main.getExecutionId(), BpmDispatchSources.SOURCES,
                 Collections.singletonMap("8", Collections.singletonList("missing-source")));
-        assertTrue(returns.targets(8L, main.getId()).isEmpty());
+        assertEquals(7L, returns.targets(8L, main.getId()).get(0).getAssignees().get(0).getId());
         // 其他流程中同名登记、同一个办理人，也不能作为当前流程的退回目标。
         engine.getRuntimeService().setVariableLocal(main.getExecutionId(), BpmDispatchSources.SOURCES,
                 Collections.singletonMap("8", Collections.singletonList(registerIds.get(1))));
-        assertTrue(returns.targets(8L, main.getId()).isEmpty());
+        assertEquals(7L, returns.targets(8L, main.getId()).get(0).getAssignees().get(0).getId());
         engine.getRuntimeService().removeVariableLocal(main.getExecutionId(), BpmDispatchSources.SOURCES);
         String root = engine.getRuntimeService().createExecutionQuery().executionId(main.getExecutionId()).singleResult().getParentId();
         engine.getRuntimeService().setVariableLocal(root, BpmDispatchSources.SOURCES, Collections.emptyMap());
-        assertTrue(returns.targets(8L, main.getId()).isEmpty(), "有登记历史但无派发来源时，不能按时间或人员猜测");
+        assertEquals(7L, returns.targets(8L, main.getId()).get(0).getAssignees().get(0).getId());
         assertEquals(main.getId(), engine.getTaskService().createTaskQuery().processInstanceId(instances.get(0)).singleResult().getId());
+    }
+
+    @Test
+    void laterNodeReturnsOnlyCurrentMemberAndRegistrationResubmitsInOwnBranch() {
+        deploy(true, true, true);
+        when(candidates.calculateUsersByTask(any())).thenAnswer(call -> {
+            org.flowable.engine.delegate.DelegateExecution execution = call.getArgument(0);
+            if (REGISTER_NODE.equals(execution.getCurrentActivityId())) return new LinkedHashSet<>(Collections.singletonList(7L));
+            if ("review".equals(execution.getCurrentActivityId())) return new LinkedHashSet<>(Arrays.asList(8L, 9L));
+            Map<String, List<Long>> selected = (Map<String, List<Long>>) execution.getVariable(PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+            return new LinkedHashSet<>(selected.get(MAIN_NODE));
+        });
+        String instance = engine.getRuntimeService().startProcessInstanceByKey(PROCESS_KEY,
+                Collections.singletonMap(BpmProcessOperationVersion.KEY, BpmProcessOperationVersion.CURRENT)).getId();
+        registers.completeOnSubmit(7L, instance, Collections.singletonMap(PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES,
+                Collections.singletonMap(MAIN_NODE, Collections.singletonList(8L))), false);
+        Task main = engine.getTaskService().createTaskQuery().processInstanceId(instance).singleResult();
+        engine.getTaskService().complete(main.getId()); // 无前序路径/批次数据也能退回登记
+        Task peer = engine.getTaskService().createTaskQuery().processInstanceId(instance).taskAssignee("9").singleResult();
+        assertEquals(REGISTER_NODE, returnService().targets(8L, engine.getTaskService().createTaskQuery()
+                .processInstanceId(instance).taskAssignee("8").singleResult().getId()).get(0).getTaskDefinitionKey());
+        returnRegistration(instance, 8L);
+        assertEquals(peer.getId(), engine.getTaskService().createTaskQuery().processInstanceId(instance).taskAssignee("9").singleResult().getId());
+        assertThrows(RuntimeException.class, () -> returnRegistration(instance, 9L), "已有登记待办时不能再创建一条");
+        assertEquals(1, engine.getTaskService().createTaskQuery().processInstanceId(instance).taskDefinitionKey(REGISTER_NODE).count());
+        assertEquals(peer.getId(), engine.getTaskService().createTaskQuery().processInstanceId(instance).taskAssignee("9").singleResult().getId());
+        registers.completeOnSubmit(7L, instance, Collections.singletonMap(PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES,
+                Collections.singletonMap(MAIN_NODE, Collections.singletonList(10L))), false);
+        Task newMain = engine.getTaskService().createTaskQuery().processInstanceId(instance).taskDefinitionKey(MAIN_NODE).singleResult();
+        assertEquals("10", newMain.getAssignee());
+        assertEquals(Collections.singletonMap(MAIN_NODE, Collections.singletonList(8L)), engine.getRuntimeService()
+                .getVariableLocal(instance, PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES), "重新登记不能覆盖其他分支的选人");
+        assertEquals(peer.getId(), engine.getTaskService().createTaskQuery().processInstanceId(instance).taskAssignee("9").singleResult().getId());
+        returnRegistration(instance, 9L);
+        assertEquals(newMain.getId(), engine.getTaskService().createTaskQuery().processInstanceId(instance).taskAssignee("10").singleResult().getId());
+    }
+
+    private void returnRegistration(String instance, Long user) {
+        Task task = engine.getTaskService().createTaskQuery().processInstanceId(instance).taskAssignee(user.toString()).singleResult();
+        cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskReturnReqVO request =
+                new cn.iocoder.yudao.module.bpm.controller.admin.task.vo.task.BpmTaskReturnReqVO();
+        request.setId(task.getId()); request.setTargetTaskDefinitionKey(REGISTER_NODE);
+        request.setExpectedMode("SINGLE"); request.setReturnAssignees(Collections.singletonList(7L)); request.setReason("登记补正");
+        returnService().returnTask(user, request);
+    }
+
+    @Test
+    void legacyRegistrationKeepsWholeReturnAndVersionTwoCannotDowngrade() {
+        deploy(true, true);
+        for (Object version : Arrays.asList(null, 1, BpmProcessOperationVersion.CURRENT)) {
+            Map<String, Object> variables = new java.util.HashMap<>();
+            if (version != null) variables.put(BpmProcessOperationVersion.KEY, version);
+            String instance = engine.getRuntimeService().startProcessInstanceByKey(PROCESS_KEY, variables).getId();
+            registers.completeOnSubmit(7L, instance, Collections.emptyMap(), false);
+            for (Task task : engine.getTaskService().createTaskQuery().processInstanceId(instance).list()) {
+                String mode = Integer.valueOf(2).equals(version) ? "SINGLE" : "LEGACY";
+                assertEquals(mode, returnService().mode(Long.valueOf(task.getAssignee()), task.getId()));
+                assertEquals(mode, returnService().targets(Long.valueOf(task.getAssignee()), task.getId()).get(0).getReturnMode());
+            }
+            assertEquals(version, engine.getRuntimeService().getVariableLocal(instance, BpmProcessOperationVersion.KEY));
+        }
     }
 
     private BpmTaskReturnService returnService() {
@@ -501,6 +565,10 @@ class BpmRegisterMultiInstanceTest {
     }
 
     private void deploy(boolean sequential, boolean cardinality) {
+        deploy(sequential, cardinality, false);
+    }
+
+    private void deploy(boolean sequential, boolean cardinality, boolean laterNode) {
         String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
                 + "<definitions xmlns=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:flowable=\"http://flowable.org/bpmn\" targetNamespace=\"test\">"
                 + "<process id=\"" + PROCESS_KEY + "\" isExecutable=\"true\"><startEvent id=\"start\"/>"
@@ -521,6 +589,9 @@ class BpmRegisterMultiInstanceTest {
                 + "</multiInstanceLoopCharacteristics></userTask>"
                 + "<sequenceFlow id=\"f3\" sourceRef=\"" + MAIN_NODE + "\" targetRef=\"end\"/><endEvent id=\"end\"/>"
                 + "</process></definitions>";
+        if (laterNode) xml = xml.replace("targetRef=\"end\"/><endEvent", "targetRef=\"review\"/>"
+                + "<userTask id=\"review\" name=\"复核\"><multiInstanceLoopCharacteristics flowable:collection=\"${coll_userList}\"/></userTask>"
+                + "<sequenceFlow id=\"f4\" sourceRef=\"review\" targetRef=\"end\"/><endEvent");
         engine.getRepositoryService().createDeployment().addString("land-register.bpmn20.xml", xml).deploy();
     }
 }

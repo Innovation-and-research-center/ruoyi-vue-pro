@@ -556,6 +556,9 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
                 return completedCount;
             }
             for (Task task : tasks) {
+                Map<String, Object> completionVariables = new java.util.HashMap<>(processInstanceVariables);
+                String scope = cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRegisterTaskUtils
+                        .prepareSubmitScope(runtimeService, task, completionVariables);
                 log.info("[completeManualReceiveRegisterTask][processInstanceId({}) 自动完成登记任务 taskId({}) taskKey({}) taskName({})]",
                         processInstanceId, task.getId(), task.getTaskDefinitionKey(), task.getName());
                 flowableTaskService.setAssignee(task.getId(), userIdStr);
@@ -568,17 +571,17 @@ public class ReceiveDocServiceImpl implements ReceiveDocService {
                 @SuppressWarnings("unchecked")
                 Map<String, List<Long>> recipients = (Map<String, List<Long>>) processInstanceVariables.get(
                         BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
-                BpmTaskSmsPolicy.prepare(runtimeService, processInstanceId, recipients, sendSms);
-                BpmDispatchSources.prepare(runtimeService, processInstanceId, task.getId(), recipients);
-                runtimeService.setVariables(processInstanceId, processInstanceVariables);
-                BpmDispatchSources.recordOptions(managementService, flowableTaskService, task.getId(), processInstanceId,
+                BpmTaskSmsPolicy.prepare(runtimeService, scope, recipients, sendSms);
+                BpmDispatchSources.prepare(runtimeService, scope, task.getId(), recipients);
+                runtimeService.setVariables(processInstanceId, completionVariables);
+                BpmDispatchSources.recordOptions(managementService, flowableTaskService, task.getId(), scope,
                         (org.flowable.bpmn.model.FlowNode) repositoryService.getBpmnModel(task.getProcessDefinitionId()).getFlowElement(task.getTaskDefinitionKey()));
-                for (String targetId : BpmDispatchSources.selectedTargets(managementService, processInstanceId,
+                for (String targetId : BpmDispatchSources.selectedTargets(managementService, scope,
                         (org.flowable.bpmn.model.FlowNode) repositoryService.getBpmnModel(task.getProcessDefinitionId()).getFlowElement(task.getTaskDefinitionKey()))) {
-                    BpmDispatchSources.prepareDefault(runtimeService, processInstanceId, task.getId(), targetId);
-                    BpmTaskSmsPolicy.prepareDefault(runtimeService, processInstanceId, targetId, sendSms);
+                    BpmDispatchSources.prepareDefault(runtimeService, scope, task.getId(), targetId);
+                    BpmTaskSmsPolicy.prepareDefault(runtimeService, scope, targetId, sendSms);
                 }
-                flowableTaskService.complete(task.getId(), processInstanceVariables);
+                flowableTaskService.complete(task.getId(), completionVariables);
                 completedCount++;
             }
         }

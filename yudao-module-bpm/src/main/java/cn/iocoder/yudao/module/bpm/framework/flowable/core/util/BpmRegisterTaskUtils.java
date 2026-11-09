@@ -33,6 +33,32 @@ public final class BpmRegisterTaskUtils {
     private BpmRegisterTaskUtils() {
     }
 
+    /** 退回登记重新提交时，选人及人工流向写入本分支；传入的业务变量副本会剥离这些字段。 */
+    public static String prepareSubmitScope(org.flowable.engine.RuntimeService runtime,
+                                           org.flowable.task.api.Task task, Map<String, Object> variables) {
+        String instance = task.getProcessInstanceId();
+        if (!BpmProcessOperationVersion.isCurrent(runtime.getVariableLocal(instance, BpmProcessOperationVersion.KEY))) return instance;
+        String executionId = task.getExecutionId();
+        while (executionId != null && !instance.equals(executionId)) {
+            if (Boolean.TRUE.equals(runtime.getVariableLocal(executionId, BpmDispatchSources.BRANCH))) {
+                Map<String, Object> routing = new java.util.HashMap<>();
+                variables.entrySet().removeIf(entry -> {
+                    if (entry.getKey().matches("(?:select_node_\\d+|next_node\\d+)")
+                            || cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants
+                            .PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES.equals(entry.getKey())) {
+                        routing.put(entry.getKey(), entry.getValue()); return true;
+                    }
+                    return false;
+                });
+                runtime.setVariablesLocal(executionId, routing);
+                return executionId;
+            }
+            org.flowable.engine.runtime.Execution execution = runtime.createExecutionQuery().executionId(executionId).singleResult();
+            executionId = execution == null ? null : execution.getParentId();
+        }
+        return instance;
+    }
+
     public static boolean isRegisterTask(DelegateExecution execution) {
         return execution != null && isRegisterTask(execution.getCurrentFlowElement());
     }

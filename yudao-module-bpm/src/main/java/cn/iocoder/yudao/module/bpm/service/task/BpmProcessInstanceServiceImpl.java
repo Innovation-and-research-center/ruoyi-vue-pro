@@ -1900,6 +1900,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
     @Override
     @DataPermission(enable = false) // 关闭数据权限，避免查询不到用户数据。相关案例：https://gitee.com/zhijiantianya/yudao-cloud/issues/ID1UYA
+    @Transactional(rollbackFor = Exception.class)
     public void cancelProcessInstanceByStartUser(Long userId, @Valid BpmProcessInstanceCancelReqVO cancelReqVO) {
         // 1.1 校验流程实例存在
         ProcessInstance instance = getProcessInstance(cancelReqVO.getId());
@@ -1931,7 +1932,14 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         BpmnModel bpmnModel = processDefinitionService.getProcessDefinitionBpmnModel(instance.getProcessDefinitionId());
         boolean hasApprovedNode = hasApprovedDownstreamTask(bpmnModel, finishedTasks, instance.getStartUserId());
 
-        if (hasApprovedNode) {
+        // 退回登记后允许发起人取消整件流程，包含仍在办理的其他分支；不清除既有审批历史。
+        boolean returnedToRegistration = hasApprovedNode && bpmnModel != null
+                && taskService.getRunningTaskListByProcessInstanceId(instance.getId(), null, null).stream()
+                .anyMatch(task -> BpmRegisterTaskUtils.isRegisterTask(bpmnModel, task.getTaskDefinitionKey())
+                        && StrUtil.isNotBlank(task.getExecutionId())
+                        && Boolean.TRUE.equals(runtimeService.getVariable(task.getExecutionId(),
+                        String.format(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_RETURN_FLAG, task.getTaskDefinitionKey()))));
+        if (hasApprovedNode && !returnedToRegistration) {
             throw exception(PROCESS_INSTANCE_CANCEL_FAIL_NEXT_NODE_APPROVED);
         }
 
