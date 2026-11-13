@@ -1,6 +1,7 @@
 package cn.iocoder.yudao.module.system.service.meeting;
 
 import cn.hutool.core.collection.CollUtil;
+import cn.iocoder.yudao.framework.datapermission.core.util.DataPermissionUtils;
 import cn.hutool.core.util.StrUtil;
 import cn.idev.excel.EasyExcel;
 import cn.idev.excel.write.style.column.LongestMatchColumnWidthStyleStrategy;
@@ -148,7 +149,8 @@ public class MeetingServiceImpl implements MeetingService {
 
             // 自动填充部门名称
             if (user.getDeptId() != null) {
-                DeptDO dept = deptService.getDept(user.getDeptId());
+                // 仅查询当前登录用户所属部门，避免“仅本人”数据权限过滤部门信息。
+                DeptDO dept = DataPermissionUtils.executeIgnore(() -> deptService.getDept(user.getDeptId()));
                 if (dept != null) {
                     booking.setDepartment(dept.getName());
                 }

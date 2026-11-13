@@ -6,6 +6,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.enums.CommonStatusEnum;
 import cn.iocoder.yudao.framework.common.enums.UserTypeEnum;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
+import cn.iocoder.yudao.framework.datapermission.core.util.DataPermissionUtils;
 import cn.iocoder.yudao.framework.security.config.SecurityProperties;
 import cn.iocoder.yudao.framework.security.core.util.SecurityFrameworkUtils;
 import cn.iocoder.yudao.module.system.controller.admin.auth.vo.*;
@@ -104,6 +105,10 @@ public class AuthController {
         if (user == null) {
             return success(null);
         }
+        // 仅补充当前登录用户的部门，避免“仅本人”数据权限过滤部门信息。
+        DeptDO dept = user.getDeptId() != null
+                ? DataPermissionUtils.executeIgnore(() -> deptService.getDept(user.getDeptId())) : null;
+        user.setDeptName(dept == null ? "" : dept.getName());
 
         // 1.2 获得角色列表
         Set<Long> roleIds = permissionService.getUserRoleIdListByUserId(getLoginUserId());
@@ -117,10 +122,6 @@ public class AuthController {
         Set<Long> menuIds = permissionService.getRoleMenuListByRoleId(convertSet(roles, RoleDO::getId));
         List<MenuDO> menuList = menuService.getMenuList(menuIds);
         menuList = menuService.filterDisableMenus(menuList);
-
-        DeptDO dept = deptService.getDept(user.getDeptId());
-        user.setDeptName(dept == null ? "" : dept.getName());
-
 
         // 2. 拼接结果返回
         return success(AuthConvert.INSTANCE.convert(user, roles, menuList));
