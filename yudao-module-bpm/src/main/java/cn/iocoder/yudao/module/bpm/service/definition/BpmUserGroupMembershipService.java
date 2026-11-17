@@ -91,6 +91,20 @@ public class BpmUserGroupMembershipService {
         return result;
     }
 
+    /** 仅追加尚未加入的成员，保留已有手动关联和角色继承关系。 */
+    @Transactional(rollbackFor = Exception.class)
+    public void appendMissingMembers(Long groupId, Set<Long> userIds) {
+        lockGroup(groupId);
+        validateUsers(userIds);
+        Set<Long> existing = getUserIds(Collections.singleton(groupId));
+        for (Long userId : new java.util.TreeSet<>(userIds)) {
+            if (!existing.contains(userId)) {
+                jdbc.update("INSERT INTO bpm_user_group_member (tenant_id, group_id, user_id) VALUES (?, ?, ?)",
+                        tenantId(), groupId, userId);
+            }
+        }
+    }
+
     @Transactional(rollbackFor = Exception.class)
     public void replaceManualMembers(Long groupId, Set<Long> userIds) {
         lockGroup(groupId);

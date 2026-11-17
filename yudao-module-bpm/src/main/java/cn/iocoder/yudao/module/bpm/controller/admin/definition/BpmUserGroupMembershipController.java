@@ -3,6 +3,9 @@ package cn.iocoder.yudao.module.bpm.controller.admin.definition;
 import cn.iocoder.yudao.framework.common.pojo.CommonResult;
 import cn.iocoder.yudao.module.bpm.dal.dataobject.definition.BpmUserGroupDO;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmUserGroupMembershipService;
+import cn.iocoder.yudao.module.bpm.service.definition.BpmUserMembershipCopyService;
+import cn.iocoder.yudao.module.bpm.controller.admin.definition.vo.group.BpmUserMembershipCopyReqVO;
+import org.springframework.web.bind.annotation.PostMapping;
 import cn.iocoder.yudao.module.bpm.service.definition.BpmUserGroupService;
 import cn.iocoder.yudao.module.system.dal.dataobject.permission.RoleDO;
 import cn.iocoder.yudao.module.system.service.permission.PermissionService;
@@ -50,6 +53,8 @@ public class BpmUserGroupMembershipController {
     private RoleService roleService;
     @Resource
     private AdminUserService userService;
+    @Resource
+    private BpmUserMembershipCopyService copyService;
 
     @GetMapping("/user")
     @Operation(summary = "查看用户的角色和用户组及成员来源")
@@ -112,6 +117,16 @@ public class BpmUserGroupMembershipController {
         newGroupIds.removeAll(membershipService.getMappedGroupIds(req.getRoleId()));
         groupService.validUserGroups(newGroupIds);
         membershipService.replaceRoleMappings(req.getRoleId(), req.getGroupIds());
+        return success(true);
+    }
+
+    @PostMapping("/copy")
+    @Operation(summary = "追加复制用户的角色与用户组")
+    @PreAuthorize("@ss.hasAnyPermissions('system:permission:assign-user-role', 'bpm:user-group:update')"
+            + " and (#req.roleIds.isEmpty() or @ss.hasPermission('system:permission:assign-user-role'))"
+            + " and (#req.groupIds.isEmpty() or @ss.hasPermission('bpm:user-group:update'))")
+    public CommonResult<Boolean> copy(@Valid @RequestBody BpmUserMembershipCopyReqVO req) {
+        copyService.copy(req);
         return success(true);
     }
 

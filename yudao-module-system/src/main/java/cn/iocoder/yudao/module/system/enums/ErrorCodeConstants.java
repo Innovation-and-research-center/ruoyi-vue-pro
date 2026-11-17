@@ -51,6 +51,9 @@ public interface ErrorCodeConstants {
     ErrorCode USER_DEPT_MEMBER_SORT_MISMATCH = new ErrorCode(1_002_003_014, "只能调整指定部门中的员工排序");
     ErrorCode USER_DEPT_MEMBER_SORT_DUPLICATE = new ErrorCode(1_002_003_015, "员工排序编号不能重复");
 
+    ErrorCode USER_ROLE_COPY_SOURCE_CHANGED = new ErrorCode(1_002_003_016, "来源用户的角色已变化，请重新打开复制窗口");
+    ErrorCode USER_ROLE_COPY_SELF = new ErrorCode(1_002_003_017, "目标人员不能包含来源人员本人");
+
     // ========== 部门模块 1-002-004-000 ==========
     ErrorCode DEPT_NAME_DUPLICATE = new ErrorCode(1_002_004_000, "已经存在该名字的部门");
     ErrorCode DEPT_PARENT_NOT_EXITS = new ErrorCode(1_002_004_001,"父级部门不存在");

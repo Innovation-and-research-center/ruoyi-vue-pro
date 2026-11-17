@@ -110,6 +110,7 @@ public interface ErrorCodeConstants {
     ErrorCode FORM_FIELD_REPEAT = new ErrorCode(1_009_010_001, "表单项({}) 和 ({}) 使用了相同的字段名({})");
 
     // ========== 用户组模块 1-009-011-000 ==========
+    ErrorCode USER_GROUP_COPY_SOURCE_CHANGED = new ErrorCode(1_009_011_002, "来源用户的用户组已变化，请重新打开复制窗口");
     ErrorCode USER_GROUP_NOT_EXISTS = new ErrorCode(1_009_011_000, "用户分组不存在");
     ErrorCode USER_GROUP_IS_DISABLE = new ErrorCode(1_009_011_001, "名字为【{}】的用户分组已被禁用");
 

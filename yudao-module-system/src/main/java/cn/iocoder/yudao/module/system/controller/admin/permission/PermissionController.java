@@ -7,6 +7,8 @@ import cn.iocoder.yudao.module.system.controller.admin.permission.vo.permission.
 import cn.iocoder.yudao.module.system.controller.admin.permission.vo.permission.PermissionAssignRoleMenuReqVO;
 import cn.iocoder.yudao.module.system.controller.admin.permission.vo.permission.PermissionAssignUserRoleReqVO;
 import cn.iocoder.yudao.module.system.service.permission.PermissionService;
+import cn.iocoder.yudao.module.system.service.permission.UserRoleCopyService;
+import cn.iocoder.yudao.module.system.controller.admin.permission.vo.permission.PermissionCopyUserRolesReqVO;
 import cn.iocoder.yudao.module.system.service.tenant.TenantService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -35,6 +37,8 @@ public class PermissionController {
     private PermissionService permissionService;
     @Resource
     private TenantService tenantService;
+    @Resource
+    private UserRoleCopyService userRoleCopyService;
 
     @Operation(summary = "获得角色拥有的菜单编号")
     @Parameter(name = "roleId", description = "角色编号", required = true)
@@ -79,6 +83,14 @@ public class PermissionController {
     @PreAuthorize("@ss.hasPermission('system:permission:assign-user-role')")
     public CommonResult<Boolean> assignUserRole(@Validated @RequestBody PermissionAssignUserRoleReqVO reqVO) {
         permissionService.assignUserRole(reqVO.getUserId(), reqVO.getRoleIds());
+        return success(true);
+    }
+
+    @PostMapping("/copy-user-roles")
+    @Operation(summary = "将来源用户的角色追加到其他用户")
+    @PreAuthorize("@ss.hasPermission('system:permission:assign-user-role')")
+    public CommonResult<Boolean> copyUserRoles(@Valid @RequestBody PermissionCopyUserRolesReqVO reqVO) {
+        userRoleCopyService.copy(reqVO.getSourceUserId(), reqVO.getTargetUserIds(), reqVO.getRoleIds());
         return success(true);
     }
 
