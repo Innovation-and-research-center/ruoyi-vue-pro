@@ -149,12 +149,9 @@ public interface BpmTaskConvert {
                                                                  Map<Long, AdminUserRespDTO> userMap,
                                                                  Map<Long, DeptRespDTO> deptMap) {
         return CollectionUtils.convertList(taskList, task -> {
-            // 特殊：已取消的任务，不返回
+            // 流程记录保留取消和退回任务，完整展示历史轨迹。
             BpmTaskRespVO taskVO = BeanUtils.toBean(task, BpmTaskRespVO.class);
             Integer taskStatus = FlowableUtils.getTaskStatus(task);
-            if (BpmTaskStatusEnum.isCancelStatus(taskStatus)) {
-                return null;
-            }
             taskVO.setStatus(taskStatus).setReason(FlowableUtils.getTaskReason(task));
             // 表单信息
             BpmFormDO form = MapUtil.get(formMap, NumberUtils.parseLong(task.getFormKey()), BpmFormDO.class);

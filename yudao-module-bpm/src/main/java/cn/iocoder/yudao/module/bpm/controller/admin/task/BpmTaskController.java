@@ -74,6 +74,9 @@ public class BpmTaskController {
     private HistoryService historyService;
 
     @Resource
+    private org.flowable.engine.TaskService flowableTaskService;
+
+    @Resource
     private RepositoryService repositoryService;
     @Resource
     private ReceiveDocMapper receiveDocMapper;
@@ -169,8 +172,20 @@ public class BpmTaskController {
             return success(Collections.emptyList());
         }
 
+        // 新版撤回是独立操作，尤其部分撤回不能覆盖原任务的完成状态。
+        List<org.flowable.engine.task.Comment> withdrawals = flowableTaskService
+                .getProcessInstanceComments(processInstanceId).stream()
+                .filter(comment -> "10".equals(comment.getType()) && comment.getFullMessage() != null
+                        && (comment.getFullMessage().startsWith("撤回派发：")
+                        || comment.getFullMessage().startsWith("撤回本人的办理，")))
+                .sorted(Comparator.comparing(org.flowable.engine.task.Comment::getTime))
+                .collect(java.util.stream.Collectors.toList());
         // 拼接数据
         Set<Long> userIds = new HashSet<>();
+        withdrawals.forEach(comment -> {
+            Long userId = NumberUtils.parseLong(comment.getUserId());
+            if (userId != null) userIds.add(userId);
+        });
         if (CollUtil.isNotEmpty(taskList)) {
             userIds.addAll(convertSetByFlatMap(taskList, task ->
                     Stream.of(NumberUtils.parseLong(task.getAssignee()), NumberUtils.parseLong(task.getOwner()))));
@@ -188,6 +203,18 @@ public class BpmTaskController {
                 convertSet(taskList, task -> NumberUtils.parseLong(task.getFormKey())));
         List<BpmTaskRespVO> resultList = BpmTaskConvert.INSTANCE.buildTaskListByProcessInstanceId(taskList,
                 formMap, userMap, deptMap);
+        Map<String, BpmTaskRespVO> records = convertMap(resultList, BpmTaskRespVO::getId);
+        withdrawals.forEach(comment -> {
+            BpmTaskRespVO record = records.get(comment.getTaskId());
+            if (record == null) return;
+            BpmTaskRespVO.WithdrawalRecord withdrawal = new BpmTaskRespVO.WithdrawalRecord();
+            withdrawal.setTime(comment.getTime());
+            AdminUserRespDTO operator = userMap.get(NumberUtils.parseLong(comment.getUserId()));
+            withdrawal.setOperatorName(operator != null ? operator.getNickname() : comment.getUserId());
+            withdrawal.setDescription(comment.getFullMessage());
+            if (record.getWithdrawals() == null) record.setWithdrawals(new ArrayList<>());
+            record.getWithdrawals().add(withdrawal);
+        });
 
         if (processInstance != null) {
             BpmTaskRespVO startNode = new BpmTaskRespVO();

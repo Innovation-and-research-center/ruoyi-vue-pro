@@ -63,6 +63,17 @@ public class BpmTaskRespVO {
     @Schema(description = "审批理由", requiredMode = Schema.RequiredMode.REQUIRED, example = "2")
     private String reason;
 
+    @Schema(description = "任务撤回操作记录，保留部分撤回的独立操作时间")
+    private List<WithdrawalRecord> withdrawals;
+
+    @Data
+    public static class WithdrawalRecord {
+        private Date time;
+        private String operatorName;
+        private String description;
+    }
+
+
     @Schema(description = "任务负责人编号", requiredMode = Schema.RequiredMode.NOT_REQUIRED, example = "2048")
     @JsonIgnore // 不返回，只是方便后续读取，赋值给 ownerUser
     private Long owner;

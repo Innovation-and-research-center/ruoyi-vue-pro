@@ -113,3 +113,5 @@ yudao-module-bpm/src/main/resources/templates/
 !/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/service/leave/LeaveDepartmentSnapshotTest.java
 
 !/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/service/task/BpmTaskAssignedNotificationTest.java
+
+!/yudao-module-bpm/src/test/java/cn/iocoder/yudao/module/bpm/service/task/BpmTaskRecordTest.java

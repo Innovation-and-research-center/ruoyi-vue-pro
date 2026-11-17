@@ -31,4 +31,6 @@ public class BpmTaskFlowTaskNodeRespVO {
     private String activityType;
 
     private Integer status;
+
+    private String reason;
 }

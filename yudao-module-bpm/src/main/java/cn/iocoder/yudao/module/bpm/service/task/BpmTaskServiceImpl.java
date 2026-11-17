@@ -3168,6 +3168,7 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             if (QUERY_TYPE_NEXT == queryType) {
                 result.setNextTasks(findNextNodesForStartEvent(processInstanceId));
             }
+            fillTraceTaskStatuses(result);
             fillUserNames(result);
             return result;
         }
@@ -3203,9 +3204,31 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 result.setNextTasks(findNextNodes(currentTask));
             }
         }
+        fillTraceTaskStatuses(result);
         fillUserNames(result);
         return result;
 
+    }
+
+    /** 活动的删除原因不是业务办理结果；统一按任务局部变量回填，避免撤回/退回被判为拒绝。 */
+    private void fillTraceTaskStatuses(BpmTaskTraceDTO result) {
+        List<BpmTaskFlowTaskNodeRespVO> nodes = new ArrayList<>();
+        if (result.getCurrentTask() != null) nodes.add(result.getCurrentTask());
+        if (result.getPreviousTasks() != null) nodes.addAll(result.getPreviousTasks());
+        if (result.getNextTasks() != null) nodes.addAll(result.getNextTasks());
+        Set<String> ids = nodes.stream().filter(node -> "userTask".equals(node.getActivityType()))
+                .map(BpmTaskFlowTaskNodeRespVO::getTaskId).filter(Objects::nonNull).collect(Collectors.toSet());
+        if (ids.isEmpty()) return;
+        Map<String, HistoricTaskInstance> tasks = historyService.createHistoricTaskInstanceQuery()
+                .taskIds(ids).includeTaskLocalVariables().list().stream()
+                .collect(Collectors.toMap(HistoricTaskInstance::getId, task -> task));
+        for (BpmTaskFlowTaskNodeRespVO node : nodes) {
+            HistoricTaskInstance task = tasks.get(node.getTaskId());
+            if (task == null) continue;
+            Integer status = FlowableUtils.getTaskStatus(task);
+            node.setStatus(status != null ? status : calculateStatus(task.getEndTime(), task.getDeleteReason()));
+            node.setReason(FlowableUtils.getTaskReason(task));
+        }
     }
 
     private void fillUserNames(BpmTaskTraceDTO result) {
@@ -3290,8 +3313,8 @@ public class BpmTaskServiceImpl implements BpmTaskService {
             return 2; // 视为正常完成
         }
 
-        // 4. 其他情况 (如 "deleted", "canceled", "jump" 等) -> 视为取消/驳回
-        return 3;
+        // 缺少业务状态的旧数据无法仅凭删除原因确定结果，返回未知，不能伪装成拒绝。
+        return null;
     }
 
     private void fillProcessInfo(BpmTaskTraceDTO result, String procInstId) {
@@ -3336,6 +3359,21 @@ public class BpmTaskServiceImpl implements BpmTaskService {
 
     private List<BpmTaskFlowTaskNodeRespVO> findPreviousNodes(HistoricTaskInstance currentTask) {
         List<BpmTaskFlowTaskNodeRespVO> nodes = new ArrayList<>();
+
+        // 撤回恢复任务已有明确的原任务标记，优先于内循环来源和时间推测。
+        HistoricVariableInstance restoredSource = historyService.createHistoricVariableInstanceQuery()
+                .taskId(currentTask.getId())
+                .variableName(cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRestoredOpinion.SOURCE_TASK)
+                .singleResult();
+        if (restoredSource != null && restoredSource.getValue() instanceof String) {
+            HistoricTaskInstance source = historyService.createHistoricTaskInstanceQuery()
+                    .taskId((String) restoredSource.getValue()).singleResult();
+            if (source != null && !source.getId().equals(currentTask.getId())
+                    && Objects.equals(source.getProcessInstanceId(), currentTask.getProcessInstanceId())) {
+                nodes.add(convert(source));
+                return nodes;
+            }
+        }
 
         HistoricVariableInstance sourceVar = historyService.createHistoricVariableInstanceQuery()
                 .taskId(currentTask.getId())
@@ -3420,7 +3458,8 @@ public class BpmTaskServiceImpl implements BpmTaskService {
                 }
 
                 // 时间容错 1000ms
-                if (Math.abs(node.getEndTime().getTime() - baselineTime) < 1000) {
+                if (node.getEndTime().getTime() <= currentTask.getStartTime().getTime()
+                        && Math.abs(node.getEndTime().getTime() - baselineTime) < 1000) {
                     nodes.add(convert(node));
                 }
             }
@@ -3447,14 +3486,18 @@ public class BpmTaskServiceImpl implements BpmTaskService {
 
 
         // ================= 【核心新增：寻找内循环派发出去的子任务】 =================
-        List<HistoricVariableInstance> targetVars = historyService.createHistoricVariableInstanceQuery()
-                .processInstanceId(currentTask.getProcessInstanceId())
-                .variableName("internal_source_task_id")
-                .variableValueEquals("internal_source_task_id", currentTask.getId())
-                .list();
+        List<HistoricVariableInstance> targetVars = new ArrayList<>();
+        for (String sourceKey : Arrays.asList("internal_source_task_id",
+                cn.iocoder.yudao.module.bpm.framework.flowable.core.util.BpmRestoredOpinion.SOURCE_TASK)) {
+            targetVars.addAll(historyService.createHistoricVariableInstanceQuery()
+                    .processInstanceId(currentTask.getProcessInstanceId())
+                    .variableName(sourceKey).variableValueEquals(sourceKey, currentTask.getId()).list());
+        }
 
         if (CollUtil.isNotEmpty(targetVars)) {
+            Set<String> seen = new HashSet<>();
             for (HistoricVariableInstance var : targetVars) {
+                if (var.getTaskId() == null || !seen.add(var.getTaskId())) continue;
                 HistoricTaskInstance nextTask = historyService.createHistoricTaskInstanceQuery()
                         .taskId(var.getTaskId()).singleResult();
                 if (nextTask != null) {
