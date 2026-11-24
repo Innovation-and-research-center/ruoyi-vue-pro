@@ -24,6 +24,8 @@ import org.flowable.task.api.Task;
 import org.flowable.task.api.history.HistoricTaskInstanceQuery;
 import org.flowable.task.api.history.HistoricTaskInstance;
 import org.flowable.identitylink.api.history.HistoricIdentityLink;
+import org.flowable.variable.api.history.HistoricVariableInstance;
+import org.flowable.variable.api.history.HistoricVariableInstanceQuery;
 import org.junit.jupiter.api.Test;
 import cn.iocoder.yudao.module.system.dal.dataobject.userdeptmember.UserDeptMemberDO;
 import cn.iocoder.yudao.module.system.dal.mysql.userdeptmember.UserDeptMemberMapper;
@@ -261,9 +263,8 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
         assertEquals(new HashSet<>(Arrays.asList(30L, 40L, 50L)), new HashSet<>(next.getAssignedUserIds()));
         assertEquals(3, next.getAssignedUsers().size());
         verify(historyService.createHistoricTaskInstanceQuery()).includeTaskLocalVariables();
-        verify(historyService, never()).getHistoricIdentityLinksForTask("returned");
-        verify(historyService, never()).getHistoricIdentityLinksForTask("cancelled");
-        verify(historyService, never()).createHistoricVariableInstanceQuery();
+        verify(historyService).getHistoricIdentityLinksForTask("returned");
+        verify(historyService).getHistoricIdentityLinksForTask("cancelled");
     }
 
     @Test
@@ -280,7 +281,6 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
 
         List<Long> assignedIds = find(service.getNextSelectNodes(20L, request), "next").getAssignedUserIds();
         assertTrue(assignedIds == null || assignedIds.isEmpty());
-        verify(historyService, never()).createHistoricVariableInstanceQuery();
 
         HistoricTaskInstance resent = receivedTask("resent", 30L, BpmTaskStatusEnum.RUNNING);
         when(historyService.createHistoricTaskInstanceQuery().list()).thenReturn(Arrays.asList(cancelled, resent));
@@ -390,13 +390,53 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
         verify(userService, times(1)).getUserList(new HashSet<>(Arrays.asList(10L, 40L)));
     }
 
+    @Test
+    void historicalSelectionsMergeWithActualRecipientsAndMapInternalLoop() {
+        prepare(20L, false);
+        HistoricTaskInstance running = receivedTask("running", 30L, BpmTaskStatusEnum.RUNNING);
+        when(historyService.createHistoricTaskInstanceQuery().list()).thenReturn(Collections.singletonList(running));
+        Map<String, Object> selected = new LinkedHashMap<>();
+        selected.put("next", Arrays.asList(30L, 40L, 40L));
+        selected.put("current", Collections.singletonList(50L));
+        selected.put("unrelated", Collections.singletonList(60L));
+        historicalSelections(selected);
+        doReturn(Arrays.asList(user(30L, 1L, 0), user(40L, 2L, 0), user(50L, 2L, 0)))
+                .when(userService).getUserList(new HashSet<>(Arrays.asList(30L, 40L, 50L)));
+
+        List<BpmNextTaskRespVO> nodes = getNodes(20L);
+        assertEquals(Arrays.asList(30L, 40L), find(nodes, "next").getAssignedUserIds());
+        assertEquals(Collections.singletonList(50L), find(nodes, "current_internal_loop").getAssignedUserIds());
+        assertEquals(1, find(nodes, "current_internal_loop").getAssignedUsers().size());
+        verify(historyService.createHistoricVariableInstanceQuery()).processInstanceId("instance");
+        verify(historyService.createHistoricVariableInstanceQuery())
+                .variableName(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES);
+    }
+
+    @Test
+    void historicalSelectionsDoNotReviveCancelledReturnedOrTheirCandidates() {
+        prepare(20L, false);
+        HistoricTaskInstance cancelled = receivedTask("cancelled", 30L, BpmTaskStatusEnum.CANCEL);
+        HistoricTaskInstance returned = receivedTask("returned", 40L, BpmTaskStatusEnum.RETURN);
+        when(historyService.createHistoricTaskInstanceQuery().list()).thenReturn(Arrays.asList(cancelled, returned));
+        HistoricIdentityLink candidate = mock(HistoricIdentityLink.class);
+        when(candidate.getUserId()).thenReturn("50");
+        when(historyService.getHistoricIdentityLinksForTask("cancelled"))
+                .thenReturn(Collections.singletonList(candidate));
+        historicalSelections(Collections.singletonMap("next", Arrays.asList(30L, 40L, 50L)));
+        assertNull(find(getNodes(20L), "next").getAssignedUserIds());
+    }
+
+    private void historicalSelections(Map<String, ?> selections) {
+        HistoricVariableInstance variable = mock(HistoricVariableInstance.class);
+        when(variable.getValue()).thenReturn(selections);
+        when(historyService.createHistoricVariableInstanceQuery().list()).thenReturn(Collections.singletonList(variable));
+    }
+
     private HistoricTaskInstance receivedTask(String id, Long userId, BpmTaskStatusEnum status) {
         HistoricTaskInstance task = mock(HistoricTaskInstance.class);
-        if (status != BpmTaskStatusEnum.CANCEL && status != BpmTaskStatusEnum.RETURN) {
-            when(task.getId()).thenReturn(id);
-            when(task.getTaskDefinitionKey()).thenReturn("next");
-            when(task.getAssignee()).thenReturn(userId != null ? userId.toString() : null);
-        }
+        when(task.getId()).thenReturn(id);
+        when(task.getTaskDefinitionKey()).thenReturn("next");
+        when(task.getAssignee()).thenReturn(userId != null ? userId.toString() : null);
         when(task.getTaskLocalVariables()).thenReturn(Collections.singletonMap(
                 BpmnVariableConstants.TASK_VARIABLE_STATUS, status.getStatus()));
         return task;
@@ -444,6 +484,9 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
         HistoricTaskInstanceQuery historicTasks = mock(HistoricTaskInstanceQuery.class, Answers.RETURNS_SELF);
         when(historyService.createHistoricTaskInstanceQuery()).thenReturn(historicTasks);
         when(historicTasks.list()).thenReturn(Collections.emptyList());
+        HistoricVariableInstanceQuery historicalVariables = mock(HistoricVariableInstanceQuery.class, Answers.RETURNS_SELF);
+        lenient().when(historyService.createHistoricVariableInstanceQuery()).thenReturn(historicalVariables);
+        lenient().when(historicalVariables.list()).thenReturn(Collections.emptyList());
         Set<Long> groupIds = Collections.singleton(7L);
         Set<Long> memberIds = new HashSet<>(Arrays.asList(10L, 40L));
         if ("role".equals(rule)) {

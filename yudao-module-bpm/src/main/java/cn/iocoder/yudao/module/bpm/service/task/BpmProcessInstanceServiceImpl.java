@@ -540,7 +540,7 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         Set<Long> deptIdsToQuery = new HashSet<>();
 
         // =========================================================================================
-        // 已接收人员仅来自有效任务，历史选人变量不代表当前有效的接收记录。
+        // 合并真实任务和服务端历史选人变量；已有真实任务时，以任务有效性为准。
         // =========================================================================================
         Map<String, Object> selectedAssigneesMap = new HashMap<>();
         Set<String> targetTaskKeys = result.stream().map(BpmNextTaskRespVO::getTaskDefKey).collect(Collectors.toSet());
@@ -554,12 +554,23 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                     .processInstanceId(processInstanceId)
                     .includeTaskLocalVariables()
                     .list();
+            Map<String, Set<Long>> taskRecipientIds = new HashMap<>();
 
             for (org.flowable.task.api.history.HistoricTaskInstance hiTask : historicTasks) {
+                String taskKey = getReceivedNodeKey(hiTask.getTaskDefinitionKey(), targetTaskKeys);
+                if (taskKey == null) continue;
+                Set<Long> recipientIds = taskRecipientIds.computeIfAbsent(taskKey, key -> new HashSet<>());
+                Long assigneeId = Convert.toLong(hiTask.getAssignee(), null);
+                if (assigneeId != null) recipientIds.add(assigneeId);
+                List<org.flowable.identitylink.api.history.HistoricIdentityLink> links =
+                        historyService.getHistoricIdentityLinksForTask(hiTask.getId());
+                for (org.flowable.identitylink.api.history.HistoricIdentityLink link : links) {
+                    Long candidateId = Convert.toLong(link.getUserId(), null);
+                    if (candidateId != null) recipientIds.add(candidateId);
+                }
                 if (!isCurrentRoundReceivedTask(hiTask, sendRoundStartTime)) {
                     continue;
                 }
-                String taskKey = hiTask.getTaskDefinitionKey();
 
                 if (targetTaskKeys.contains(taskKey)) {
                     List<Long> existingIds = selectedAssigneesMap.containsKey(taskKey) ?
@@ -568,7 +579,6 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
 
                     // 1.1 提取直接派发/签收的处理人
                     if (StrUtil.isNotBlank(hiTask.getAssignee())) {
-                        Long assigneeId = Convert.toLong(hiTask.getAssignee(), null);
                         if (assigneeId != null && !existingIds.contains(assigneeId)) {
                             existingIds.add(assigneeId);
                             added = true;
@@ -576,7 +586,6 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                     }
 
                     // 1.2 提取处于候选组/未签收状态的人员 (IdentityLink)
-                    List<org.flowable.identitylink.api.history.HistoricIdentityLink> links = historyService.getHistoricIdentityLinksForTask(hiTask.getId());
                     for (org.flowable.identitylink.api.history.HistoricIdentityLink link : links) {
                         if (StrUtil.isNotBlank(link.getUserId())) {
                             Long candidateId = Convert.toLong(link.getUserId(), null);
@@ -592,16 +601,41 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
                     }
                 }
             }
+            // 恢复历史选人兜底：会签尚未生成下一任务时，已提交的选人保存在执行局部变量中。
+            // 不使用前端传入的选人变量，以免未发送的勾选被误认为已经接收。
+            historyService.createHistoricVariableInstanceQuery().processInstanceId(processInstanceId)
+                    .variableName(BpmnVariableConstants.PROCESS_INSTANCE_VARIABLE_LAST_NODE_SELECT_ASSIGNEES)
+                    .list().forEach(variable -> {
+                        if (!(variable.getValue() instanceof Map)) return;
+                        ((Map<?, ?>) variable.getValue()).forEach((node, value) -> {
+                            if (!(node instanceof String) || !(value instanceof Collection)) return;
+                            String key = getReceivedNodeKey((String) node, targetTaskKeys);
+                            if (key == null) return;
+                            List<Long> received = selectedAssigneesMap.containsKey(key)
+                                    ? Convert.toList(Long.class, selectedAssigneesMap.get(key)) : new ArrayList<>();
+                            Set<Long> actualRecipients = taskRecipientIds.getOrDefault(key, Collections.emptySet());
+                            for (Object valueId : (Collection<?>) value) {
+                                Long id = Convert.toLong(valueId, null);
+                                // 已有任务但不在有效名单的人，不能被旧变量重新补回。
+                                if (id != null && !actualRecipients.contains(id) && !received.contains(id)) received.add(id);
+                            }
+                            if (!received.isEmpty()) selectedAssigneesMap.put(key, received);
+                        });
+                    });
             BpmTaskReturnService.retainedRecipients(runtimeService, historyService, processInstanceId, task.getExecutionId(),
-                    task.getTaskDefinitionKey()).forEach((node, users) ->
-                    selectedAssigneesMap.put(node, new ArrayList<>(users)));
+                    task.getTaskDefinitionKey()).forEach((node, users) -> {
+                String key = getReceivedNodeKey(node, targetTaskKeys);
+                if (key != null) selectedAssigneesMap.put(key, new ArrayList<>(users));
+            });
             // 撤回恢复是新任务，但仍保留的旧派发不能因早于本轮开始时间而重新变成可选。
             BpmDispatchSources.retainedRecipients(runtimeService, processInstanceId, task.getExecutionId(),
                     task.getTaskDefinitionKey()).forEach((node, users) -> {
-                List<Long> received = selectedAssigneesMap.containsKey(node)
-                        ? Convert.toList(Long.class, selectedAssigneesMap.get(node)) : new ArrayList<>();
+                String key = getReceivedNodeKey(node, targetTaskKeys);
+                if (key == null) return;
+                List<Long> received = selectedAssigneesMap.containsKey(key)
+                        ? Convert.toList(Long.class, selectedAssigneesMap.get(key)) : new ArrayList<>();
                 for (Long user : users) if (!received.contains(user)) received.add(user);
-                selectedAssigneesMap.put(node, received);
+                selectedAssigneesMap.put(key, received);
             });
         }
         // =========================================================================================
@@ -808,6 +842,11 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         }
 
         return result;
+    }
+
+    private static String getReceivedNodeKey(String node, Set<String> targetTaskKeys) {
+        if (targetTaskKeys.contains(node)) return node;
+        return node != null && targetTaskKeys.contains(node + "_internal_loop") ? node + "_internal_loop" : null;
     }
 
     /** 同一会签节点以本分支活动的进入时间为准，避免使用较晚创建的子任务时间漏掉本轮接收人。 */

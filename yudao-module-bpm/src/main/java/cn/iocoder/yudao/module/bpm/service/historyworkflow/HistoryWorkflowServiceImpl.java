@@ -9,8 +9,10 @@ import cn.iocoder.yudao.module.infra.dal.dataobject.file.FileConfigDO;
 import cn.iocoder.yudao.module.infra.service.file.FileConfigService;
 import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.util.UriUtils;
 
 import javax.annotation.Resource;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -321,6 +323,21 @@ public class HistoryWorkflowServiceImpl implements HistoryWorkflowService {
                 continue;
             }
             String normalizedPath = filePath.replace('\\', '/');
+            // 复议、诉讼旧附件保存的是目录，和收文一样先补齐文件名，再生成下载地址。
+            // 已有 fileUrl、绝对地址或完整文件路径继续沿用，避免重复拼接新附件。
+            if (StrUtil.equalsAny(businessType, "xzfy", "xzss")
+                    && StrUtil.isBlank(str(attachment.get("fileUrl"))) && !isAbsoluteUrl(normalizedPath)) {
+                String fileName = firstNonBlankString(attachment.get("filename"), attachment.get("fileName"));
+                String directory = StrUtil.removeSuffix(normalizedPath, "/");
+                String lastSegment = directory.substring(directory.lastIndexOf('/') + 1);
+                if (StrUtil.isNotBlank(fileName) && !lastSegment.equals(fileName)
+                        && !lastSegment.matches(".*\\.[^./]+$")) {
+                    normalizedPath = joinPath(directory, fileName);
+                    attachment.put("filePath", normalizedPath);
+                    // 存储路径保留原文；URL 编码防止文件名中的 #、? 等被当作地址参数。
+                    normalizedPath = UriUtils.encodePath(normalizedPath, StandardCharsets.UTF_8);
+                }
+            }
             attachment.put("fileUrl", isAbsoluteUrl(normalizedPath)
                     ? normalizedPath : joinPath(masterFileDownloadBaseUrl, normalizedPath));
         }

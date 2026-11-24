@@ -96,7 +96,7 @@ public final class BpmInternalDispatch {
             }
             Set<Long> added = new LinkedHashSet<>(requested);
             if (added.size() != requested.size() || added.isEmpty() || added.stream().anyMatch(members::contains))
-                throw exception(TASK_APPEND_INVALID, "所选人员已参与本轮办理，不能重复派发；需要重办请使用退回");
+                throw exception(TASK_APPEND_INVALID, "所选人员已参与本轮办理");
             // 旧并行会签同人可能有多个实例，去重人数不能替代真实计数；顺序会签仍需完整、有序的集合。
             if (count < members.size() || ((!legacy || node.getLoopCharacteristics().isSequential()) && members.size() != count))
                 throw exception(TASK_APPEND_INVALID, "内循环成员计数不一致，请先核查历史数据");
