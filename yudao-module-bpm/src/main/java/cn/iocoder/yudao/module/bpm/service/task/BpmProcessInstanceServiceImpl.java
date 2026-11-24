@@ -86,6 +86,7 @@ import org.flowable.engine.repository.ProcessDefinition;
 import org.flowable.engine.runtime.Execution;
 import org.flowable.engine.runtime.ProcessInstance;
 import org.flowable.engine.runtime.ProcessInstanceBuilder;
+import org.flowable.identitylink.api.IdentityLinkInfo;
 import org.flowable.task.api.Task;
 import org.flowable.task.api.history.HistoricTaskInstance;
 import org.springframework.context.annotation.Lazy;
@@ -413,16 +414,14 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         ProcessDefinition processDefinition = processDefinitionService.getProcessDefinition(
                 historicProcessInstance != null ? historicProcessInstance.getProcessDefinitionId()
                         : reqVO.getProcessDefinitionId());
-        BpmProcessDefinitionInfoDO processDefinitionInfo = processDefinitionService
-                .getProcessDefinitionInfo(processDefinition.getId());
         BpmnModel bpmnModel = processDefinitionService.getProcessDefinitionBpmnModel(processDefinition.getId());
         if (bpmnModel == null) {
             throw exception(ErrorCodeConstants.MODEL_NOT_EXISTS);
         }
-
         FlowElement sourceElement = null;
         Task task = null; // 提取到外部声明，便于获取实例 ID
         boolean restrictedInternalLoop = false;
+        Map<String, List<AdminUserDO>> candidateCache = new HashMap<>();
 
         if (reqVO.getTaskId() == null) {
             if (StrUtil.isNotBlank(reqVO.getActivityId())) {
@@ -445,8 +444,9 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             sourceElement = bpmnModel.getFlowElement(task.getTaskDefinitionKey());
             if (task.getTaskLocalVariables() != null
                     && task.getTaskLocalVariables().containsKey("internal_source_task_id")) {
-                restrictedInternalLoop = isRestrictedInternalOperator(loginUserId, task.getProcessDefinitionId(),
-                        task.getTaskDefinitionKey(), true);
+                CandidateRule sourceRule = parseCandidateRule(parseAllProperties(sourceElement));
+                restrictedInternalLoop = getCandidateUsers(sourceRule.getType(), sourceRule.getValue(), candidateCache)
+                        .stream().noneMatch(user -> Objects.equals(loginUserId, user.getId()));
             }
         }
 
@@ -545,60 +545,36 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         Map<String, Object> selectedAssigneesMap = new HashMap<>();
         Set<String> targetTaskKeys = result.stream().map(BpmNextTaskRespVO::getTaskDefKey).collect(Collectors.toSet());
 
-        if (task != null && task.getProcessInstanceId() != null) {
+        if (task != null && task.getProcessInstanceId() != null && !targetTaskKeys.isEmpty()) {
             String processInstanceId = task.getProcessInstanceId();
             Date sendRoundStartTime = getSendRoundStartTime(task);
+            Set<String> historicTaskKeys = new HashSet<>(targetTaskKeys);
+            targetTaskKeys.stream().filter(key -> key.endsWith("_internal_loop"))
+                    .map(key -> key.substring(0, key.length() - "_internal_loop".length()))
+                    .forEach(historicTaskKeys::add);
 
-            // 包含局部状态，以排除退回和撤回取消的接收记录。
+            // 只查展示相关节点，一起加载局部状态和人员关联，避免每条历史任务再查一次关联。
             List<org.flowable.task.api.history.HistoricTaskInstance> historicTasks = historyService.createHistoricTaskInstanceQuery()
                     .processInstanceId(processInstanceId)
+                    .taskDefinitionKeys(historicTaskKeys)
                     .includeTaskLocalVariables()
+                    .includeIdentityLinks()
                     .list();
             Map<String, Set<Long>> taskRecipientIds = new HashMap<>();
 
             for (org.flowable.task.api.history.HistoricTaskInstance hiTask : historicTasks) {
                 String taskKey = getReceivedNodeKey(hiTask.getTaskDefinitionKey(), targetTaskKeys);
                 if (taskKey == null) continue;
-                Set<Long> recipientIds = taskRecipientIds.computeIfAbsent(taskKey, key -> new HashSet<>());
-                Long assigneeId = Convert.toLong(hiTask.getAssignee(), null);
-                if (assigneeId != null) recipientIds.add(assigneeId);
-                List<org.flowable.identitylink.api.history.HistoricIdentityLink> links =
-                        historyService.getHistoricIdentityLinksForTask(hiTask.getId());
-                for (org.flowable.identitylink.api.history.HistoricIdentityLink link : links) {
-                    Long candidateId = Convert.toLong(link.getUserId(), null);
-                    if (candidateId != null) recipientIds.add(candidateId);
-                }
+                Set<Long> recipientIds = getReceivedUserIds(hiTask);
+                taskRecipientIds.computeIfAbsent(taskKey, key -> new HashSet<>()).addAll(recipientIds);
                 if (!isCurrentRoundReceivedTask(hiTask, sendRoundStartTime)) {
                     continue;
                 }
 
-                if (targetTaskKeys.contains(taskKey)) {
-                    List<Long> existingIds = selectedAssigneesMap.containsKey(taskKey) ?
-                            Convert.toList(Long.class, selectedAssigneesMap.get(taskKey)) : new ArrayList<>();
-                    boolean added = false;
-
-                    // 1.1 提取直接派发/签收的处理人
-                    if (StrUtil.isNotBlank(hiTask.getAssignee())) {
-                        if (assigneeId != null && !existingIds.contains(assigneeId)) {
-                            existingIds.add(assigneeId);
-                            added = true;
-                        }
-                    }
-
-                    // 1.2 提取处于候选组/未签收状态的人员 (IdentityLink)
-                    for (org.flowable.identitylink.api.history.HistoricIdentityLink link : links) {
-                        if (StrUtil.isNotBlank(link.getUserId())) {
-                            Long candidateId = Convert.toLong(link.getUserId(), null);
-                            if (candidateId != null && !existingIds.contains(candidateId)) {
-                                existingIds.add(candidateId);
-                                added = true;
-                            }
-                        }
-                    }
-
-                    if (added) {
-                        selectedAssigneesMap.put(taskKey, existingIds);
-                    }
+                Set<Long> existingIds = new LinkedHashSet<>(selectedAssigneesMap.containsKey(taskKey)
+                        ? Convert.toList(Long.class, selectedAssigneesMap.get(taskKey)) : Collections.emptyList());
+                if (existingIds.addAll(recipientIds)) {
+                    selectedAssigneesMap.put(taskKey, new ArrayList<>(existingIds));
                 }
             }
             // 恢复历史选人兜底：会签尚未生成下一任务时，已提交的选人保存在执行局部变量中。
@@ -641,15 +617,20 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         // =========================================================================================
 
         Set<Long> allAssignedUserIdsToQuery = new HashSet<>();
+        List<AdminUserDO> ownDeptUsers = null;
         for (BpmNextTaskRespVO node : result) {
             // 解析候选人逻辑
             if (!node.getTaskDefKey().equals("end")) {
                 CandidateRule rule = parseCandidateRule(node.getExtensionProperties());
                 if (rule != null) {
-                    List<AdminUserDO> users = BpmDeptMemberCandidateService.RULE.equals(rule.getType())
-                            ? getInternalLoopDepartmentUsers(loginUserId).stream()
-                                    .filter(user -> !Objects.equals(loginUserId, user.getId())).collect(Collectors.toList())
-                            : getCandidateUsers(rule.getType(), rule.getValue());
+                    List<AdminUserDO> users;
+                    if (BpmDeptMemberCandidateService.RULE.equals(rule.getType())) {
+                        if (ownDeptUsers == null) ownDeptUsers = getInternalLoopDepartmentUsers(loginUserId);
+                        users = ownDeptUsers.stream().filter(user -> !Objects.equals(loginUserId, user.getId()))
+                                .collect(Collectors.toList());
+                    } else {
+                        users = new ArrayList<>(getCandidateUsers(rule.getType(), rule.getValue(), candidateCache));
+                    }
                     if (sameDeptCandidateNodes.contains(processDefinition.getKey() + ":" + node.getTaskDefKey())) {
                         if (submitterDeptIds == null) {
                             submitterDeptIds = new LinkedHashSet<>(userService.getUserDeptIds(loginUserId));
@@ -742,7 +723,10 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         }
 
         // 内循环合并办理人主部门及兼任部门成员；受限办理人不合并节点规则候选人。
-        List<AdminUserDO> ownDeptUsers = getInternalLoopDepartmentUsers(loginUserId);
+        if (ownDeptUsers == null) {
+            ownDeptUsers = result.stream().anyMatch(node -> node.getTaskDefKey().endsWith("_internal_loop"))
+                    ? getInternalLoopDepartmentUsers(loginUserId) : Collections.emptyList();
+        }
         Set<Long> ownDeptIds = ownDeptUsers.stream().map(AdminUserDO::getDeptId)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         for (BpmNextTaskRespVO node : result) {
@@ -842,6 +826,20 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
         }
 
         return result;
+    }
+
+    /** 批量加载关联后补齐原逐任务 API 自动添加的 assignee / owner，兼容旧历史记录。 */
+    static Set<Long> getReceivedUserIds(HistoricTaskInstance task) {
+        Set<Long> ids = new LinkedHashSet<>();
+        Long assignee = Convert.toLong(task.getAssignee(), null);
+        if (assignee != null) ids.add(assignee);
+        for (IdentityLinkInfo link : task.getIdentityLinks()) {
+            Long userId = Convert.toLong(link.getUserId(), null);
+            if (userId != null) ids.add(userId);
+        }
+        Long owner = Convert.toLong(task.getOwner(), null);
+        if (owner != null) ids.add(owner);
+        return ids;
     }
 
     private static String getReceivedNodeKey(String node, Set<String> targetTaskKeys) {
@@ -2270,6 +2268,12 @@ public class BpmProcessInstanceServiceImpl implements BpmProcessInstanceService 
             result.put(entry.getKey(), candidates);
         }
         return result;
+    }
+
+    /** 仅在本次选人请求中复用规则查询；节点展示分组使用独立列表，不修改缓存。 */
+    private List<AdminUserDO> getCandidateUsers(String chooseRule, String ruleValue,
+                                               Map<String, List<AdminUserDO>> cache) {
+        return cache.computeIfAbsent(chooseRule + ":" + ruleValue, key -> getCandidateUsers(chooseRule, ruleValue));
     }
 
     private List<AdminUserDO> getCandidateUsers(String chooseRule, String ruleValue) {

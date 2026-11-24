@@ -252,9 +252,7 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
                 .thenReturn(Arrays.asList(returned, cancelled, running, approved, unclaimed));
         HistoricIdentityLink candidate = mock(HistoricIdentityLink.class);
         when(candidate.getUserId()).thenReturn("50");
-        when(historyService.getHistoricIdentityLinksForTask(anyString()))
-                .thenAnswer(invocation -> "unclaimed".equals(invocation.getArgument(0))
-                        ? Collections.singletonList(candidate) : Collections.emptyList());
+        doReturn(Collections.singletonList(candidate)).when(unclaimed).getIdentityLinks();
         doReturn(Arrays.asList(user(30L, 1L, 0), user(40L, 2L, 0), user(50L, 2L, 0)))
                 .when(userService).getUserList(new HashSet<>(Arrays.asList(30L, 40L, 50L)));
 
@@ -263,8 +261,8 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
         assertEquals(new HashSet<>(Arrays.asList(30L, 40L, 50L)), new HashSet<>(next.getAssignedUserIds()));
         assertEquals(3, next.getAssignedUsers().size());
         verify(historyService.createHistoricTaskInstanceQuery()).includeTaskLocalVariables();
-        verify(historyService).getHistoricIdentityLinksForTask("returned");
-        verify(historyService).getHistoricIdentityLinksForTask("cancelled");
+        verify(historyService.createHistoricTaskInstanceQuery()).includeIdentityLinks();
+        verify(historyService, never()).getHistoricIdentityLinksForTask(anyString());
     }
 
     @Test
@@ -420,8 +418,7 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
         when(historyService.createHistoricTaskInstanceQuery().list()).thenReturn(Arrays.asList(cancelled, returned));
         HistoricIdentityLink candidate = mock(HistoricIdentityLink.class);
         when(candidate.getUserId()).thenReturn("50");
-        when(historyService.getHistoricIdentityLinksForTask("cancelled"))
-                .thenReturn(Collections.singletonList(candidate));
+        doReturn(Collections.singletonList(candidate)).when(cancelled).getIdentityLinks();
         historicalSelections(Collections.singletonMap("next", Arrays.asList(30L, 40L, 50L)));
         assertNull(find(getNodes(20L), "next").getAssignedUserIds());
     }
@@ -432,9 +429,48 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
         when(historyService.createHistoricVariableInstanceQuery().list()).thenReturn(Collections.singletonList(variable));
     }
 
-    private HistoricTaskInstance receivedTask(String id, Long userId, BpmTaskStatusEnum status) {
+    @Test
+    void bulkRecipientsKeepAssigneeAndOwnerEvenWithoutStoredIdentityLinks() {
         HistoricTaskInstance task = mock(HistoricTaskInstance.class);
-        when(task.getId()).thenReturn(id);
+        when(task.getAssignee()).thenReturn("30");
+        when(task.getOwner()).thenReturn("40");
+        assertEquals(new LinkedHashSet<>(Arrays.asList(30L, 40L)),
+                BpmProcessInstanceServiceImpl.getReceivedUserIds(task));
+    }
+
+    @Test
+    void nodeQueryIncludesRealInternalKeyAndReusesCandidateRulesWithinRequest() {
+        prepare(10L, true);
+        List<BpmNextTaskRespVO> first = getNodes(10L);
+        assertEquals(new HashSet<>(Arrays.asList("current_internal_loop", "current_specified", "next", "end")), keys(first));
+        verify(historyService.createHistoricTaskInstanceQuery()).taskDefinitionKeys(
+                new HashSet<>(Arrays.asList("current", "current_internal_loop", "current_specified", "next", "end")));
+        verify(historyService.createHistoricTaskInstanceQuery()).includeIdentityLinks();
+        verify(historyService, never()).getHistoricIdentityLinksForTask(anyString());
+        verify(processDefinitionService, never()).getProcessDefinitionInfo(anyString());
+        verify(userGroupService, times(1)).getUserGroupList(Collections.singleton(7L));
+        verify(userService, times(1)).getUserList(new HashSet<>(Arrays.asList(10L, 40L)));
+
+        // 下一次打开必须重新查，避免跨请求缓存导致人员变更不生效。
+        getNodes(10L);
+        verify(userGroupService, times(2)).getUserGroupList(Collections.singleton(7L));
+    }
+
+    @Test
+    void noInternalLoopSkipsDepartmentMemberQueries() {
+        prepare(20L, false);
+        BpmnModel model = processDefinitionService.getProcessDefinitionBpmnModel("definition");
+        model.getFlowElement("current").getExtensionElements().clear();
+        property(model.getFlowElement("current"), "select_manually", "1");
+        reset(userService, userGroupService, deptService);
+
+        assertEquals(new HashSet<>(Arrays.asList("next", "end")), keys(getNodes(20L)));
+        verify(userService, never()).getUserDeptIds(anyLong());
+        verify(userService, never()).getUserListByDeptIds(anyCollection());
+    }
+
+    private HistoricTaskInstance receivedTask(String id, Long userId, BpmTaskStatusEnum status) {
+        HistoricTaskInstance task = mock(HistoricTaskInstance.class, id);
         when(task.getTaskDefinitionKey()).thenReturn("next");
         when(task.getAssignee()).thenReturn(userId != null ? userId.toString() : null);
         when(task.getTaskLocalVariables()).thenReturn(Collections.singletonMap(
@@ -474,7 +510,6 @@ class BpmProcessInstanceNextSelectNodesTest extends BaseMockitoUnitTest {
         when(processDefinitionService.getProcessDefinitionBpmnModel("definition")).thenReturn(model);
         Task task = mock(Task.class);
         when(task.getTaskDefinitionKey()).thenReturn("current");
-        if (internalLoop) when(task.getProcessDefinitionId()).thenReturn("definition");
         when(task.getProcessInstanceId()).thenReturn("instance");
         when(task.getTaskLocalVariables()).thenReturn(internalLoop
                 ? Collections.singletonMap("internal_source_task_id", "sourceTask") : Collections.emptyMap());

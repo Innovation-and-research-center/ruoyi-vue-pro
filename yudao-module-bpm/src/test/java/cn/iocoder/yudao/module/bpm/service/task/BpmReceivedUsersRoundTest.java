@@ -1,21 +1,29 @@
 package cn.iocoder.yudao.module.bpm.service.task;
 
 import cn.iocoder.yudao.module.bpm.framework.flowable.core.enums.BpmnVariableConstants;
+import org.apache.ibatis.executor.Executor;
+import org.apache.ibatis.mapping.MappedStatement;
+import org.apache.ibatis.plugin.*;
+import org.apache.ibatis.session.ResultHandler;
+import org.apache.ibatis.session.RowBounds;
 import org.flowable.engine.HistoryService;
+import org.flowable.engine.ProcessEngine;
+import org.flowable.engine.ProcessEngineConfiguration;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.history.HistoricActivityInstance;
 import org.flowable.engine.history.HistoricActivityInstanceQuery;
+import org.flowable.engine.impl.cfg.StandaloneInMemProcessEngineConfiguration;
 import org.flowable.engine.runtime.Execution;
 import org.flowable.engine.runtime.ExecutionQuery;
+import org.flowable.identitylink.api.IdentityLinkInfo;
 import org.flowable.task.api.Task;
 import org.flowable.task.api.history.HistoricTaskInstance;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Date;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -101,5 +109,96 @@ class BpmReceivedUsersRoundTest {
         when(activity.getExecutionId()).thenReturn(executionId);
         when(activity.getStartTime()).thenReturn(new Date(startedAt));
         return activity;
+    }
+
+
+    @Test
+    void joinedQueryPreservesRecipientsAndLocalVariablesWithoutPerTaskQueries() {
+        QueryCounter counter = new QueryCounter();
+        StandaloneInMemProcessEngineConfiguration config = new StandaloneInMemProcessEngineConfiguration();
+        config.setJdbcUrl("jdbc:h2:mem:received-query-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
+        config.setDatabaseSchemaUpdate(ProcessEngineConfiguration.DB_SCHEMA_UPDATE_TRUE);
+        config.setAsyncExecutorActivate(false);
+        config.setCustomMybatisInterceptors(Collections.singletonList(counter));
+        ProcessEngine engine = config.buildProcessEngine();
+        try {
+            engine.getRepositoryService().createDeployment().addString("recipients.bpmn20.xml", model()).deploy();
+            String instance = engine.getRuntimeService().startProcessInstanceByKey("recipients",
+                    Collections.singletonMap("members", IntStream.rangeClosed(1, 20)
+                            .mapToObj(String::valueOf).collect(Collectors.toList()))).getId();
+            List<Task> tasks = engine.getTaskService().createTaskQuery().processInstanceId(instance).list();
+            for (Task task : tasks) {
+                Map<String, Object> locals = new HashMap<>();
+                locals.put("status", 1);
+                locals.put("testMarker", task.getId());
+                engine.getTaskService().setVariablesLocal(task.getId(), locals);
+            }
+            Task completed = tasks.stream().filter(task -> "bulk".equals(task.getTaskDefinitionKey())).findFirst().get();
+            engine.getTaskService().setOwner(completed.getId(), "98");
+            engine.getTaskService().complete(completed.getId());
+            Set<String> selectedKeys = new HashSet<>(Arrays.asList("bulk", "empty"));
+
+            counter.statements.clear();
+            List<HistoricTaskInstance> original = engine.getHistoryService().createHistoricTaskInstanceQuery()
+                    .processInstanceId(instance).includeTaskLocalVariables().list();
+            Map<String, Set<Long>> expectedLinks = new HashMap<>();
+            Map<String, Map<String, Object>> expectedLocals = new HashMap<>();
+            for (HistoricTaskInstance task : original) {
+                if (!selectedKeys.contains(task.getTaskDefinitionKey())) continue;
+                expectedLinks.put(task.getId(), links(engine.getHistoryService().getHistoricIdentityLinksForTask(task.getId())));
+                expectedLocals.put(task.getId(), task.getTaskLocalVariables());
+            }
+            int originalQueryCount = counter.statements.size();
+
+            counter.statements.clear();
+            List<HistoricTaskInstance> optimized = engine.getHistoryService().createHistoricTaskInstanceQuery()
+                    .processInstanceId(instance).taskDefinitionKeys(selectedKeys)
+                    .includeTaskLocalVariables().includeIdentityLinks().list();
+            assertEquals(21, optimized.size(), "保留20个会签任务和一个没有人员关联的任务，排除其他节点");
+            for (HistoricTaskInstance task : optimized) {
+                assertEquals(expectedLinks.get(task.getId()), BpmProcessInstanceServiceImpl.getReceivedUserIds(task));
+                assertEquals(expectedLocals.get(task.getId()), task.getTaskLocalVariables());
+            }
+            assertTrue(optimized.stream().anyMatch(task -> task.getId().equals(completed.getId()) && task.getEndTime() != null));
+            assertEquals(43, originalQueryCount, "原API每个任务先验证任务存在，再查人员关联，共1+21*2次查询");
+            assertEquals(1, counter.statements.size(), "加载和读取所有任务的关联时，不应额外查询数据库");
+        } finally {
+            engine.close();
+        }
+    }
+
+    private static Set<Long> links(List<? extends IdentityLinkInfo> links) {
+        return links.stream().filter(link -> link.getUserId() != null).map(link -> Long.valueOf(link.getUserId()))
+                .collect(Collectors.toSet());
+    }
+
+    private static String model() {
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                + "<definitions xmlns=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" "
+                + "xmlns:flowable=\"http://flowable.org/bpmn\" targetNamespace=\"test\">"
+                + "<process id=\"recipients\" isExecutable=\"true\">"
+                + "<startEvent id=\"start\"/><parallelGateway id=\"fork\"/><endEvent id=\"end\"/>"
+                + "<userTask id=\"bulk\" flowable:assignee=\"${member}\" flowable:candidateUsers=\"99\">"
+                + "<multiInstanceLoopCharacteristics isSequential=\"false\" flowable:collection=\"members\" "
+                + "flowable:elementVariable=\"member\"/></userTask>"
+                + "<userTask id=\"empty\"/><userTask id=\"unrelated\"/>"
+                + "<sequenceFlow id=\"startFork\" sourceRef=\"start\" targetRef=\"fork\"/>"
+                + Arrays.asList("bulk", "empty", "unrelated").stream().map(id ->
+                        "<sequenceFlow id=\"to" + id + "\" sourceRef=\"fork\" targetRef=\"" + id + "\"/>"
+                                + "<sequenceFlow id=\"from" + id + "\" sourceRef=\"" + id + "\" targetRef=\"end\"/>")
+                        .collect(Collectors.joining())
+                + "</process></definitions>";
+    }
+
+    @Intercepts(@Signature(type = Executor.class, method = "query",
+            args = {MappedStatement.class, Object.class, RowBounds.class, ResultHandler.class}))
+    public static class QueryCounter implements Interceptor {
+        final List<String> statements = new ArrayList<>();
+
+        @Override
+        public Object intercept(Invocation invocation) throws Throwable {
+            statements.add(((MappedStatement) invocation.getArgs()[0]).getId());
+            return invocation.proceed();
+        }
     }
 }
