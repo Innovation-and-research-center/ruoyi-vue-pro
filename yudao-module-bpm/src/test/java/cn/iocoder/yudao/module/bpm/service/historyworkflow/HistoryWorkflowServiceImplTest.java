@@ -83,6 +83,39 @@ class HistoryWorkflowServiceImplTest {
         assertEquals(BASE + "/directory", attachment.get("fileUrl"));
     }
 
+    @Test
+    void historicalPathsRoundTripWithoutChangingStoredKeys() {
+        String path = "/旧目录/材料 中文[终稿]#?50%+%23,附件.pdf";
+        for (String type : new String[]{"leave", "time_explain", "confflow", "xzfy", "xzss"}) {
+            for (String source : new String[]{path, "https://old.test:8080/admin-api/infra/file/7/get" + path}) {
+                Map<String, Object> item = attachment(source, "附件.pdf");
+                fill(type, item);
+                String url = (String) item.get("fileUrl");
+                assertEquals(source, item.get("filepath"));
+                String rawPath = java.net.URI.create(url).getRawPath();
+                assertNull(java.net.URI.create(url).getRawQuery());
+                assertNull(java.net.URI.create(url).getRawFragment());
+                assertTrue(URLUtil.decode(rawPath, StandardCharsets.UTF_8, false).endsWith(path));
+                assertTrue(url.contains("%2523"));
+                fill(type, item);
+                assertEquals(url, item.get("fileUrl"));
+            }
+        }
+    }
+
+    @Test
+    void receiveDocEncodesDirectoryAndFilenameTogether() {
+        Map<String, Object> business = new HashMap<>();
+        business.put("type", "receive_doc");
+        business.put("attachFilePath", "/收文[旧]/");
+        Map<String, Object> item = attachment(null, "报告#?%+.pdf");
+        ReflectionTestUtils.invokeMethod(service, "fillAttachmentUrls", business, Collections.singletonList(item));
+        String url = (String) item.get("fileUrl");
+        assertEquals(BASE + "/收文[旧]/报告#?%+.pdf", URLUtil.decode(url, StandardCharsets.UTF_8, false));
+        assertNull(java.net.URI.create(url).getRawFragment());
+        assertNull(java.net.URI.create(url).getRawQuery());
+    }
+
     private void fill(String type, Map<String, Object> attachment) {
         ReflectionTestUtils.invokeMethod(service, "fillAttachmentUrls",
                 Collections.singletonMap("type", type), Collections.singletonList(attachment));

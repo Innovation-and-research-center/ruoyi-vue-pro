@@ -310,7 +310,11 @@ public class HistoryWorkflowServiceImpl implements HistoryWorkflowService {
         String receiveDocDirectory = str(business.get("attachFilePath"));
         String masterFileDownloadBaseUrl = getMasterFileDownloadBaseUrl();
         for (Map<String, Object> attachment : attachments) {
-            String filePath = firstNonBlankString(attachment.get("fileUrl"), attachment.get("filepath"),
+            // fileUrl 是本方法生成的访问地址，重复处理时不能再次编码。
+            if (StrUtil.isNotBlank(str(attachment.get("fileUrl")))) {
+                continue;
+            }
+            String filePath = firstNonBlankString(attachment.get("filepath"),
                     attachment.get("filePath"));
             if (StrUtil.isBlank(filePath) && StrUtil.equals("receive_doc", businessType)) {
                 filePath = joinPath(receiveDocDirectory,
@@ -334,13 +338,26 @@ public class HistoryWorkflowServiceImpl implements HistoryWorkflowService {
                         && !lastSegment.matches(".*\\.[^./]+$")) {
                     normalizedPath = joinPath(directory, fileName);
                     attachment.put("filePath", normalizedPath);
-                    // 存储路径保留原文；URL 编码防止文件名中的 #、? 等被当作地址参数。
-                    normalizedPath = UriUtils.encodePath(normalizedPath, StandardCharsets.UTF_8);
                 }
             }
-            attachment.put("fileUrl", isAbsoluteUrl(normalizedPath)
-                    ? normalizedPath : joinPath(masterFileDownloadBaseUrl, normalizedPath));
+            // 迁移历史表中的路径未编码。仅编码路径，原字段和磁盘文件名保持不变。
+            // 不先解析 URI 或解码：#、?、%23 都可能是旧文件名的字面内容。
+            attachment.put("fileUrl", encodeHistoricalFileUrl(isAbsoluteUrl(normalizedPath)
+                    ? normalizedPath : joinPath(masterFileDownloadBaseUrl, normalizedPath)));
         }
+    }
+
+    private String encodeHistoricalFileUrl(String address) {
+        if (!isAbsoluteUrl(address)) {
+            return UriUtils.encodePath(address, StandardCharsets.UTF_8);
+        }
+        // authority 不参与路径编码（例如域名、端口或 IPv6）；其后的内容全部是历史文件路径。
+        int pathStart = address.indexOf('/', address.indexOf("://") + 3);
+        if (pathStart < 0) {
+            return address;
+        }
+        return address.substring(0, pathStart)
+                + UriUtils.encodePath(address.substring(pathStart), StandardCharsets.UTF_8);
     }
 
     private String getMasterFileDownloadBaseUrl() {
